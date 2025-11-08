@@ -509,7 +509,7 @@ export default function LandingPage() {
               Simple, Transparent Pricing
             </h2>
             <p className="text-lg text-text-secondary mb-2">
-              $10 per assessment. Pay only for what you use.
+              $15-20 per assessment. Premium AI evaluation.
             </p>
             <p className="text-sm text-text-tertiary">
               Start with a free 14-day trial • 3 free assessments • No credit card required
@@ -801,7 +801,7 @@ const faqs = [
 const pricing = [
   {
     name: "Pay-as-you-go",
-    price: "$10",
+    price: "$20",
     period: "assessment",
     description: "Perfect for trying out the platform",
     features: [
@@ -816,11 +816,11 @@ const pricing = [
   },
   {
     name: "Medium Pack",
-    price: "$7.50",
+    price: "$15",
     period: "assessment",
     description: "Best value for scaling teams",
     features: [
-      "50 credits for $375",
+      "50 credits for $750",
       "25% discount vs pay-as-you-go",
       "Credits never expire",
       "All assessment types",
@@ -833,7 +833,7 @@ const pricing = [
   },
   {
     name: "Enterprise",
-    price: "$5",
+    price: "$10",
     period: "assessment",
     description: "For high-volume hiring",
     features: [

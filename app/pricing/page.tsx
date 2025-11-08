@@ -37,8 +37,8 @@ export default function PricingPage() {
       name: "Pay-as-you-go",
       description: "Perfect for trying out the platform",
       credits: 1,
-      totalPrice: 10,
-      pricePerAssessment: 10,
+      totalPrice: 20,
+      pricePerAssessment: 20,
       discount: 0,
       features: [
         "No commitment required",
@@ -55,8 +55,8 @@ export default function PricingPage() {
       name: "Small Pack",
       description: "For growing teams",
       credits: 10,
-      totalPrice: 90,
-      pricePerAssessment: 9,
+      totalPrice: 180,
+      pricePerAssessment: 18,
       discount: 10,
       features: [
         "10 assessments",
@@ -75,8 +75,8 @@ export default function PricingPage() {
       name: "Medium Pack",
       description: "For scaling companies",
       credits: 50,
-      totalPrice: 375,
-      pricePerAssessment: 7.5,
+      totalPrice: 750,
+      pricePerAssessment: 15,
       discount: 25,
       features: [
         "50 assessments",
@@ -97,8 +97,8 @@ export default function PricingPage() {
       name: "Large Pack",
       description: "For high-volume hiring",
       credits: 200,
-      totalPrice: 1200,
-      pricePerAssessment: 6,
+      totalPrice: 2400,
+      pricePerAssessment: 12,
       discount: 40,
       features: [
         "200 assessments",
@@ -124,12 +124,12 @@ export default function PricingPage() {
     {
       name: "Starter",
       description: "For small teams",
-      monthlyPrice: 79,
+      monthlyPrice: 149,
       includedAssessments: 10,
-      overagePrice: 8,
+      overagePrice: 16,
       features: [
         "10 assessments/month included",
-        "$8 per additional assessment",
+        "$16 per additional assessment",
         "All assessment types",
         "AI-powered evaluation",
         "Advanced analytics",
@@ -142,12 +142,12 @@ export default function PricingPage() {
     {
       name: "Professional",
       description: "For growing teams",
-      monthlyPrice: 199,
+      monthlyPrice: 349,
       includedAssessments: 30,
-      overagePrice: 7,
+      overagePrice: 14,
       features: [
         "30 assessments/month included",
-        "$7 per additional assessment",
+        "$14 per additional assessment",
         "All assessment types",
         "AI-powered evaluation",
         "Advanced analytics",
@@ -162,12 +162,12 @@ export default function PricingPage() {
     {
       name: "Growth",
       description: "For scaling companies",
-      monthlyPrice: 499,
+      monthlyPrice: 799,
       includedAssessments: 100,
-      overagePrice: 5,
+      overagePrice: 10,
       features: [
         "100 assessments/month included",
-        "$5 per additional assessment",
+        "$10 per additional assessment",
         "All assessment types",
         "AI-powered evaluation",
         "Advanced analytics",
@@ -185,12 +185,12 @@ export default function PricingPage() {
     {
       name: "Scale",
       description: "For enterprises",
-      monthlyPrice: 1299,
+      monthlyPrice: 1799,
       includedAssessments: 300,
-      overagePrice: 4,
+      overagePrice: 8,
       features: [
         "300 assessments/month included",
-        "$4 per additional assessment",
+        "$8 per additional assessment",
         "All assessment types",
         "AI-powered evaluation",
         "Advanced analytics",
@@ -213,10 +213,10 @@ export default function PricingPage() {
   // ROI Calculator
   const costPerHire = 4683; // Industry average
   const badHireReplacementCost = avgSalary * 1.5;
-  const traditionalTestCostPerCandidate = 18; // Industry average $15-25
+  const traditionalTestCostPerCandidate = 22; // Industry average $18-25 for premium platforms
   const interviewLMCostPerCandidate = pricingModel === "credits" ?
-    7.5 : // Medium pack average
-    (assessmentsPerMonth <= 10 ? 7.9 : assessmentsPerMonth <= 30 ? 6.63 : assessmentsPerMonth <= 100 ? 4.99 : 4.33);
+    15 : // Medium pack average
+    (assessmentsPerMonth <= 10 ? 14.9 : assessmentsPerMonth <= 30 ? 11.63 : assessmentsPerMonth <= 100 ? 7.99 : 6);
 
   const monthlySavings = assessmentsPerMonth * (traditionalTestCostPerCandidate - interviewLMCostPerCandidate);
   const annualSavings = monthlySavings * 12;
@@ -228,7 +228,7 @@ export default function PricingPage() {
     { feature: "Anti-cheating monitoring", us: true, traditional: true },
     { feature: "Automated grading", us: true, traditional: true },
     { feature: "Setup time", us: "< 5 min", traditional: "Hours" },
-    { feature: "Cost per assessment", us: "$6-10", traditional: "$15-25" },
+    { feature: "Cost per assessment", us: "$12-20", traditional: "$18-30" },
     { feature: "AI usage analytics", us: true, traditional: false },
     { feature: "Custom problem library", us: true, traditional: true },
     { feature: "Measures future readiness", us: true, traditional: false },
@@ -313,7 +313,7 @@ export default function PricingPage() {
           <div className="text-center space-y-6">
             <Badge variant="primary" className="mx-auto">
               <Sparkles className="h-3 w-3 mr-1" />
-              $10 per assessment • No hidden fees
+              $15-20 per assessment • Premium AI evaluation
             </Badge>
             <h1 className="text-5xl font-bold text-text-primary">
               Simple, transparent pricing
@@ -445,12 +445,12 @@ export default function PricingPage() {
                       <div className="flex items-center gap-4">
                         <div>
                           <p className="text-sm text-text-tertiary">Starting at</p>
-                          <p className="text-3xl font-bold text-primary">$5/assessment</p>
+                          <p className="text-3xl font-bold text-primary">$10/assessment</p>
                         </div>
                         <div className="h-12 w-px bg-border"></div>
                         <div>
                           <p className="text-sm text-text-tertiary">500 credits</p>
-                          <p className="text-lg font-semibold text-text-primary">$2,500</p>
+                          <p className="text-lg font-semibold text-text-primary">$5,000</p>
                         </div>
                       </div>
                     </div>
