@@ -509,8 +509,11 @@ export default function LandingPage() {
             <h2 className="text-3xl md:text-4xl font-bold text-text-primary mb-4">
               Simple, Transparent Pricing
             </h2>
-            <p className="text-lg text-text-secondary">
-              Start free, scale as you grow
+            <p className="text-lg text-text-secondary mb-2">
+              $10 per assessment. Pay only for what you use.
+            </p>
+            <p className="text-sm text-text-tertiary">
+              Start with a free 14-day trial • 3 free assessments • No credit card required
             </p>
           </div>
 
@@ -544,7 +547,7 @@ export default function LandingPage() {
                       </li>
                     ))}
                   </ul>
-                  <Link href="/auth/signup">
+                  <Link href={plan.name === "Enterprise" ? "/contact" : "/pricing"}>
                     <Button
                       className="w-full"
                       variant={plan.featured ? "primary" : "outline"}
@@ -555,6 +558,15 @@ export default function LandingPage() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+
+          <div className="text-center mt-12">
+            <Link href="/pricing">
+              <Button variant="outline" size="lg">
+                View All Pricing Options
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            </Link>
           </div>
         </div>
       </section>
@@ -791,47 +803,49 @@ const faqs = [
 
 const pricing = [
   {
-    name: "Starter",
-    price: "Free",
+    name: "Pay-as-you-go",
+    price: "$10",
+    period: "assessment",
     description: "Perfect for trying out the platform",
     features: [
-      "5 assessments per month",
-      "1 team member",
-      "All core features",
+      "No commitment required",
+      "All assessment types",
+      "AI-powered evaluation",
+      "Advanced analytics",
       "Email support",
-      "Community access",
     ],
-    cta: "Start Free",
+    cta: "Start Free Trial",
     featured: false,
   },
   {
-    name: "Growth",
-    price: "$299",
-    period: "month",
-    description: "For growing engineering teams",
+    name: "Medium Pack",
+    price: "$7.50",
+    period: "assessment",
+    description: "Best value for scaling teams",
     features: [
-      "100 assessments per month",
-      "10 team members",
-      "All core features",
+      "50 credits for $375",
+      "25% discount vs pay-as-you-go",
+      "Credits never expire",
+      "All assessment types",
       "Priority support",
-      "Custom problems",
-      "Advanced analytics",
+      "Custom branding",
       "API access",
     ],
-    cta: "Start Free Trial",
+    cta: "Buy Credits",
     featured: true,
   },
   {
     name: "Enterprise",
-    price: "Custom",
-    description: "For large organizations",
+    price: "$5",
+    period: "assessment",
+    description: "For high-volume hiring",
     features: [
-      "Unlimited assessments",
-      "Unlimited team members",
-      "SSO & SAML",
+      "500+ credits (up to 50% off)",
       "Dedicated support",
       "Custom integrations",
+      "SSO & SAML",
       "SLA guarantee",
+      "Volume discounts",
       "White-label option",
     ],
     cta: "Contact Sales",
