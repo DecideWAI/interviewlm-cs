@@ -34,6 +34,6 @@ const EmptyState = React.forwardRef<HTMLDivElement, EmptyStateProps>(
     );
   }
 );
-Empty State.displayName = "EmptyState";
+EmptyState.displayName = "EmptyState";
 
 export { EmptyState };
