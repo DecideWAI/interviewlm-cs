@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { InterviewPreview } from "@/components/demo/InterviewPreview";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -391,47 +392,7 @@ export default function LandingPage() {
             </Card>
           </div>
 
-          <Card className="bg-background-tertiary border-border-secondary overflow-hidden">
-            <div className="border-b border-border-secondary px-4 py-3 flex items-center gap-2">
-              <div className="flex gap-1.5">
-                <div className="w-3 h-3 rounded-full bg-error/60" />
-                <div className="w-3 h-3 rounded-full bg-warning/60" />
-                <div className="w-3 h-3 rounded-full bg-success/60" />
-              </div>
-              <div className="flex items-center gap-2 ml-4 text-sm text-text-secondary">
-                <Terminal className="h-4 w-4" />
-                <span className="font-mono">Terminal - Secure Sandbox</span>
-              </div>
-            </div>
-            <CardContent className="p-6 font-mono text-sm">
-              <div className="space-y-2">
-                <div className="flex gap-3">
-                  <span className="text-text-tertiary">$</span>
-                  <span className="text-text-primary">claude "help me implement JWT authentication with refresh tokens"</span>
-                </div>
-                <div className="flex gap-3 text-primary">
-                  <span className="text-text-tertiary">→</span>
-                  <span>I'll help you implement secure JWT authentication. Let's start with...</span>
-                </div>
-                <div className="flex gap-3 mt-3">
-                  <span className="text-text-tertiary">$</span>
-                  <span className="text-text-primary">npm test auth.test.js</span>
-                </div>
-                <div className="flex gap-3 text-success">
-                  <span className="text-text-tertiary">✓</span>
-                  <span>8 passing (142ms)</span>
-                </div>
-                <div className="flex gap-3 mt-3">
-                  <span className="text-text-tertiary">$</span>
-                  <span className="text-text-primary">git commit -m "Add JWT auth with refresh tokens"</span>
-                </div>
-                <div className="flex gap-3 text-text-secondary">
-                  <span className="text-text-tertiary">✓</span>
-                  <span>[main 7f3a9c2] Add JWT auth with refresh tokens</span>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <InterviewPreview />
 
           <div className="mt-8 p-6 rounded-lg border border-primary/20 bg-primary/5">
             <div className="flex items-start gap-4">
