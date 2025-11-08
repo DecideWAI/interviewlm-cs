@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Logo } from "@/components/Logo";
 import {
   Sparkles,
   Code2,
@@ -38,14 +39,12 @@ export default function LandingPage() {
       {/* Navigation */}
       <nav className="fixed top-0 w-full z-50 border-b border-border bg-background/95 backdrop-blur-lg">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
-              <span className="text-sm font-bold text-white">IL</span>
-            </div>
+          <Link href="/" className="flex items-center gap-3">
+            <Logo variant="icon" size={32} />
             <span className="text-lg font-semibold text-text-primary">
               InterviewLM
             </span>
-          </div>
+          </Link>
 
           <div className="hidden md:flex items-center gap-6">
             <Link href="#features" className="text-sm text-text-secondary hover:text-text-primary transition">
@@ -604,10 +603,8 @@ export default function LandingPage() {
         <div className="max-w-7xl mx-auto">
           <div className="grid md:grid-cols-4 gap-8 mb-8">
             <div>
-              <div className="flex items-center gap-2 mb-4">
-                <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center">
-                  <span className="text-sm font-bold text-white">IL</span>
-                </div>
+              <div className="flex items-center gap-3 mb-4">
+                <Logo variant="icon" size={28} />
                 <span className="text-base font-semibold text-text-primary">
                   InterviewLM
                 </span>

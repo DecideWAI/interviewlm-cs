@@ -5,6 +5,11 @@ export const metadata: Metadata = {
   title: "InterviewLM - AI-Powered Interview & Talent Hiring Platform",
   description: "InterviewLM uses AI to recreate work-like interviews and measure skill levels accurately. Modern talent hiring platform coming soon.",
   keywords: ["AI interviews", "talent hiring", "skill assessment", "recruitment", "InterviewLM"],
+  icons: {
+    icon: '/favicon.svg',
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
 };
 
 export default function RootLayout({
