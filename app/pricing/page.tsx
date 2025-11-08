@@ -21,72 +21,87 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
+  CreditCard,
+  Package,
 } from "lucide-react";
 
 export default function PricingPage() {
-  const [billingPeriod, setBillingPeriod] = useState<"monthly" | "annual">("annual");
+  const [pricingModel, setPricingModel] = useState<"credits" | "subscription">("credits");
   const [avgSalary, setAvgSalary] = useState(120000);
   const [assessmentsPerMonth, setAssessmentsPerMonth] = useState(50);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(0);
 
-  const annualDiscount = 0.17;
-
-  const pricingTiers = [
+  // Credit Pack Pricing
+  const creditPacks = [
     {
-      name: "Free Trial",
+      name: "Pay-as-you-go",
       description: "Perfect for trying out the platform",
-      monthlyPrice: 0,
-      annualPrice: 0,
-      isFree: true,
+      credits: 1,
+      totalPrice: 10,
+      pricePerAssessment: 10,
+      discount: 0,
       features: [
-        "14 days unlimited access",
-        "Up to 10 candidates",
+        "No commitment required",
         "All assessment types",
         "AI-powered evaluation",
-        "Basic analytics",
+        "Advanced analytics",
         "Email support",
       ],
-      limitations: [
-        "No custom branding",
-        "Limited integrations",
-      ],
-      cta: "Start Free Trial",
+      cta: "Buy Single Credit",
       variant: "outline" as const,
       badge: null,
     },
     {
-      name: "Professional",
-      description: "For growing teams and startups",
-      monthlyPrice: 149,
-      annualPrice: Math.round(149 * 12 * (1 - annualDiscount)),
-      assessments: 25,
+      name: "Small Pack",
+      description: "For growing teams",
+      credits: 10,
+      totalPrice: 90,
+      pricePerAssessment: 9,
+      discount: 10,
       features: [
-        "25 assessments/month",
-        "Unlimited candidates",
+        "10 assessments",
         "All assessment types",
         "AI-powered evaluation",
         "Advanced analytics",
         "Custom branding",
-        "Slack/Teams integration",
         "Priority email support",
         "API access",
       ],
-      limitations: [
-        "$8/additional assessment",
-      ],
-      cta: "Start 14-Day Trial",
+      cta: "Buy 10 Credits",
       variant: "outline" as const,
       badge: null,
     },
     {
-      name: "Growth",
+      name: "Medium Pack",
       description: "For scaling companies",
-      monthlyPrice: 399,
-      annualPrice: Math.round(399 * 12 * (1 - annualDiscount)),
-      assessments: 100,
+      credits: 50,
+      totalPrice: 375,
+      pricePerAssessment: 7.5,
+      discount: 25,
       features: [
-        "100 assessments/month",
-        "Unlimited candidates",
+        "50 assessments",
+        "All assessment types",
+        "AI-powered evaluation",
+        "Advanced analytics",
+        "Custom branding",
+        "All integrations",
+        "Priority support",
+        "API access",
+        "Custom problem library",
+      ],
+      cta: "Buy 50 Credits",
+      variant: "primary" as const,
+      badge: "Best Value",
+    },
+    {
+      name: "Large Pack",
+      description: "For high-volume hiring",
+      credits: 200,
+      totalPrice: 1200,
+      pricePerAssessment: 6,
+      discount: 40,
+      features: [
+        "200 assessments",
         "All assessment types",
         "AI-powered evaluation",
         "Advanced analytics",
@@ -98,22 +113,84 @@ export default function PricingPage() {
         "Bulk candidate invites",
         "Collaborative hiring",
       ],
-      limitations: [
-        "$5/additional assessment",
+      cta: "Buy 200 Credits",
+      variant: "outline" as const,
+      badge: null,
+    },
+  ];
+
+  // Subscription Pricing
+  const subscriptionTiers = [
+    {
+      name: "Starter",
+      description: "For small teams",
+      monthlyPrice: 79,
+      includedAssessments: 10,
+      overagePrice: 8,
+      features: [
+        "10 assessments/month included",
+        "$8 per additional assessment",
+        "All assessment types",
+        "AI-powered evaluation",
+        "Advanced analytics",
+        "Email support",
       ],
-      cta: "Start 14-Day Trial",
+      cta: "Start Starter Plan",
+      variant: "outline" as const,
+      badge: null,
+    },
+    {
+      name: "Professional",
+      description: "For growing teams",
+      monthlyPrice: 199,
+      includedAssessments: 30,
+      overagePrice: 7,
+      features: [
+        "30 assessments/month included",
+        "$7 per additional assessment",
+        "All assessment types",
+        "AI-powered evaluation",
+        "Advanced analytics",
+        "Custom branding",
+        "Priority email support",
+        "API access",
+      ],
+      cta: "Start Professional Plan",
+      variant: "outline" as const,
+      badge: null,
+    },
+    {
+      name: "Growth",
+      description: "For scaling companies",
+      monthlyPrice: 499,
+      includedAssessments: 100,
+      overagePrice: 5,
+      features: [
+        "100 assessments/month included",
+        "$5 per additional assessment",
+        "All assessment types",
+        "AI-powered evaluation",
+        "Advanced analytics",
+        "Custom branding",
+        "All integrations",
+        "Dedicated support",
+        "API access",
+        "Custom problem library",
+        "Bulk candidate invites",
+      ],
+      cta: "Start Growth Plan",
       variant: "primary" as const,
       badge: "Most Popular",
     },
     {
-      name: "Enterprise",
-      description: "For large organizations",
-      monthlyPrice: 1999,
-      annualPrice: null,
-      assessments: 500,
+      name: "Scale",
+      description: "For enterprises",
+      monthlyPrice: 1299,
+      includedAssessments: 300,
+      overagePrice: 4,
       features: [
-        "500+ assessments/month",
-        "Unlimited candidates",
+        "300 assessments/month included",
+        "$4 per additional assessment",
         "All assessment types",
         "AI-powered evaluation",
         "Advanced analytics",
@@ -125,41 +202,21 @@ export default function PricingPage() {
         "Bulk candidate invites",
         "Collaborative hiring",
         "SSO/SAML authentication",
-        "Custom contracts",
-        "Volume discounts",
-        "Dedicated CSM",
+        "Custom SLA",
       ],
-      limitations: [],
       cta: "Contact Sales",
       variant: "outline" as const,
       badge: null,
-      isEnterprise: true,
     },
   ];
-
-  const getPrice = (tier: typeof pricingTiers[0]) => {
-    if (tier.isFree) return "Free";
-    if (tier.isEnterprise) return "Custom";
-    if (billingPeriod === "monthly") {
-      return `$${tier.monthlyPrice}`;
-    }
-    return `$${Math.round((tier.annualPrice || 0) / 12)}`;
-  };
-
-  const getBillingText = (tier: typeof pricingTiers[0]) => {
-    if (tier.isFree) return "14 days";
-    if (tier.isEnterprise) return "Contact us";
-    if (billingPeriod === "monthly") return "/month";
-    return `/month, billed $${tier.annualPrice} annually`;
-  };
 
   // ROI Calculator
   const costPerHire = 4683; // Industry average
   const badHireReplacementCost = avgSalary * 1.5;
-  const traditionalTestCostPerCandidate = 20;
-  const interviewLMCostPerCandidate = billingPeriod === "monthly" ?
-    (pricingTiers[2].monthlyPrice / (pricingTiers[2].assessments || 1)) :
-    (pricingTiers[2].annualPrice! / 12 / (pricingTiers[2].assessments || 1));
+  const traditionalTestCostPerCandidate = 18; // Industry average $15-25
+  const interviewLMCostPerCandidate = pricingModel === "credits" ?
+    7.5 : // Medium pack average
+    (assessmentsPerMonth <= 10 ? 7.9 : assessmentsPerMonth <= 30 ? 6.63 : assessmentsPerMonth <= 100 ? 4.99 : 4.33);
 
   const monthlySavings = assessmentsPerMonth * (traditionalTestCostPerCandidate - interviewLMCostPerCandidate);
   const annualSavings = monthlySavings * 12;
@@ -171,7 +228,7 @@ export default function PricingPage() {
     { feature: "Anti-cheating monitoring", us: true, traditional: true },
     { feature: "Automated grading", us: true, traditional: true },
     { feature: "Setup time", us: "< 5 min", traditional: "Hours" },
-    { feature: "Cost per assessment", us: "$3-6", traditional: "$15-25" },
+    { feature: "Cost per assessment", us: "$6-10", traditional: "$15-25" },
     { feature: "AI usage analytics", us: true, traditional: false },
     { feature: "Custom problem library", us: true, traditional: true },
     { feature: "Measures future readiness", us: true, traditional: false },
@@ -179,36 +236,36 @@ export default function PricingPage() {
 
   const faqs = [
     {
-      question: "How does billing work?",
-      answer: "You're billed monthly or annually based on your selected plan. All plans include a 14-day free trial with no credit card required. You can upgrade, downgrade, or cancel anytime.",
+      question: "How does credit-based pricing work?",
+      answer: "Purchase credits in packs and use them whenever you need to assess candidates. 1 credit = 1 assessment. Credits never expire and can be used anytime. The more credits you buy upfront, the lower your cost per assessment.",
     },
     {
-      question: "What happens if I exceed my assessment limit?",
-      answer: "You'll be charged for additional assessments at the overage rate specified in your plan. Professional: $8/assessment, Growth: $5/assessment. Enterprise plans include custom volume pricing.",
+      question: "Do credits expire?",
+      answer: "No! Credits never expire. Buy them once and use them whenever you need to assess candidates, whether that's next week or next year.",
     },
     {
-      question: "Can I change plans later?",
-      answer: "Yes! You can upgrade or downgrade your plan at any time. When upgrading, you'll be charged the prorated difference. When downgrading, credit will be applied to your next billing cycle.",
+      question: "What's the difference between credits and subscriptions?",
+      answer: "Credits are prepaid and never expire - perfect if your hiring needs vary month-to-month. Subscriptions include a set number of assessments monthly with discounted overage pricing - ideal for consistent hiring volume.",
+    },
+    {
+      question: "Can I switch between credit packs and subscriptions?",
+      answer: "Yes! You can start with credits to test the platform, then switch to a subscription if you have consistent hiring needs. Unused credits remain available even if you have an active subscription.",
+    },
+    {
+      question: "What happens if I exceed my subscription limit?",
+      answer: "You'll be charged the overage rate specified in your plan. Starter: $8/assessment, Professional: $7/assessment, Growth: $5/assessment, Scale: $4/assessment. You can also buy credit packs for better rates.",
+    },
+    {
+      question: "Is there a free trial?",
+      answer: "Yes! Start with a 14-day free trial that includes 3 free assessments. No credit card required. After the trial, purchase credits or choose a subscription plan.",
     },
     {
       question: "Do you offer refunds?",
-      answer: "We offer a 14-day free trial so you can test the platform risk-free. For paid plans, we offer refunds within 30 days if you're not satisfied with the platform.",
+      answer: "We offer a 30-day money-back guarantee on credit pack purchases if you haven't used any credits. For subscriptions, we offer refunds within 30 days if you're not satisfied with the platform.",
     },
     {
-      question: "What payment methods do you accept?",
-      answer: "We accept all major credit cards (Visa, Mastercard, American Express) and ACH transfers for Enterprise plans. Annual plans can also be paid via invoice.",
-    },
-    {
-      question: "Is there a setup fee?",
-      answer: "No setup fees for any plan. You can start using InterviewLM immediately after signing up. Enterprise plans include white-glove onboarding at no extra cost.",
-    },
-    {
-      question: "How does the free trial work?",
-      answer: "Start a 14-day free trial of any paid plan with full access to all features. No credit card required. After the trial, you'll be prompted to enter payment information to continue.",
-    },
-    {
-      question: "Can I get a custom plan?",
-      answer: "Yes! Enterprise plans are fully customizable based on your needs. Contact our sales team to discuss volume discounts, custom integrations, and SLA requirements.",
+      question: "Can I get a custom enterprise plan?",
+      answer: "Yes! For teams needing 500+ assessments/year, we offer custom enterprise plans with volume discounts (up to 50% off), dedicated account managers, custom integrations, and SLA agreements. Contact our sales team to discuss your needs.",
     },
   ];
 
@@ -256,38 +313,45 @@ export default function PricingPage() {
           <div className="text-center space-y-6">
             <Badge variant="primary" className="mx-auto">
               <Sparkles className="h-3 w-3 mr-1" />
-              Save 17% with annual billing
+              $10 per assessment • No hidden fees
             </Badge>
             <h1 className="text-5xl font-bold text-text-primary">
               Simple, transparent pricing
             </h1>
             <p className="text-xl text-text-secondary max-w-2xl mx-auto">
-              Start with a free 14-day trial. No credit card required. Cancel anytime.
+              Pay only for what you use. Buy credits that never expire, or choose a monthly plan.
+            </p>
+            <p className="text-sm text-text-tertiary">
+              Start with a free 14-day trial • 3 free assessments • No credit card required
             </p>
 
-            {/* Billing Toggle */}
+            {/* Pricing Model Toggle */}
             <div className="flex items-center justify-center gap-4 pt-4">
-              <span className={`text-sm ${billingPeriod === "monthly" ? "text-text-primary font-medium" : "text-text-secondary"}`}>
-                Monthly
-              </span>
               <button
-                onClick={() => setBillingPeriod(billingPeriod === "monthly" ? "annual" : "monthly")}
-                className="relative w-14 h-7 rounded-full transition-colors"
-                style={{
-                  backgroundColor: billingPeriod === "annual" ? "#5E6AD2" : "#2A2A2A",
-                }}
+                onClick={() => setPricingModel("credits")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  pricingModel === "credits"
+                    ? "bg-primary text-white"
+                    : "bg-background-tertiary text-text-secondary hover:bg-background-hover"
+                }`}
               >
-                <div
-                  className="absolute top-1 left-1 w-5 h-5 rounded-full bg-white transition-transform"
-                  style={{
-                    transform: billingPeriod === "annual" ? "translateX(28px)" : "translateX(0)",
-                  }}
-                />
+                <Package className="h-4 w-4" />
+                <span className="text-sm font-medium">Credit Packs</span>
+                <Badge variant={pricingModel === "credits" ? "success" : "default"} className="text-xs">
+                  Never Expire
+                </Badge>
               </button>
-              <span className={`text-sm ${billingPeriod === "annual" ? "text-text-primary font-medium" : "text-text-secondary"}`}>
-                Annual
-                <span className="text-success ml-1">(Save 17%)</span>
-              </span>
+              <button
+                onClick={() => setPricingModel("subscription")}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  pricingModel === "subscription"
+                    ? "bg-primary text-white"
+                    : "bg-background-tertiary text-text-secondary hover:bg-background-hover"
+                }`}
+              >
+                <CreditCard className="h-4 w-4" />
+                <span className="text-sm font-medium">Monthly Plans</span>
+              </button>
             </div>
           </div>
         </Container>
@@ -296,84 +360,178 @@ export default function PricingPage() {
       {/* Pricing Tiers */}
       <section className="py-16">
         <Container size="lg">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {pricingTiers.map((tier, index) => (
-              <Card
-                key={index}
-                className={`border-border-secondary relative flex flex-col ${
-                  tier.badge ? "border-primary shadow-lg shadow-primary/10" : ""
-                }`}
-              >
-                {tier.badge && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <Badge variant="primary">
-                      <Sparkles className="h-3 w-3 mr-1" />
-                      {tier.badge}
-                    </Badge>
-                  </div>
-                )}
-                <CardHeader className="pb-8 pt-6">
-                  <CardTitle className="text-2xl">{tier.name}</CardTitle>
-                  <CardDescription className="text-base">
-                    {tier.description}
-                  </CardDescription>
-                  <div className="pt-4">
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-4xl font-bold text-text-primary">
-                        {getPrice(tier)}
-                      </span>
-                      {!tier.isFree && !tier.isEnterprise && (
-                        <span className="text-text-secondary">/mo</span>
-                      )}
-                    </div>
-                    <p className="text-sm text-text-tertiary mt-1">
-                      {getBillingText(tier)}
-                    </p>
-                    {tier.assessments && (
-                      <p className="text-sm text-text-secondary mt-2">
-                        {tier.assessments} assessments included
-                      </p>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="flex-1 flex flex-col">
-                  <Link href={tier.isEnterprise ? "/contact" : "/auth/signup"} className="w-full">
-                    <Button variant={tier.variant} className="w-full mb-6">
-                      {tier.cta}
-                      <ArrowRight className="h-4 w-4 ml-2" />
-                    </Button>
-                  </Link>
-
-                  <div className="space-y-3 flex-1">
-                    <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                      What's included
-                    </p>
-                    {tier.features.map((feature, i) => (
-                      <div key={i} className="flex items-start gap-3">
-                        <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-                        <span className="text-sm text-text-secondary">{feature}</span>
+          {pricingModel === "credits" ? (
+            <>
+              <div className="text-center mb-12">
+                <h2 className="text-2xl font-bold text-text-primary mb-2">
+                  Prepaid Credit Packs
+                </h2>
+                <p className="text-text-secondary">
+                  Buy credits once, use them anytime. Credits never expire.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {creditPacks.map((pack, index) => (
+                  <Card
+                    key={index}
+                    className={`border-border-secondary relative flex flex-col ${
+                      pack.badge ? "border-primary shadow-lg shadow-primary/10" : ""
+                    }`}
+                  >
+                    {pack.badge && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                        <Badge variant="primary">
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          {pack.badge}
+                        </Badge>
                       </div>
-                    ))}
-                    {tier.limitations.length > 0 && (
-                      <>
-                        <div className="pt-2 border-t border-border mt-4">
-                          <p className="text-xs font-semibold text-text-tertiary uppercase tracking-wide mb-3">
-                            Limitations
-                          </p>
+                    )}
+                    <CardHeader className="pb-8 pt-6">
+                      <CardTitle className="text-2xl">{pack.name}</CardTitle>
+                      <CardDescription className="text-base">
+                        {pack.description}
+                      </CardDescription>
+                      <div className="pt-4">
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-4xl font-bold text-text-primary">
+                            ${pack.totalPrice}
+                          </span>
                         </div>
-                        {tier.limitations.map((limitation, i) => (
+                        <p className="text-sm text-text-secondary mt-2">
+                          ${pack.pricePerAssessment}/assessment
+                        </p>
+                        {pack.discount > 0 && (
+                          <Badge variant="success" className="mt-2">
+                            Save {pack.discount}%
+                          </Badge>
+                        )}
+                        <p className="text-xs text-text-tertiary mt-2">
+                          {pack.credits} {pack.credits === 1 ? "credit" : "credits"} • Never expires
+                        </p>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="flex-1 flex flex-col">
+                      <Link href="/auth/signup" className="w-full">
+                        <Button variant={pack.variant} className="w-full mb-6">
+                          {pack.cta}
+                          <ArrowRight className="h-4 w-4 ml-2" />
+                        </Button>
+                      </Link>
+
+                      <div className="space-y-3 flex-1">
+                        {pack.features.map((feature, i) => (
                           <div key={i} className="flex items-start gap-3">
-                            <X className="h-5 w-5 text-text-tertiary flex-shrink-0 mt-0.5" />
-                            <span className="text-sm text-text-tertiary">{limitation}</span>
+                            <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                            <span className="text-sm text-text-secondary">{feature}</span>
                           </div>
                         ))}
-                      </>
-                    )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+
+              {/* Enterprise Option */}
+              <Card className="mt-12 border-primary/30 bg-gradient-to-br from-primary/5 to-primary/10">
+                <CardContent className="pt-8 pb-8">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-2xl font-bold text-text-primary mb-2">
+                        Enterprise Volume Packs
+                      </h3>
+                      <p className="text-text-secondary mb-4">
+                        500+ assessments with up to 50% discount. Includes dedicated support, custom integrations, and SLA.
+                      </p>
+                      <div className="flex items-center gap-4">
+                        <div>
+                          <p className="text-sm text-text-tertiary">Starting at</p>
+                          <p className="text-3xl font-bold text-primary">$5/assessment</p>
+                        </div>
+                        <div className="h-12 w-px bg-border"></div>
+                        <div>
+                          <p className="text-sm text-text-tertiary">500 credits</p>
+                          <p className="text-lg font-semibold text-text-primary">$2,500</p>
+                        </div>
+                      </div>
+                    </div>
+                    <Link href="/contact">
+                      <Button size="lg">
+                        Contact Sales
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </Button>
+                    </Link>
                   </div>
                 </CardContent>
               </Card>
-            ))}
-          </div>
+            </>
+          ) : (
+            <>
+              <div className="text-center mb-12">
+                <h2 className="text-2xl font-bold text-text-primary mb-2">
+                  Monthly Subscription Plans
+                </h2>
+                <p className="text-text-secondary">
+                  Fixed monthly price with included assessments and discounted overages.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {subscriptionTiers.map((tier, index) => (
+                  <Card
+                    key={index}
+                    className={`border-border-secondary relative flex flex-col ${
+                      tier.badge ? "border-primary shadow-lg shadow-primary/10" : ""
+                    }`}
+                  >
+                    {tier.badge && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                        <Badge variant="primary">
+                          <Sparkles className="h-3 w-3 mr-1" />
+                          {tier.badge}
+                        </Badge>
+                      </div>
+                    )}
+                    <CardHeader className="pb-8 pt-6">
+                      <CardTitle className="text-2xl">{tier.name}</CardTitle>
+                      <CardDescription className="text-base">
+                        {tier.description}
+                      </CardDescription>
+                      <div className="pt-4">
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-4xl font-bold text-text-primary">
+                            ${tier.monthlyPrice}
+                          </span>
+                          <span className="text-text-secondary">/mo</span>
+                        </div>
+                        <p className="text-sm text-text-secondary mt-2">
+                          {tier.includedAssessments} assessments included
+                        </p>
+                        <p className="text-xs text-text-tertiary mt-1">
+                          ${tier.overagePrice} per additional assessment
+                        </p>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="flex-1 flex flex-col">
+                      <Link href={tier.name === "Scale" ? "/contact" : "/auth/signup"} className="w-full">
+                        <Button variant={tier.variant} className="w-full mb-6">
+                          {tier.cta}
+                          <ArrowRight className="h-4 w-4 ml-2" />
+                        </Button>
+                      </Link>
+
+                      <div className="space-y-3 flex-1">
+                        {tier.features.map((feature, i) => (
+                          <div key={i} className="flex items-start gap-3">
+                            <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                            <span className="text-sm text-text-secondary">{feature}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Trust Signals */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-12 pt-12 border-t border-border">
@@ -384,8 +542,8 @@ export default function PricingPage() {
             </div>
             <div className="text-center">
               <Zap className="h-8 w-8 text-success mx-auto mb-2" />
-              <p className="text-sm font-medium text-text-primary">No Credit Card</p>
-              <p className="text-xs text-text-tertiary mt-1">Start free, upgrade later</p>
+              <p className="text-sm font-medium text-text-primary">No Expiration</p>
+              <p className="text-xs text-text-tertiary mt-1">Credits never expire</p>
             </div>
             <div className="text-center">
               <Users className="h-8 w-8 text-info mx-auto mb-2" />
@@ -394,8 +552,8 @@ export default function PricingPage() {
             </div>
             <div className="text-center">
               <Clock className="h-8 w-8 text-warning mx-auto mb-2" />
-              <p className="text-sm font-medium text-text-primary">Cancel Anytime</p>
-              <p className="text-xs text-text-tertiary mt-1">No long-term contracts</p>
+              <p className="text-sm font-medium text-text-primary">30-Day Guarantee</p>
+              <p className="text-xs text-text-tertiary mt-1">Money-back guarantee</p>
             </div>
           </div>
         </Container>
@@ -630,7 +788,7 @@ export default function PricingPage() {
                 Ready to transform your hiring?
               </h2>
               <p className="text-lg text-text-secondary mb-8 max-w-2xl mx-auto">
-                Start your free 14-day trial today. No credit card required.
+                Start your free 14-day trial today. 3 free assessments included. No credit card required.
               </p>
               <div className="flex items-center justify-center gap-4">
                 <Link href="/auth/signup">
@@ -646,7 +804,7 @@ export default function PricingPage() {
                 </Link>
               </div>
               <p className="text-xs text-text-tertiary mt-6">
-                14-day free trial • No credit card required • Cancel anytime
+                14-day free trial • 3 free assessments • No credit card required
               </p>
             </CardContent>
           </Card>
