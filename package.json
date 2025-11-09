@@ -13,7 +13,17 @@
     "test:ci": "jest --ci --coverage --maxWorkers=2",
     "test:api": "jest __tests__/api",
     "test:components": "jest __tests__/components",
-    "test:integration": "jest __tests__/integration"
+    "test:integration": "jest __tests__/integration",
+    "test:integration:docker": "jest __tests__/integration/database --runInBand --forceExit",
+    "test:integration:watch": "jest __tests__/integration/database --watch --runInBand",
+    "docker:dev": "./scripts/docker-dev.sh start",
+    "docker:dev:stop": "./scripts/docker-dev.sh stop",
+    "docker:dev:logs": "./scripts/docker-dev.sh logs",
+    "docker:test": "./scripts/docker-test.sh run",
+    "docker:test:watch": "./scripts/docker-test.sh interactive",
+    "docker:build": "docker build -t interviewlm-app .",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",
