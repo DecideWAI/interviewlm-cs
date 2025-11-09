@@ -30,6 +30,9 @@ import {
   ChevronDown,
   Play,
   Brain,
+  Plus,
+  Settings,
+  Layers,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -232,8 +235,94 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Configuration Features */}
+      <section className="py-20 px-6 bg-background-secondary">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-16">
+            <Badge variant="primary" className="mb-4">
+              <Target className="h-3 w-3 mr-1" />
+              Flexible Configuration
+            </Badge>
+            <h2 className="text-3xl md:text-5xl font-bold text-text-primary mb-6">
+              Configure Assessments for Your Exact Needs
+            </h2>
+            <p className="text-xl text-text-secondary max-w-3xl mx-auto">
+              Whether you're hiring junior frontend developers or senior ML engineers,
+              customize every assessment to match your requirements in minutes.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            {configFeatures.map((feature, i) => (
+              <Card key={i} className="border-border-secondary hover:border-primary/40 hover:shadow-glow transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-4">
+                    <div className="p-3 rounded-lg bg-primary/10 shrink-0">
+                      <feature.icon className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-text-primary mb-2">
+                        {feature.title}
+                      </h3>
+                      <p className="text-sm text-text-secondary mb-3">
+                        {feature.description}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {feature.examples.map((example, j) => (
+                          <Badge key={j} variant="default" className="text-xs">
+                            {example}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="mt-12 p-6 border border-primary/20 bg-primary/5 rounded-lg">
+            <div className="flex items-start gap-4">
+              <Sparkles className="h-6 w-6 text-primary flex-shrink-0 mt-1" />
+              <div>
+                <h3 className="font-semibold text-text-primary mb-2">
+                  Smart Templates & Custom Questions
+                </h3>
+                <p className="text-sm text-text-secondary mb-4">
+                  Start with our battle-tested templates for common roles, or create custom
+                  assessments using LLM-powered question generation. Configure difficulty
+                  distributions, add custom scenarios, and preview everything before publishing.
+                </p>
+                <div className="grid md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <div className="font-medium text-text-primary mb-1">Pre-built Templates</div>
+                    <div className="text-text-tertiary">Curated for common roles & levels</div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-text-primary mb-1">Custom Question Seeds</div>
+                    <div className="text-text-tertiary">AI generates tailored problems</div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-text-primary mb-1">Live Preview</div>
+                    <div className="text-text-tertiary">Test before sending to candidates</div>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <Link href="/assessments/new">
+                    <Button variant="primary" size="sm">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create Your First Assessment
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* How We Prevent Cheating */}
-      <section id="security" className="py-20 px-6 bg-background-secondary">
+      <section id="security" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
             <Badge variant="primary" className="mb-4">
@@ -631,6 +720,33 @@ const stats = [
   { value: "10K+", label: "Candidates Tested" },
   { value: "92%", label: "Hiring Accuracy" },
   { value: "3x", label: "Faster Hiring" },
+];
+
+const configFeatures = [
+  {
+    icon: Target,
+    title: "Role-Based Configuration",
+    description: "Select from 6 specialized engineering roles with pre-configured assessments optimized for each discipline.",
+    examples: ["Backend Engineer", "Frontend Engineer", "Full-Stack", "ML Engineer", "Security", "Database"],
+  },
+  {
+    icon: Layers,
+    title: "Seniority Levels",
+    description: "Automatically adjust difficulty, duration, and evaluation criteria based on candidate experience level.",
+    examples: ["Junior (0-2 yrs)", "Mid (2-5 yrs)", "Senior (5-8 yrs)", "Staff (8-12 yrs)", "Principal (12+ yrs)"],
+  },
+  {
+    icon: Settings,
+    title: "Custom Question Seeds",
+    description: "Use LLM instructions to generate tailored coding problems specific to your tech stack and requirements.",
+    examples: ["Template-based", "AI-generated", "Custom scenarios", "Difficulty control"],
+  },
+  {
+    icon: Eye,
+    title: "Preview & Test",
+    description: "Experience assessments from a candidate's perspective before publishing. Test the flow, timing, and difficulty.",
+    examples: ["Live preview", "Tier-based test runs", "Iterate quickly", "Validate before sending"],
+  },
 ];
 
 const problems = [
