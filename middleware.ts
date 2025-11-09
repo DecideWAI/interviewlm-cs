@@ -1,4 +1,11 @@
-export { auth as middleware } from "@/auth";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+
+export function middleware(request: NextRequest) {
+  // Simple middleware without heavy dependencies
+  // Auth verification happens in layouts and API routes instead
+  return NextResponse.next();
+}
 
 export const config = {
   matcher: [
