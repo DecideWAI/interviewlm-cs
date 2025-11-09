@@ -1,0 +1,446 @@
+/**
+ * Mock analytics data for demo/development
+ */
+
+import {
+  CandidateProfile,
+  DashboardKPIs,
+  PipelineFunnel,
+  AssessmentAnalytics,
+  PriorityAction,
+  SourceEffectiveness,
+} from "@/types/analytics";
+import { detectRedFlags, detectGreenFlags, calculateOverallScore, calculateAICollaborationScore } from "./scoring";
+
+/**
+ * Generate mock candidate profiles
+ */
+export const MOCK_CANDIDATES: CandidateProfile[] = [
+  {
+    id: "cand-1",
+    name: "Sarah Chen",
+    email: "sarah.chen@email.com",
+    appliedRole: "backend",
+    targetSeniority: "senior",
+    status: "assessment_completed",
+    stage: "assessment",
+    assessmentCompleted: true,
+    overallScore: 92,
+    technicalScore: 95,
+    aiCollaborationScore: 88,
+    codeQualityScore: 94,
+    problemSolvingScore: 90,
+    timeUsed: 72,
+    timeAllocated: 75,
+    completionRate: 1.0,
+    problemsSolved: 4,
+    problemsAttempted: 4,
+    testsPassed: 25,
+    testsFailed: 0,
+    claudeInteractions: 8,
+    avgPromptQuality: 4.8,
+    aiAcceptanceRate: 0.87,
+    aiUsagePattern: "goal-oriented",
+    topStrengths: [
+      "Excellent code architecture",
+      "Minimal, effective AI usage",
+      "Perfect test coverage",
+    ],
+    areasForImprovement: [],
+    redFlags: [],
+    greenFlags: [
+      {
+        type: "technical",
+        description: "Top-tier performance - Exceeds expectations",
+      },
+      {
+        type: "ai_usage",
+        description: "Excellent prompt engineering skills - Clear, specific requests",
+      },
+      {
+        type: "code_quality",
+        description: "Comprehensive test coverage with high pass rate",
+      },
+    ],
+    appliedAt: "2025-01-15T10:00:00Z",
+    invitedAt: "2025-01-16T09:00:00Z",
+    assessmentStartedAt: "2025-01-17T14:00:00Z",
+    assessmentCompletedAt: "2025-01-17T15:12:00Z",
+    lastActivityAt: "2025-01-17T15:12:00Z",
+  },
+  {
+    id: "cand-2",
+    name: "John Smith",
+    email: "john.smith@email.com",
+    appliedRole: "fullstack",
+    targetSeniority: "senior",
+    status: "under_review",
+    stage: "assessment",
+    assessmentCompleted: true,
+    overallScore: 87,
+    technicalScore: 92,
+    aiCollaborationScore: 85,
+    codeQualityScore: 84,
+    problemSolvingScore: 88,
+    timeUsed: 68,
+    timeAllocated: 75,
+    completionRate: 1.0,
+    problemsSolved: 4,
+    problemsAttempted: 4,
+    testsPassed: 23,
+    testsFailed: 2,
+    claudeInteractions: 12,
+    avgPromptQuality: 4.2,
+    aiAcceptanceRate: 0.73,
+    aiUsagePattern: "goal-oriented",
+    topStrengths: [
+      "Strong problem-solving",
+      "Good AI collaboration",
+      "Clean code structure",
+    ],
+    areasForImprovement: ["Minor test gaps"],
+    redFlags: [],
+    greenFlags: [
+      {
+        type: "ai_usage",
+        description: "Balanced AI usage - Strategic consultation without over-reliance",
+      },
+      {
+        type: "ai_usage",
+        description: "Thoughtful AI collaboration - Validates and refines suggestions",
+      },
+    ],
+    appliedAt: "2025-01-18T11:00:00Z",
+    invitedAt: "2025-01-19T10:00:00Z",
+    assessmentStartedAt: "2025-01-20T16:00:00Z",
+    assessmentCompletedAt: "2025-01-20T17:08:00Z",
+    lastActivityAt: "2025-01-20T17:08:00Z",
+  },
+  {
+    id: "cand-3",
+    name: "Michael Johnson",
+    email: "michael.j@email.com",
+    appliedRole: "backend",
+    targetSeniority: "mid",
+    status: "assessment_completed",
+    stage: "assessment",
+    assessmentCompleted: true,
+    overallScore: 78,
+    technicalScore: 82,
+    aiCollaborationScore: 70,
+    codeQualityScore: 81,
+    problemSolvingScore: 75,
+    timeUsed: 58,
+    timeAllocated: 75,
+    completionRate: 0.75,
+    problemsSolved: 3,
+    problemsAttempted: 4,
+    testsPassed: 19,
+    testsFailed: 6,
+    claudeInteractions: 18,
+    avgPromptQuality: 3.1,
+    aiAcceptanceRate: 0.56,
+    aiUsagePattern: "trial-and-error",
+    topStrengths: ["Fast completion", "Functional code"],
+    areasForImprovement: ["AI prompt quality", "Test coverage", "Problem completion"],
+    redFlags: [
+      {
+        type: "ai_usage",
+        severity: "medium",
+        description: "Poor prompt quality - Vague or unclear AI requests",
+      },
+    ],
+    greenFlags: [],
+    appliedAt: "2025-01-20T09:00:00Z",
+    invitedAt: "2025-01-21T08:00:00Z",
+    assessmentStartedAt: "2025-01-22T13:00:00Z",
+    assessmentCompletedAt: "2025-01-22T13:58:00Z",
+    lastActivityAt: "2025-01-22T13:58:00Z",
+  },
+  {
+    id: "cand-4",
+    name: "Emily Rodriguez",
+    email: "emily.r@email.com",
+    appliedRole: "frontend",
+    targetSeniority: "mid",
+    status: "assessment_in_progress",
+    stage: "assessment",
+    assessmentCompleted: false,
+    timeUsed: 35,
+    timeAllocated: 60,
+    completionRate: 0.5,
+    problemsSolved: 2,
+    problemsAttempted: 3,
+    claudeInteractions: 6,
+    topStrengths: [],
+    areasForImprovement: [],
+    redFlags: [],
+    greenFlags: [],
+    appliedAt: "2025-01-23T10:00:00Z",
+    invitedAt: "2025-01-24T09:00:00Z",
+    assessmentStartedAt: "2025-01-25T15:00:00Z",
+    lastActivityAt: "2025-01-25T15:35:00Z",
+  },
+  {
+    id: "cand-5",
+    name: "David Kim",
+    email: "david.kim@email.com",
+    appliedRole: "ml",
+    targetSeniority: "senior",
+    status: "assessment_sent",
+    stage: "assessment",
+    assessmentCompleted: false,
+    topStrengths: [],
+    areasForImprovement: [],
+    redFlags: [],
+    greenFlags: [],
+    appliedAt: "2025-01-24T14:00:00Z",
+    invitedAt: "2025-01-25T10:00:00Z",
+    lastActivityAt: "2025-01-25T10:00:00Z",
+  },
+];
+
+/**
+ * Mock Dashboard KPIs
+ */
+export const MOCK_DASHBOARD_KPIS: DashboardKPIs = {
+  activeAssessments: {
+    value: 12,
+    label: "Active Assessments",
+    trend: {
+      direction: "up",
+      percentage: 20,
+      comparison: "vs last month",
+    },
+    status: "good",
+  },
+  pendingReview: {
+    value: 8,
+    label: "Pending Review",
+    trend: {
+      direction: "neutral",
+      percentage: 0,
+      comparison: "vs last week",
+    },
+    status: "warning",
+  },
+  completedThisMonth: {
+    value: 45,
+    label: "Completed This Month",
+    trend: {
+      direction: "up",
+      percentage: 15,
+      comparison: "vs last month",
+    },
+    status: "good",
+  },
+  averageScore: {
+    value: "7.2/10",
+    label: "Average Score",
+    trend: {
+      direction: "down",
+      percentage: 5,
+      comparison: "vs last month",
+    },
+    status: "warning",
+  },
+  creditsRemaining: {
+    value: 142,
+    label: "Credits Remaining",
+    status: "good",
+  },
+  completionRate: {
+    value: "72%",
+    label: "Completion Rate",
+    trend: {
+      direction: "up",
+      percentage: 8,
+      comparison: "vs last quarter",
+    },
+    status: "good",
+  },
+  passRate: {
+    value: "24%",
+    label: "Pass Rate",
+    trend: {
+      direction: "down",
+      percentage: 3,
+      comparison: "vs last quarter",
+    },
+    status: "warning",
+  },
+  timeToHire: {
+    value: "18 days",
+    label: "Avg Time to Hire",
+    trend: {
+      direction: "down",
+      percentage: 22,
+      comparison: "vs last quarter",
+    },
+    status: "good",
+  },
+  offerAcceptanceRate: {
+    value: "85%",
+    label: "Offer Acceptance",
+    trend: {
+      direction: "up",
+      percentage: 10,
+      comparison: "vs last quarter",
+    },
+    status: "good",
+  },
+  avgAIProficiency: {
+    value: "8.1/10",
+    label: "Avg AI Proficiency",
+    trend: {
+      direction: "up",
+      percentage: 12,
+      comparison: "vs last month",
+    },
+    status: "good",
+  },
+  candidatesUsingAI: {
+    value: "94%",
+    label: "Candidates Using AI",
+    status: "good",
+  },
+};
+
+/**
+ * Mock Pipeline Funnel
+ */
+export const MOCK_PIPELINE_FUNNEL: PipelineFunnel = {
+  stages: [
+    {
+      name: "Invited",
+      count: 100,
+      percentage: 100,
+      conversionToNext: 0.65,
+      avgDaysInStage: 1,
+    },
+    {
+      name: "Started",
+      count: 65,
+      percentage: 65,
+      conversionToNext: 0.72,
+      avgDaysInStage: 0,
+    },
+    {
+      name: "Completed",
+      count: 47,
+      percentage: 47,
+      conversionToNext: 0.38,
+      avgDaysInStage: 2,
+    },
+    {
+      name: "Passed",
+      count: 18,
+      percentage: 18,
+      conversionToNext: 0.83,
+      avgDaysInStage: 3,
+    },
+    {
+      name: "Interviewed",
+      count: 15,
+      percentage: 15,
+      conversionToNext: 0.67,
+      avgDaysInStage: 7,
+    },
+    {
+      name: "Offered",
+      count: 10,
+      percentage: 10,
+      conversionToNext: 0.80,
+      avgDaysInStage: 5,
+    },
+    {
+      name: "Hired",
+      count: 8,
+      percentage: 8,
+      avgDaysInStage: 0,
+    },
+  ],
+  overallConversion: 0.08,
+};
+
+/**
+ * Mock Priority Actions
+ */
+export const MOCK_PRIORITY_ACTIONS: PriorityAction[] = [
+  {
+    id: "action-1",
+    type: "review_needed",
+    severity: "high",
+    title: "Assessments Awaiting Review",
+    description: "5 candidates completed assessments and need review",
+    count: 5,
+    actionLabel: "Review Now",
+    actionUrl: "/candidates?status=assessment_completed",
+  },
+  {
+    id: "action-2",
+    type: "stuck_in_stage",
+    severity: "medium",
+    title: "Candidates Stuck in Assessment",
+    description: "3 candidates have been in assessment stage for >48 hours",
+    count: 3,
+    actionLabel: "Send Reminder",
+    actionUrl: "/candidates?stuck=true",
+  },
+  {
+    id: "action-3",
+    type: "offer_response",
+    severity: "low",
+    title: "Offers Accepted This Week",
+    description: "2 candidates accepted offers - schedule onboarding",
+    count: 2,
+    actionLabel: "View Details",
+    actionUrl: "/candidates?status=offer_accepted",
+  },
+];
+
+/**
+ * Mock Source Effectiveness
+ */
+export const MOCK_SOURCE_EFFECTIVENESS: SourceEffectiveness[] = [
+  {
+    source: "Employee Referral",
+    totalCandidates: 25,
+    assessmentsCompleted: 22,
+    passRate: 0.36,
+    avgScore: 78,
+    hires: 8,
+    costPerHire: 500,
+    roi: 8.5,
+  },
+  {
+    source: "LinkedIn",
+    totalCandidates: 42,
+    assessmentsCompleted: 35,
+    passRate: 0.23,
+    avgScore: 71,
+    hires: 8,
+    costPerHire: 2800,
+    roi: 2.1,
+  },
+  {
+    source: "Indeed",
+    totalCandidates: 18,
+    assessmentsCompleted: 14,
+    passRate: 0.21,
+    avgScore: 68,
+    hires: 3,
+    costPerHire: 1200,
+    roi: 3.5,
+  },
+  {
+    source: "Company Website",
+    totalCandidates: 15,
+    assessmentsCompleted: 12,
+    passRate: 0.25,
+    avgScore: 72,
+    hires: 3,
+    costPerHire: 100,
+    roi: 12.0,
+  },
+];
