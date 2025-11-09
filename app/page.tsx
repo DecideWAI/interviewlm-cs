@@ -244,7 +244,7 @@ export default function LandingPage() {
               Zero-Tolerance for Cheating
             </h2>
             <p className="text-xl text-text-secondary max-w-3xl mx-auto">
-              Our secure Modal AI sandboxes and real-time monitoring make cheating
+              Our Secure Sandboxes and real-time monitoring make cheating
               technically impossible—not just difficult.
             </p>
           </div>
@@ -652,7 +652,7 @@ const solutions = [
   {
     icon: Terminal,
     title: "Secure AI-Enabled Sandboxes",
-    description: "Candidates work in Modal AI sandboxes with Claude Code CLI pre-configured. They code naturally while we monitor everything.",
+    description: "Candidates work in Secure Sandboxes with Claude Code CLI pre-configured. They code naturally while we monitor everything.",
     benefits: [
       "Every AI prompt logged and analyzed for quality",
       "File changes, commands, and code evolution tracked",
@@ -705,7 +705,7 @@ const monitored = [
 ];
 
 const securityMeasures = [
-  { title: "Isolated Containers", description: "Fresh Modal sandbox per candidate, zero contamination" },
+  { title: "Isolated Containers", description: "Fresh Secure Sandbox per candidate, zero contamination" },
   { title: "Controlled AI Access", description: "All AI calls proxied through our backend for logging" },
   { title: "Network Whitelisting", description: "Only approved documentation sites accessible" },
   { title: "Session Recording", description: "Encrypted storage of all session data (SOC 2 compliant)" },
@@ -727,7 +727,7 @@ const comparisonData = [
 const faqs = [
   {
     question: "How do you prevent candidates from using unauthorized AI tools?",
-    answer: "Candidates work in secure Modal AI sandboxes where all network access is controlled. They can only use Claude Code CLI (which we provide and monitor), and attempts to access external AI tools are blocked. We log every AI interaction for quality analysis.",
+    answer: "Candidates work in Secure Sandboxes where all network access is controlled. They can only use Claude Code CLI (which we provide and monitor), and attempts to access external AI tools are blocked. We log every AI interaction for quality analysis.",
   },
   {
     question: "Can candidates cheat by sharing screens or getting help from friends?",
@@ -747,7 +747,7 @@ const faqs = [
   },
   {
     question: "Do candidates need to install anything?",
-    answer: "No. Candidates access the assessment through their browser. They code in a browser-based VS Code (code-server) running in a secure Modal sandbox with Claude Code CLI pre-installed. Zero setup friction.",
+    answer: "No. Candidates access the assessment through their browser. They code in a browser-based VS Code (code-server) running in a Secure Sandbox with Claude Code CLI pre-installed. Zero setup friction.",
   },
   {
     question: "How do you ensure candidate data privacy and security?",
