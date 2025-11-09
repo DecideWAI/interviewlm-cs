@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { toast } from "sonner";
 import { Dialog } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -95,7 +96,7 @@ export function SeedPreviewModal({
 
   const handleGenerate = async () => {
     if (previewsRemaining <= 0) {
-      alert("You've reached your preview limit. Upgrade your plan for unlimited previews.");
+      toast.error("You've reached your preview limit. Upgrade your plan for unlimited previews.");
       return;
     }
 
@@ -115,12 +116,12 @@ export function SeedPreviewModal({
   };
 
   const handleSaveAsTemplate = () => {
-    alert("Template saved! You can now use this in assessments.");
+    toast.success("Template saved! You can now use this in assessments.");
     // In production: POST to /api/templates
   };
 
   const handleUseInAssessment = () => {
-    alert("Redirecting to assessment builder...");
+    toast.info("Redirecting to assessment builder...");
     // In production: Navigate to assessment builder with this problem
     onClose();
   };

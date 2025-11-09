@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -11,10 +11,16 @@ interface TerminalProps {
   className?: string;
 }
 
-export function Terminal({ onCommand, className = "" }: TerminalProps) {
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<XTerm | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+export interface TerminalHandle {
+  write: (data: string) => void;
+  writeln: (data: string) => void;
+}
+
+export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
+  ({ onCommand, className = "" }, ref) => {
+    const terminalRef = useRef<HTMLDivElement>(null);
+    const xtermRef = useRef<XTerm | null>(null);
+    const fitAddonRef = useRef<FitAddon | null>(null);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -65,9 +71,9 @@ export function Terminal({ onCommand, className = "" }: TerminalProps) {
     terminal.open(terminalRef.current);
 
     // Delay fit() to ensure DOM has rendered and dimensions are available
-    setTimeout(() => {
+    requestAnimationFrame(() => {
       fitAddon.fit();
-    }, 0);
+    });
 
     // Store refs
     xtermRef.current = terminal;
@@ -139,26 +145,22 @@ export function Terminal({ onCommand, className = "" }: TerminalProps) {
     };
   }, [onCommand]);
 
-  // Public method to write to terminal
-  const write = (data: string) => {
-    xtermRef.current?.write(data);
-  };
+    // Expose methods via ref using useImperativeHandle
+    useImperativeHandle(ref, () => ({
+      write: (data: string) => {
+        xtermRef.current?.write(data);
+      },
+      writeln: (data: string) => {
+        xtermRef.current?.writeln(data);
+      },
+    }));
 
-  const writeln = (data: string) => {
-    xtermRef.current?.writeln(data);
-  };
+    return (
+      <div className={`h-full w-full bg-background ${className}`}>
+        <div ref={terminalRef} className="h-full w-full p-2" />
+      </div>
+    );
+  }
+);
 
-  // Expose methods via ref
-  useEffect(() => {
-    if (terminalRef.current) {
-      (terminalRef.current as any).write = write;
-      (terminalRef.current as any).writeln = writeln;
-    }
-  }, []);
-
-  return (
-    <div className={`h-full w-full bg-background ${className}`}>
-      <div ref={terminalRef} className="h-full w-full p-2" />
-    </div>
-  );
-}
+Terminal.displayName = "Terminal";
