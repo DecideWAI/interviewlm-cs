@@ -31,7 +31,7 @@ InterviewLM provides multiple Docker configurations:
 ```
 ┌─────────────────────────────────────────┐
 │          Next.js Application             │
-│         (Port 3000)                      │
+│  Dev: 3002:3000 | Prod: 3000:3000        │
 │  - Frontend + Backend API Routes         │
 │  - Auth.js Authentication                │
 │  - Prisma ORM                            │
@@ -41,12 +41,15 @@ InterviewLM provides multiple Docker configurations:
               │                             │
 ┌─────────────▼────────────┐  ┌────────────▼─────────┐
 │   PostgreSQL Database     │  │   pgAdmin (Optional)  │
-│   (Port 5432)             │  │   (Port 5050)         │
-│  - User data              │  │  - DB Management UI   │
-│  - Organizations          │  └──────────────────────┘
+│ Dev: 5433:5432            │  │   (Port 5050)         │
+│ Prod: 5432:5432           │  │  - DB Management UI   │
+│  - User data              │  └──────────────────────┘
+│  - Organizations          │
 │  - Assessments            │
 │  - Candidates             │
 └──────────────────────────┘
+
+Port Format: HOST:CONTAINER
 ```
 
 ---
@@ -100,6 +103,14 @@ docker-compose -f docker-compose.dev.yml up -d
 
 ### 3. Access the Application
 
+**Development Mode:**
+- **App**: http://localhost:3002
+- **Database**: localhost:5433 (host) → 5432 (container)
+  - User: `postgres`
+  - Password: `postgres`
+  - Database: `interviewlm`
+
+**Production Mode:**
 - **App**: http://localhost:3000
 - **Database**: localhost:5432
   - User: `postgres`
@@ -200,12 +211,12 @@ This will:
 Create `.env` file:
 
 ```env
-# Database
+# Database (container-to-container, always use internal port 5432)
 DATABASE_URL=postgresql://postgres:postgres@postgres:5432/interviewlm
 
-# NextAuth
+# NextAuth (use host port for dev mode)
 NEXTAUTH_SECRET=development-secret
-NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_URL=http://localhost:3002
 
 # OAuth (optional)
 GITHUB_CLIENT_ID=your_github_client_id
@@ -213,6 +224,12 @@ GITHUB_CLIENT_SECRET=your_github_secret
 GOOGLE_CLIENT_ID=your_google_client_id
 GOOGLE_CLIENT_SECRET=your_google_secret
 ```
+
+**Important Notes:**
+- **DATABASE_URL** uses `postgres:5432` (internal container hostname and port) for container-to-container communication
+- **NEXTAUTH_URL** uses `localhost:3002` (host port) for development mode
+- When connecting from your **host machine** (e.g., using pgAdmin or Prisma Studio locally), use `localhost:5433`
+- When connecting from **inside containers**, use `postgres:5432`
 
 ---
 

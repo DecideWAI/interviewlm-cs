@@ -106,8 +106,8 @@ npm run docker:dev:stop
 ```
 
 Access:
-- **App**: http://localhost:3000
-- **Database**: localhost:5432
+- **App**: http://localhost:3002
+- **Database**: localhost:5433 (mapped to container port 5432)
 
 For detailed Docker instructions, see [Docker Guide](docs/DOCKER.md).
 
