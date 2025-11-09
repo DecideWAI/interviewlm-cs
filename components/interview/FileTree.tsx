@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from "lucide-react";
+import { ChevronRight, ChevronDown, File, Folder, FolderOpen, Plus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface FileNode {
@@ -13,20 +13,24 @@ export interface FileNode {
 }
 
 interface FileTreeProps {
+  sessionId: string;
   files: FileNode[];
   selectedFile?: string;
   onFileSelect: (file: FileNode) => void;
+  onFileCreate?: (path: string, type: "file" | "folder") => void;
+  onFileDelete?: (path: string) => void;
   className?: string;
 }
 
 interface FileTreeNodeProps {
+  sessionId: string;
   node: FileNode;
   level: number;
   selectedFile?: string;
   onFileSelect: (file: FileNode) => void;
 }
 
-function FileTreeNode({ node, level, selectedFile, onFileSelect }: FileTreeNodeProps) {
+function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect }: FileTreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const isSelected = selectedFile === node.path;
   const isFolder = node.type === "folder";
@@ -36,6 +40,19 @@ function FileTreeNode({ node, level, selectedFile, onFileSelect }: FileTreeNodeP
       setIsExpanded(!isExpanded);
     } else {
       onFileSelect(node);
+
+      // Record file open event
+      fetch(`/api/interview/${sessionId}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventType: "file_open",
+          data: {
+            path: node.path,
+            name: node.name,
+          },
+        }),
+      }).catch((err) => console.error("Failed to record file open:", err));
     }
   };
 
@@ -77,6 +94,7 @@ function FileTreeNode({ node, level, selectedFile, onFileSelect }: FileTreeNodeP
           {node.children.map((child) => (
             <FileTreeNode
               key={child.id}
+              sessionId={sessionId}
               node={child}
               level={level + 1}
               selectedFile={selectedFile}
@@ -89,13 +107,72 @@ function FileTreeNode({ node, level, selectedFile, onFileSelect }: FileTreeNodeP
   );
 }
 
-export function FileTree({ files, selectedFile, onFileSelect, className }: FileTreeProps) {
+export function FileTree({
+  sessionId,
+  files,
+  selectedFile,
+  onFileSelect,
+  onFileCreate,
+  onFileDelete,
+  className
+}: FileTreeProps) {
+  const handleFileCreate = (path: string, type: "file" | "folder") => {
+    // Record file creation event
+    fetch(`/api/interview/${sessionId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventType: "file_create",
+        data: {
+          path,
+          type,
+        },
+      }),
+    }).catch((err) => console.error("Failed to record file creation:", err));
+
+    onFileCreate?.(path, type);
+  };
+
+  const handleFileDelete = (path: string) => {
+    // Record file deletion event
+    fetch(`/api/interview/${sessionId}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventType: "file_delete",
+        data: {
+          path,
+        },
+      }),
+    }).catch((err) => console.error("Failed to record file deletion:", err));
+
+    onFileDelete?.(path);
+  };
+
   return (
     <div className={cn("bg-background overflow-y-auto", className)}>
+      <div className="border-b border-border p-2 flex items-center justify-between">
+        <span className="text-xs font-semibold text-text-primary">Files</span>
+        {onFileCreate && (
+          <button
+            onClick={() => {
+              const fileName = prompt("Enter file name:");
+              if (fileName) {
+                handleFileCreate(fileName, "file");
+              }
+            }}
+            className="text-text-tertiary hover:text-primary transition-colors"
+            title="Create new file"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        )}
+      </div>
       <div className="py-2">
         {files.map((node) => (
           <FileTreeNode
             key={node.id}
+            sessionId={sessionId}
             node={node}
             level={0}
             selectedFile={selectedFile}
