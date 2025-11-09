@@ -27,6 +27,7 @@ import {
 import { MOCK_PROBLEM_SEEDS } from "@/lib/mock-seeds-data";
 import { ROLES, SENIORITY_LEVELS } from "@/lib/assessment-config";
 import { cn } from "@/lib/utils";
+import { SeedPreviewModal } from "@/components/problems/SeedPreviewModal";
 
 export default function SeedDetailPage() {
   const params = useParams();
@@ -37,6 +38,12 @@ export default function SeedDetailPage() {
   const seed = MOCK_PROBLEM_SEEDS.find((s) => s.id === seedId);
 
   const [activeTab, setActiveTab] = useState("overview");
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+
+  // Mock tier data (in production, fetch from user context)
+  const mockTier = "medium" as const;
+  const mockPreviewsRemaining = 45;
+  const mockPreviewsLimit = 50;
 
   if (!seed) {
     return (
@@ -134,7 +141,7 @@ export default function SeedDetailPage() {
               <Edit className="h-4 w-4 mr-2" />
               Edit
             </Button>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={() => setIsPreviewModalOpen(true)}>
               <Eye className="h-4 w-4 mr-2" />
               Preview
             </Button>
@@ -413,6 +420,16 @@ export default function SeedDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* Preview Modal */}
+      <SeedPreviewModal
+        isOpen={isPreviewModalOpen}
+        onClose={() => setIsPreviewModalOpen(false)}
+        seed={seed}
+        tier={mockTier}
+        previewsRemaining={mockPreviewsRemaining}
+        previewsLimit={mockPreviewsLimit}
+      />
     </DashboardLayout>
   );
 }
