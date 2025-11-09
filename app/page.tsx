@@ -20,9 +20,11 @@ import {
   Eye,
   Lock,
   TrendingUp,
+  TrendingDown,
   Clock,
   Target,
   AlertCircle,
+  AlertTriangle,
   XCircle,
   BarChart3,
   Users,
@@ -33,6 +35,7 @@ import {
   Plus,
   Settings,
   Layers,
+  ThumbsUp,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -482,6 +485,141 @@ export default function LandingPage() {
           </div>
 
           <InterviewPreview />
+
+          {/* Dashboard Analytics Showcase */}
+          <div className="mt-12 space-y-6">
+            <div className="text-center mb-8">
+              <h3 className="text-2xl font-bold text-text-primary mb-3">
+                Actionable Analytics Dashboard
+              </h3>
+              <p className="text-text-secondary max-w-2xl mx-auto">
+                Make data-driven hiring decisions with comprehensive metrics, AI collaboration insights, and automated candidate evaluation
+              </p>
+            </div>
+
+            {/* Dashboard Features Grid */}
+            <div className="grid md:grid-cols-3 gap-6">
+              <Card className="border-border-secondary hover:border-primary/40 transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <TrendingUp className="h-5 w-5 text-primary" />
+                    </div>
+                    <h4 className="font-semibold text-text-primary">Pipeline Tracking</h4>
+                  </div>
+                  <p className="text-sm text-text-secondary mb-4">
+                    Monitor conversion rates at every stage from invitation to hire with visual funnel analytics
+                  </p>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Invited → Started</span>
+                      <span className="text-success font-medium">65%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Completed → Passed</span>
+                      <span className="text-warning font-medium">38%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Overall Conversion</span>
+                      <span className="text-primary font-medium">8%</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border-secondary hover:border-primary/40 transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-success/10">
+                      <Brain className="h-5 w-5 text-success" />
+                    </div>
+                    <h4 className="font-semibold text-text-primary">AI Proficiency Metrics</h4>
+                  </div>
+                  <p className="text-sm text-text-secondary mb-4">
+                    Evaluate how effectively candidates collaborate with AI - a critical skill for modern developers
+                  </p>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Prompt Quality</span>
+                      <span className="text-success font-medium">4.8/5.0</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">AI Acceptance Rate</span>
+                      <span className="text-success font-medium">73%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Usage Pattern</span>
+                      <span className="text-primary font-medium">Goal-oriented</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border-secondary hover:border-primary/40 transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-warning/10">
+                      <AlertCircle className="h-5 w-5 text-warning" />
+                    </div>
+                    <h4 className="font-semibold text-text-primary">Smart Flag Detection</h4>
+                  </div>
+                  <p className="text-sm text-text-secondary mb-4">
+                    Automatically identify red flags (code quality issues, over-reliance on AI) and green flags (excellence indicators)
+                  </p>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <ThumbsUp className="h-3 w-3 text-success" />
+                      <span className="text-xs text-text-secondary">Top-tier performance</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <ThumbsUp className="h-3 w-3 text-success" />
+                      <span className="text-xs text-text-secondary">Excellent prompt engineering</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-3 w-3 text-warning" />
+                      <span className="text-xs text-text-secondary">Minor test coverage gaps</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Key Metrics */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Active Assessments</p>
+                <p className="text-2xl font-bold text-text-primary">12</p>
+                <p className="text-xs text-success flex items-center gap-1 mt-1">
+                  <TrendingUp className="h-3 w-3" />
+                  +20% vs last month
+                </p>
+              </div>
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Avg Score</p>
+                <p className="text-2xl font-bold text-text-primary">7.2/10</p>
+                <p className="text-xs text-warning flex items-center gap-1 mt-1">
+                  <TrendingDown className="h-3 w-3" />
+                  -5% vs last month
+                </p>
+              </div>
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Completion Rate</p>
+                <p className="text-2xl font-bold text-text-primary">72%</p>
+                <p className="text-xs text-success flex items-center gap-1 mt-1">
+                  <TrendingUp className="h-3 w-3" />
+                  +8% vs last quarter
+                </p>
+              </div>
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Avg AI Proficiency</p>
+                <p className="text-2xl font-bold text-text-primary">8.1/10</p>
+                <p className="text-xs text-success flex items-center gap-1 mt-1">
+                  <TrendingUp className="h-3 w-3" />
+                  +12% vs last month
+                </p>
+              </div>
+            </div>
+          </div>
 
           <div className="mt-8 p-6 rounded-lg border border-primary/20 bg-primary/5">
             <div className="flex items-start gap-4">
