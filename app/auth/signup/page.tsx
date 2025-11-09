@@ -2,25 +2,75 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { Logo } from "@/components/Logo";
-import { Mail, Lock, User, Building, ArrowRight, Github } from "lucide-react";
+import { Mail, Lock, User, Building, ArrowRight, Github, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 
 export default function SignUpPage() {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [company, setCompany] = useState("");
   const [role, setRole] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // TODO: Implement auth logic
-    console.log({ name, email, password, company, role });
+    setIsLoading(true);
+
+    try {
+      // Register user
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, password }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        toast.error(data.error || "Registration failed");
+        setIsLoading(false);
+        return;
+      }
+
+      // Sign in after successful registration
+      toast.success("Account created successfully!");
+
+      const signInResult = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (signInResult?.error) {
+        toast.error("Please sign in manually");
+        router.push("/auth/signin");
+      } else {
+        router.push("/dashboard");
+      }
+    } catch (error) {
+      toast.error("Something went wrong");
+      setIsLoading(false);
+    }
+  };
+
+  const handleOAuthSignIn = async (provider: "github" | "google") => {
+    setIsLoading(true);
+    try {
+      await signIn(provider, { callbackUrl: "/dashboard" });
+    } catch (error) {
+      toast.error("Something went wrong");
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -49,12 +99,31 @@ export default function SignUpPage() {
           <CardContent>
             {/* Social Sign Up */}
             <div className="space-y-3 mb-6">
-              <Button variant="outline" className="w-full" type="button">
-                <Github className="h-4 w-4 mr-2" />
+              <Button
+                variant="outline"
+                className="w-full"
+                type="button"
+                onClick={() => handleOAuthSignIn("github")}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Github className="h-4 w-4 mr-2" />
+                )}
                 Continue with GitHub
               </Button>
-              <Button variant="outline" className="w-full" type="button">
-                <svg className="h-4 w-4 mr-2" viewBox="0 0 24 24">
+              <Button
+                variant="outline"
+                className="w-full"
+                type="button"
+                onClick={() => handleOAuthSignIn("google")}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <svg className="h-4 w-4 mr-2" viewBox="0 0 24 24">
                   <path
                     fill="currentColor"
                     d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
@@ -71,7 +140,8 @@ export default function SignUpPage() {
                     fill="currentColor"
                     d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                   />
-                </svg>
+                  </svg>
+                )}
                 Continue with Google
               </Button>
             </div>
@@ -174,9 +244,18 @@ export default function SignUpPage() {
                 </p>
               </div>
 
-              <Button type="submit" className="w-full" size="lg">
-                Create account
-                <ArrowRight className="h-4 w-4 ml-2" />
+              <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
+                {isLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Creating account...
+                  </>
+                ) : (
+                  <>
+                    Create account
+                    <ArrowRight className="h-4 w-4 ml-2" />
+                  </>
+                )}
               </Button>
             </form>
 
