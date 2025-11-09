@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Container } from "@/components/layout/container";
+import { Logo } from "@/components/Logo";
 import {
   Check,
   X,
@@ -275,10 +276,8 @@ export default function PricingPage() {
       <header className="border-b border-border sticky top-0 bg-background/80 backdrop-blur-xl z-50">
         <Container size="lg">
           <div className="flex items-center justify-between h-16">
-            <Link href="/" className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
-                <span className="text-sm font-bold text-white">IL</span>
-              </div>
+            <Link href="/" className="flex items-center gap-3">
+              <Logo variant="icon" size={32} />
               <span className="text-lg font-semibold text-text-primary">
                 InterviewLM
               </span>
@@ -379,7 +378,7 @@ export default function PricingPage() {
                     }`}
                   >
                     {pack.badge && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <div className="absolute top-4 left-1/2 -translate-x-1/2 -translate-y-full">
                         <Badge variant="primary">
                           <Sparkles className="h-3 w-3 mr-1" />
                           {pack.badge}

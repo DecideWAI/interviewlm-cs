@@ -5,44 +5,9 @@ import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
 import { go } from "@codemirror/lang-go";
+import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { EditorView } from "@codemirror/view";
 import { Extension } from "@codemirror/state";
-
-// Custom theme matching our pitch black design
-const customTheme = EditorView.theme({
-  "&": {
-    backgroundColor: "#000000",
-    color: "#E0E0E0",
-    height: "100%",
-  },
-  ".cm-content": {
-    caretColor: "#5E6AD2",
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-    fontSize: "14px",
-    lineHeight: "1.6",
-  },
-  ".cm-cursor, .cm-dropCursor": {
-    borderLeftColor: "#5E6AD2",
-  },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-    backgroundColor: "rgba(94, 106, 210, 0.3)",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "#0A0A0A",
-  },
-  ".cm-gutters": {
-    backgroundColor: "#000000",
-    color: "#4A4A4A",
-    border: "none",
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: "#0A0A0A",
-    color: "#E0E0E0",
-  },
-  ".cm-lineNumbers .cm-gutterElement": {
-    padding: "0 8px 0 8px",
-  },
-}, { dark: true });
 
 interface CodeEditorProps {
   value: string;
@@ -77,15 +42,15 @@ export function CodeEditor({
 
   const extensions = [
     getLanguageExtension(),
-    customTheme,
     EditorView.lineWrapping,
   ];
 
   return (
-    <div className="h-full w-full bg-background overflow-hidden">
+    <div className="h-full w-full bg-[#1e1e1e] overflow-auto">
       <CodeMirror
         value={value}
         height={height}
+        theme={vscodeDark}
         extensions={extensions}
         onChange={onChange}
         readOnly={readOnly}
