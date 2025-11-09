@@ -1,0 +1,285 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// NextAuth.js Models
+// You can find the latest schema at: https://authjs.dev/getting-started/adapters/prisma
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String  @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String  @map("provider_account_id")
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+  password      String?   // For credentials provider
+  role          UserRole  @default(USER)
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  accounts           Account[]
+  sessions           Session[]
+  organizationMember OrganizationMember[]
+  assessments        Assessment[]
+  candidates         Candidate[]
+
+  @@map("users")
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// Organization and Team Management
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  image       String?
+
+  // Billing
+  plan        Plan     @default(FREE)
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  members     OrganizationMember[]
+  assessments Assessment[]
+  candidates  Candidate[]
+  problemSeeds ProblemSeed[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  userId         String   @map("user_id")
+  role           OrgRole  @default(MEMBER)
+
+  invitedAt      DateTime @default(now()) @map("invited_at")
+  joinedAt       DateTime? @map("joined_at")
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@map("organization_members")
+}
+
+// Assessment and Interview Management
+
+model Assessment {
+  id             String          @id @default(cuid())
+  organizationId String          @map("organization_id")
+  createdById    String          @map("created_by_id")
+
+  title          String
+  description    String?
+  role           String
+  seniority      Seniority
+  duration       Int             // in minutes
+
+  status         AssessmentStatus @default(DRAFT)
+
+  // Configuration
+  enableCoding   Boolean         @default(true) @map("enable_coding")
+  enableTerminal Boolean         @default(true) @map("enable_terminal")
+  enableAI       Boolean         @default(true) @map("enable_ai")
+
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  publishedAt    DateTime?       @map("published_at")
+
+  // Relations
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  questions      AssessmentQuestion[]
+  candidates     Candidate[]
+
+  @@map("assessments")
+}
+
+model AssessmentQuestion {
+  id           String     @id @default(cuid())
+  assessmentId String     @map("assessment_id")
+  problemSeedId String?   @map("problem_seed_id")
+
+  order        Int
+  title        String
+  description  String     @db.Text
+  difficulty   Difficulty
+  timeLimit    Int?       @map("time_limit") // in minutes
+
+  // Question type
+  type         QuestionType @default(CODING)
+
+  assessment   Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  problemSeed  ProblemSeed? @relation(fields: [problemSeedId], references: [id])
+
+  @@map("assessment_questions")
+}
+
+model ProblemSeed {
+  id             String     @id @default(cuid())
+  organizationId String     @map("organization_id")
+
+  title          String
+  description    String     @db.Text
+  difficulty     Difficulty
+  category       String
+  tags           String[]   @default([])
+
+  // Initial code and test setup
+  starterCode    String?    @map("starter_code") @db.Text
+  testCode       String?    @map("test_code") @db.Text
+  language       String     @default("javascript")
+
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  questions      AssessmentQuestion[]
+
+  @@map("problem_seeds")
+}
+
+// Candidate and Interview Management
+
+model Candidate {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  assessmentId   String   @map("assessment_id")
+  createdById    String   @map("created_by_id")
+
+  // Candidate info
+  name           String
+  email          String
+  phone          String?
+
+  // Interview details
+  status         CandidateStatus @default(INVITED)
+  invitedAt      DateTime @default(now()) @map("invited_at")
+  startedAt      DateTime? @map("started_at")
+  completedAt    DateTime? @map("completed_at")
+
+  // Scoring
+  overallScore   Float?   @map("overall_score")
+  codingScore    Float?   @map("coding_score")
+  communicationScore Float? @map("communication_score")
+  problemSolvingScore Float? @map("problem_solving_score")
+
+  // Session recording
+  sessionData    Json?    @map("session_data")
+
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assessment     Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  createdBy      User         @relation(fields: [createdById], references: [id])
+
+  @@map("candidates")
+}
+
+// Enums
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum Plan {
+  FREE
+  STARTUP
+  GROWTH
+  ENTERPRISE
+}
+
+enum Seniority {
+  JUNIOR
+  MID
+  SENIOR
+  LEAD
+  PRINCIPAL
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum AssessmentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum QuestionType {
+  CODING
+  SYSTEM_DESIGN
+  BEHAVIORAL
+}
+
+enum CandidateStatus {
+  INVITED
+  IN_PROGRESS
+  COMPLETED
+  EVALUATED
+  HIRED
+  REJECTED
+}
