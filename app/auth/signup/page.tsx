@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import { Logo } from "@/components/Logo";
 import { Mail, Lock, User, Building, ArrowRight, Github } from "lucide-react";
 
 export default function SignUpPage() {
@@ -30,10 +31,8 @@ export default function SignUpPage() {
 
       <div className="relative w-full max-w-md">
         {/* Logo */}
-        <Link href="/" className="flex items-center justify-center gap-2 mb-8">
-          <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
-            <span className="text-sm font-bold text-white">IL</span>
-          </div>
+        <Link href="/" className="flex items-center justify-center gap-3 mb-8">
+          <Logo variant="icon" size={32} />
           <span className="text-xl font-semibold text-text-primary">
             InterviewLM
           </span>

@@ -20,9 +20,11 @@ import {
   Eye,
   Lock,
   TrendingUp,
+  TrendingDown,
   Clock,
   Target,
   AlertCircle,
+  AlertTriangle,
   XCircle,
   BarChart3,
   Users,
@@ -30,6 +32,10 @@ import {
   ChevronDown,
   Play,
   Brain,
+  Plus,
+  Settings,
+  Layers,
+  ThumbsUp,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -81,7 +87,7 @@ export default function LandingPage() {
 
         <div className="relative max-w-6xl mx-auto">
           <div className="text-center mb-12">
-            <Badge variant="primary" className="mb-6 animate-slide-up">
+            <Badge variant="primary" className="mb-4 animate-slide-up">
               <Sparkles className="h-3 w-3 mr-1" />
               Trusted by 500+ Engineering Teams
             </Badge>
@@ -112,7 +118,7 @@ export default function LandingPage() {
               </Link>
             </div>
 
-            <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-text-tertiary animate-slide-up" style={{ animationDelay: "0.4s" }}>
+            <div className="flex flex-wrap items-center justify-center gap-4 text-sm text-text-tertiary animate-slide-up" style={{ animationDelay: "0.4s" }}>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-success" />
                 No credit card required
@@ -137,7 +143,7 @@ export default function LandingPage() {
             {stats.map((stat, i) => (
               <Card key={i} className="border-border-secondary text-center bg-background-secondary/50">
                 <CardContent className="pt-6">
-                  <div className="text-3xl md:text-4xl font-bold text-primary mb-1">{stat.value}</div>
+                  <div className="text-3xl md:text-4xl font-bold text-primary mb-2">{stat.value}</div>
                   <div className="text-sm text-text-secondary">{stat.label}</div>
                 </CardContent>
               </Card>
@@ -218,7 +224,7 @@ export default function LandingPage() {
                       <ul className="space-y-2">
                         {solution.benefits.map((benefit, j) => (
                           <li key={j} className="flex items-start gap-2 text-sm text-text-secondary">
-                            <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
+                            <CheckCircle2 className="h-4 w-4 text-success shrink-0" />
                             <span>{benefit}</span>
                           </li>
                         ))}
@@ -232,8 +238,94 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Configuration Features */}
+      <section className="py-20 px-6 bg-background-secondary">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-16">
+            <Badge variant="primary" className="mb-4">
+              <Target className="h-3 w-3 mr-1" />
+              Flexible Configuration
+            </Badge>
+            <h2 className="text-3xl md:text-5xl font-bold text-text-primary mb-6">
+              Configure Assessments for Your Exact Needs
+            </h2>
+            <p className="text-xl text-text-secondary max-w-3xl mx-auto">
+              Whether you're hiring junior frontend developers or senior ML engineers,
+              customize every assessment to match your requirements in minutes.
+            </p>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            {configFeatures.map((feature, i) => (
+              <Card key={i} className="border-border-secondary hover:border-primary/40 hover:shadow-glow transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-start gap-4">
+                    <div className="p-3 rounded-lg bg-primary/10 shrink-0">
+                      <feature.icon className="h-6 w-6 text-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-text-primary mb-2">
+                        {feature.title}
+                      </h3>
+                      <p className="text-sm text-text-secondary mb-3">
+                        {feature.description}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {feature.examples.map((example, j) => (
+                          <Badge key={j} variant="default" className="text-xs">
+                            {example}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="mt-12 p-6 border border-primary/20 bg-primary/5 rounded-lg">
+            <div className="flex items-start gap-4">
+              <Sparkles className="h-6 w-6 text-primary flex-shrink-0 mt-1" />
+              <div>
+                <h3 className="font-semibold text-text-primary mb-2">
+                  Smart Templates & Custom Questions
+                </h3>
+                <p className="text-sm text-text-secondary mb-4">
+                  Start with our battle-tested templates for common roles, or create custom
+                  assessments using LLM-powered question generation. Configure difficulty
+                  distributions, add custom scenarios, and preview everything before publishing.
+                </p>
+                <div className="grid md:grid-cols-3 gap-4 text-sm">
+                  <div>
+                    <div className="font-medium text-text-primary mb-1">Pre-built Templates</div>
+                    <div className="text-text-tertiary">Curated for common roles & levels</div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-text-primary mb-1">Custom Question Seeds</div>
+                    <div className="text-text-tertiary">AI generates tailored problems</div>
+                  </div>
+                  <div>
+                    <div className="font-medium text-text-primary mb-1">Live Preview</div>
+                    <div className="text-text-tertiary">Test before sending to candidates</div>
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <Link href="/assessments/new">
+                    <Button variant="primary" size="sm">
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create Your First Assessment
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* How We Prevent Cheating */}
-      <section id="security" className="py-20 px-6 bg-background-secondary">
+      <section id="security" className="py-20 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
             <Badge variant="primary" className="mb-4">
@@ -394,6 +486,141 @@ export default function LandingPage() {
 
           <InterviewPreview />
 
+          {/* Dashboard Analytics Showcase */}
+          <div className="mt-12 space-y-6">
+            <div className="text-center mb-8">
+              <h3 className="text-2xl font-bold text-text-primary mb-3">
+                Actionable Analytics Dashboard
+              </h3>
+              <p className="text-text-secondary max-w-2xl mx-auto">
+                Make data-driven hiring decisions with comprehensive metrics, AI collaboration insights, and automated candidate evaluation
+              </p>
+            </div>
+
+            {/* Dashboard Features Grid */}
+            <div className="grid md:grid-cols-3 gap-6">
+              <Card className="border-border-secondary hover:border-primary/40 transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-primary/10">
+                      <TrendingUp className="h-5 w-5 text-primary" />
+                    </div>
+                    <h4 className="font-semibold text-text-primary">Pipeline Tracking</h4>
+                  </div>
+                  <p className="text-sm text-text-secondary mb-4">
+                    Monitor conversion rates at every stage from invitation to hire with visual funnel analytics
+                  </p>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Invited → Started</span>
+                      <span className="text-success font-medium">65%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Completed → Passed</span>
+                      <span className="text-warning font-medium">38%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Overall Conversion</span>
+                      <span className="text-primary font-medium">8%</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border-secondary hover:border-primary/40 transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-success/10">
+                      <Brain className="h-5 w-5 text-success" />
+                    </div>
+                    <h4 className="font-semibold text-text-primary">AI Proficiency Metrics</h4>
+                  </div>
+                  <p className="text-sm text-text-secondary mb-4">
+                    Evaluate how effectively candidates collaborate with AI - a critical skill for modern developers
+                  </p>
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Prompt Quality</span>
+                      <span className="text-success font-medium">4.8/5.0</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">AI Acceptance Rate</span>
+                      <span className="text-success font-medium">73%</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-text-tertiary">Usage Pattern</span>
+                      <span className="text-primary font-medium">Goal-oriented</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border-secondary hover:border-primary/40 transition-all">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-3 mb-4">
+                    <div className="p-2 rounded-lg bg-warning/10">
+                      <AlertCircle className="h-5 w-5 text-warning" />
+                    </div>
+                    <h4 className="font-semibold text-text-primary">Smart Flag Detection</h4>
+                  </div>
+                  <p className="text-sm text-text-secondary mb-4">
+                    Automatically identify red flags (code quality issues, over-reliance on AI) and green flags (excellence indicators)
+                  </p>
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <ThumbsUp className="h-3 w-3 text-success" />
+                      <span className="text-xs text-text-secondary">Top-tier performance</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <ThumbsUp className="h-3 w-3 text-success" />
+                      <span className="text-xs text-text-secondary">Excellent prompt engineering</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className="h-3 w-3 text-warning" />
+                      <span className="text-xs text-text-secondary">Minor test coverage gaps</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Key Metrics */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Active Assessments</p>
+                <p className="text-2xl font-bold text-text-primary">12</p>
+                <p className="text-xs text-success flex items-center gap-1 mt-1">
+                  <TrendingUp className="h-3 w-3" />
+                  +20% vs last month
+                </p>
+              </div>
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Avg Score</p>
+                <p className="text-2xl font-bold text-text-primary">7.2/10</p>
+                <p className="text-xs text-warning flex items-center gap-1 mt-1">
+                  <TrendingDown className="h-3 w-3" />
+                  -5% vs last month
+                </p>
+              </div>
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Completion Rate</p>
+                <p className="text-2xl font-bold text-text-primary">72%</p>
+                <p className="text-xs text-success flex items-center gap-1 mt-1">
+                  <TrendingUp className="h-3 w-3" />
+                  +8% vs last quarter
+                </p>
+              </div>
+              <div className="p-4 bg-background-secondary border border-border rounded-lg">
+                <p className="text-sm text-text-tertiary mb-1">Avg AI Proficiency</p>
+                <p className="text-2xl font-bold text-text-primary">8.1/10</p>
+                <p className="text-xs text-success flex items-center gap-1 mt-1">
+                  <TrendingUp className="h-3 w-3" />
+                  +12% vs last month
+                </p>
+              </div>
+            </div>
+          </div>
+
           <div className="mt-8 p-6 rounded-lg border border-primary/20 bg-primary/5">
             <div className="flex items-start gap-4">
               <Brain className="h-6 w-6 text-primary shrink-0 mt-1" />
@@ -445,7 +672,7 @@ export default function LandingPage() {
                   <div className="flex items-start justify-between gap-4">
                     <h3 className="font-semibold text-text-primary">{faq.question}</h3>
                     <ChevronDown
-                      className={`h-5 w-5 text-text-secondary shrink-0 transition-transform ${
+                      className={`h-5 w-5 text-text-secondary shrink-0 transition-transform duration-200 ${
                         openFaq === i ? "rotate-180" : ""
                       }`}
                     />
@@ -574,13 +801,13 @@ export default function LandingPage() {
                 AI-native technical assessments that measure real-world skills.
               </p>
               <div className="flex gap-3">
-                <a href="#" className="text-text-tertiary hover:text-text-primary transition">
+                <a href="#" className="text-text-tertiary hover:text-text-primary transition p-2 -ml-2 inline-flex items-center justify-center min-w-[44px] min-h-[44px]">
                   <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8.29 20.251c7.547 0 11.675-6.253 11.675-11.675 0-.178 0-.355-.012-.53A8.348 8.348 0 0022 5.92a8.19 8.19 0 01-2.357.646 4.118 4.118 0 001.804-2.27 8.224 8.224 0 01-2.605.996 4.107 4.107 0 00-6.993 3.743 11.65 11.65 0 01-8.457-4.287 4.106 4.106 0 001.27 5.477A4.072 4.072 0 012.8 9.713v.052a4.105 4.105 0 003.292 4.022 4.095 4.095 0 01-1.853.07 4.108 4.108 0 003.834 2.85A8.233 8.233 0 012 18.407a11.616 11.616 0 006.29 1.84"></path></svg>
                 </a>
-                <a href="#" className="text-text-tertiary hover:text-text-primary transition">
+                <a href="#" className="text-text-tertiary hover:text-text-primary transition p-2 inline-flex items-center justify-center min-w-[44px] min-h-[44px]">
                   <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433c-1.144 0-2.063-.926-2.063-2.065 0-1.138.92-2.063 2.063-2.063 1.14 0 2.064.925 2.064 2.063 0 1.139-.925 2.065-2.064 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"></path></svg>
                 </a>
-                <a href="#" className="text-text-tertiary hover:text-text-primary transition">
+                <a href="#" className="text-text-tertiary hover:text-text-primary transition p-2 inline-flex items-center justify-center min-w-[44px] min-h-[44px]">
                   <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"></path></svg>
                 </a>
               </div>
@@ -631,6 +858,33 @@ const stats = [
   { value: "10K+", label: "Candidates Tested" },
   { value: "92%", label: "Hiring Accuracy" },
   { value: "3x", label: "Faster Hiring" },
+];
+
+const configFeatures = [
+  {
+    icon: Target,
+    title: "Role-Based Configuration",
+    description: "Select from 6 specialized engineering roles with pre-configured assessments optimized for each discipline.",
+    examples: ["Backend Engineer", "Frontend Engineer", "Full-Stack", "ML Engineer", "Security", "Database"],
+  },
+  {
+    icon: Layers,
+    title: "Seniority Levels",
+    description: "Automatically adjust difficulty, duration, and evaluation criteria based on candidate experience level.",
+    examples: ["Junior (0-2 yrs)", "Mid (2-5 yrs)", "Senior (5-8 yrs)", "Staff (8-12 yrs)", "Principal (12+ yrs)"],
+  },
+  {
+    icon: Settings,
+    title: "Custom Question Seeds",
+    description: "Use LLM instructions to generate tailored coding problems specific to your tech stack and requirements.",
+    examples: ["Template-based", "AI-generated", "Custom scenarios", "Difficulty control"],
+  },
+  {
+    icon: Eye,
+    title: "Preview & Test",
+    description: "Experience assessments from a candidate's perspective before publishing. Test the flow, timing, and difficulty.",
+    examples: ["Live preview", "Tier-based test runs", "Iterate quickly", "Validate before sending"],
+  },
 ];
 
 const problems = [
