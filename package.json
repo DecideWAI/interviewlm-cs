@@ -22,8 +22,8 @@
     "docker:test": "./scripts/docker-test.sh run",
     "docker:test:watch": "./scripts/docker-test.sh interactive",
     "docker:build": "docker build -t interviewlm-app .",
-    "docker:up": "docker-compose up -d",
-    "docker:down": "docker-compose down"
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.1",

@@ -12,6 +12,16 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Detect docker-compose command (v1 vs v2)
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+elif docker compose version &> /dev/null; then
+    DOCKER_COMPOSE="docker compose"
+else
+    echo -e "${RED}✗${NC} Docker Compose not found. Please install Docker Desktop."
+    exit 1
+fi
+
 # Print colored message
 print_msg() {
     echo -e "${BLUE}[InterviewLM]${NC} $1"
@@ -33,7 +43,7 @@ print_warning() {
 case "$1" in
     start)
         print_msg "Starting development environment..."
-        docker-compose -f docker-compose.dev.yml up -d
+        $DOCKER_COMPOSE -f docker-compose.dev.yml up -d
         print_success "Development environment started!"
         print_msg "App running at: http://localhost:3000"
         print_msg "Database running at: localhost:5432"
@@ -43,32 +53,32 @@ case "$1" in
 
     stop)
         print_msg "Stopping development environment..."
-        docker-compose -f docker-compose.dev.yml down
+        $DOCKER_COMPOSE -f docker-compose.dev.yml down
         print_success "Development environment stopped!"
         ;;
 
     restart)
         print_msg "Restarting development environment..."
-        docker-compose -f docker-compose.dev.yml restart
+        $DOCKER_COMPOSE -f docker-compose.dev.yml restart
         print_success "Development environment restarted!"
         ;;
 
     logs)
-        docker-compose -f docker-compose.dev.yml logs -f app-dev
+        $DOCKER_COMPOSE -f docker-compose.dev.yml logs -f app-dev
         ;;
 
     logs-db)
-        docker-compose -f docker-compose.dev.yml logs -f postgres
+        $DOCKER_COMPOSE -f docker-compose.dev.yml logs -f postgres
         ;;
 
     shell)
         print_msg "Opening shell in app container..."
-        docker-compose -f docker-compose.dev.yml exec app-dev sh
+        $DOCKER_COMPOSE -f docker-compose.dev.yml exec app-dev sh
         ;;
 
     db)
         print_msg "Opening PostgreSQL shell..."
-        docker-compose -f docker-compose.dev.yml exec postgres psql -U postgres -d interviewlm
+        $DOCKER_COMPOSE -f docker-compose.dev.yml exec postgres psql -U postgres -d interviewlm
         ;;
 
     clean)
@@ -76,7 +86,7 @@ case "$1" in
         read -p "Are you sure? (yes/no): " -r
         if [[ $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
             print_msg "Cleaning up..."
-            docker-compose -f docker-compose.dev.yml down -v
+            $DOCKER_COMPOSE -f docker-compose.dev.yml down -v
             print_success "Cleanup complete!"
         else
             print_msg "Cleanup cancelled."
@@ -85,33 +95,33 @@ case "$1" in
 
     rebuild)
         print_msg "Rebuilding containers..."
-        docker-compose -f docker-compose.dev.yml down
-        docker-compose -f docker-compose.dev.yml build --no-cache
-        docker-compose -f docker-compose.dev.yml up -d
+        $DOCKER_COMPOSE -f docker-compose.dev.yml down
+        $DOCKER_COMPOSE -f docker-compose.dev.yml build --no-cache
+        $DOCKER_COMPOSE -f docker-compose.dev.yml up -d
         print_success "Rebuild complete!"
         ;;
 
     status)
         print_msg "Container status:"
-        docker-compose -f docker-compose.dev.yml ps
+        $DOCKER_COMPOSE -f docker-compose.dev.yml ps
         ;;
 
     migrate)
         print_msg "Running database migrations..."
-        docker-compose -f docker-compose.dev.yml exec app-dev npx prisma migrate dev
+        $DOCKER_COMPOSE -f docker-compose.dev.yml exec app-dev npx prisma migrate dev
         print_success "Migrations complete!"
         ;;
 
     seed)
         print_msg "Seeding database..."
-        docker-compose -f docker-compose.dev.yml exec app-dev npx prisma db seed
+        $DOCKER_COMPOSE -f docker-compose.dev.yml exec app-dev npx prisma db seed
         print_success "Database seeded!"
         ;;
 
     studio)
         print_msg "Opening Prisma Studio..."
         print_msg "Prisma Studio will be available at: http://localhost:5555"
-        docker-compose -f docker-compose.dev.yml exec app-dev npx prisma studio
+        $DOCKER_COMPOSE -f docker-compose.dev.yml exec app-dev npx prisma studio
         ;;
 
     *)
