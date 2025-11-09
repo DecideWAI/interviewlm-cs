@@ -90,6 +90,37 @@ npm run dev
 
 Visit [http://localhost:3000](http://localhost:3000)
 
+## Docker Setup (Recommended)
+
+The easiest way to run InterviewLM is with Docker:
+
+```bash
+# Start full development environment (Next.js + PostgreSQL)
+npm run docker:dev
+
+# View logs
+npm run docker:dev:logs
+
+# Stop environment
+npm run docker:dev:stop
+```
+
+Access:
+- **App**: http://localhost:3000
+- **Database**: localhost:5432
+
+For detailed Docker instructions, see [Docker Guide](docs/DOCKER.md).
+
+### Run Integration Tests with Docker
+
+```bash
+# Run all integration tests against real database
+npm run docker:test
+
+# Watch mode for development
+npm run docker:test:watch
+```
+
 ## Development
 
 ### Project Structure
