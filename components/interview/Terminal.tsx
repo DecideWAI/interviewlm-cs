@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+import React, { useEffect, useRef, useImperativeHandle, forwardRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalProps {
+  sessionId: string;
   onCommand?: (command: string) => void;
   className?: string;
 }
@@ -14,13 +15,17 @@ interface TerminalProps {
 export interface TerminalHandle {
   write: (data: string) => void;
   writeln: (data: string) => void;
+  connectionStatus: "connected" | "disconnected" | "connecting";
 }
 
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
-  ({ onCommand, className = "" }, ref) => {
+  ({ sessionId, onCommand, className = "" }, ref) => {
     const terminalRef = useRef<HTMLDivElement>(null);
     const xtermRef = useRef<XTerm | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
+    const wsRef = useRef<WebSocket | null>(null);
+    const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting">("connecting");
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -90,6 +95,47 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     terminal.writeln("");
     terminal.write("\x1b[1;32m$\x1b[0m ");
 
+    // WebSocket connection
+    const connectWebSocket = () => {
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/api/interview/${sessionId}/terminal`;
+
+      try {
+        setConnectionStatus("connecting");
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setConnectionStatus("connected");
+          terminal.writeln("\x1b[32m✓ Terminal connected to backend\x1b[0m");
+          terminal.write("\x1b[1;32m$\x1b[0m ");
+        };
+
+        ws.onmessage = (event) => {
+          // Receive output from backend terminal
+          terminal.write(event.data);
+        };
+
+        ws.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          setConnectionStatus("disconnected");
+        };
+
+        ws.onclose = () => {
+          setConnectionStatus("disconnected");
+          terminal.writeln("\r\n\x1b[31m✗ Terminal disconnected. Reconnecting...\x1b[0m");
+
+          // Auto-reconnect after 3 seconds
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectWebSocket();
+          }, 3000);
+        };
+      } catch (error) {
+        console.error("Failed to connect WebSocket:", error);
+        setConnectionStatus("disconnected");
+      }
+    };
+
     // Handle data input
     let currentLine = "";
     terminal.onData((data) => {
@@ -99,6 +145,30 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       if (code === 13) {
         terminal.write("\r\n");
         if (currentLine.trim()) {
+          // Send command to WebSocket if connected
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({
+              type: "input",
+              data: currentLine.trim() + "\n",
+            }));
+          } else {
+            // Fallback to local echo if WebSocket not connected
+            terminal.writeln("Command: " + currentLine.trim());
+            terminal.writeln("(Not connected to backend)");
+          }
+
+          // Record terminal event
+          fetch(`/api/interview/${sessionId}/events`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              eventType: "terminal_command",
+              data: {
+                command: currentLine.trim(),
+              },
+            }),
+          }).catch((err) => console.error("Failed to record terminal event:", err));
+
           onCommand?.(currentLine.trim());
         }
         currentLine = "";
@@ -115,6 +185,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       else if (code === 3) {
         terminal.write("^C");
         terminal.write("\r\n");
+
+        // Send interrupt signal to WebSocket
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: "interrupt",
+          }));
+        }
+
         currentLine = "";
         terminal.write("\x1b[1;32m$\x1b[0m ");
       }
@@ -124,6 +202,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         terminal.write(data);
       }
     });
+
+    // Connect WebSocket
+    connectWebSocket();
 
     // Handle window resize
     const handleResize = () => {
@@ -141,9 +222,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     // Cleanup
     return () => {
       window.removeEventListener("resize", handleResize);
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       terminal.dispose();
     };
-  }, [onCommand]);
+  }, [sessionId, onCommand]);
 
     // Expose methods via ref using useImperativeHandle
     useImperativeHandle(ref, () => ({
@@ -153,6 +240,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       writeln: (data: string) => {
         xtermRef.current?.writeln(data);
       },
+      connectionStatus,
     }));
 
     return (
