@@ -2,6 +2,9 @@
   "name": "interviewlm-cs",
   "version": "0.1.0",
   "private": true,
+  "overrides": {
+    "@auth/core": "^0.40.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
