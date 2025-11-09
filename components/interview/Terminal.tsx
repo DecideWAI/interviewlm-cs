@@ -63,7 +63,11 @@ export function Terminal({ onCommand, className = "" }: TerminalProps) {
 
     // Open terminal
     terminal.open(terminalRef.current);
-    fitAddon.fit();
+
+    // Delay fit() to ensure DOM has rendered and dimensions are available
+    setTimeout(() => {
+      fitAddon.fit();
+    }, 0);
 
     // Store refs
     xtermRef.current = terminal;
@@ -117,7 +121,14 @@ export function Terminal({ onCommand, className = "" }: TerminalProps) {
 
     // Handle window resize
     const handleResize = () => {
-      fitAddon.fit();
+      if (fitAddonRef.current) {
+        try {
+          fitAddonRef.current.fit();
+        } catch (e) {
+          // Ignore fit errors if terminal isn't ready
+          console.debug("Terminal fit skipped:", e);
+        }
+      }
     };
     window.addEventListener("resize", handleResize);
 
