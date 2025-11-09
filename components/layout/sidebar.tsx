@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
+import { Logo } from "@/components/Logo";
 
 const navigation = [
   {
@@ -55,10 +56,8 @@ export function Sidebar() {
     <div className="flex h-screen w-64 flex-col border-r border-border bg-background-secondary">
       {/* Logo */}
       <div className="flex h-14 items-center border-b border-border px-6">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-md bg-primary flex items-center justify-center">
-            <span className="text-sm font-bold text-white">IL</span>
-          </div>
+        <Link href="/" className="flex items-center gap-3">
+          <Logo variant="icon" size={28} />
           <span className="text-base font-semibold text-text-primary">
             InterviewLM
           </span>
