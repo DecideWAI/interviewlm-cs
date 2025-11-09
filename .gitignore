@@ -36,4 +36,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.playwright-mcp/.env
+.playwright-mcp/

@@ -45,8 +45,8 @@ case "$1" in
         print_msg "Starting development environment..."
         $DOCKER_COMPOSE -f docker-compose.dev.yml up -d
         print_success "Development environment started!"
-        print_msg "App running at: http://localhost:3000"
-        print_msg "Database running at: localhost:5432"
+        print_msg "App running at: http://localhost:3002"
+        print_msg "Database running at: localhost:5433"
         print_msg ""
         print_msg "To view logs: ./scripts/docker-dev.sh logs"
         ;;
@@ -78,6 +78,7 @@ case "$1" in
 
     db)
         print_msg "Opening PostgreSQL shell..."
+        print_msg "Note: Database is exposed on host port 5433"
         $DOCKER_COMPOSE -f docker-compose.dev.yml exec postgres psql -U postgres -d interviewlm
         ;;
 
