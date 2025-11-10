@@ -6,6 +6,12 @@ process.env.NEXTAUTH_SECRET = 'test-secret-key-for-testing-only'
 process.env.NEXTAUTH_URL = 'http://localhost:3000'
 process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test'
 
+// Polyfill fetch APIs for Node.js environment
+global.Request = class Request {}
+global.Response = class Response {}
+global.Headers = class Headers {}
+global.fetch = jest.fn()
+
 // Mock next-auth
 jest.mock('next-auth/react', () => ({
   useSession: jest.fn(() => ({
@@ -60,6 +66,46 @@ jest.mock('@/lib/prisma', () => ({
       findMany: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+    },
+    sessionRecording: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    sessionEvent: {
+      create: jest.fn(),
+      createMany: jest.fn(),
+      findMany: jest.fn(),
+    },
+    claudeInteraction: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
+    codeSnapshot: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+    },
+    testResult: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+    },
+    generatedQuestion: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn(),
+    },
+    problemSeed: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
     },
     $transaction: jest.fn(),
     $disconnect: jest.fn(),
