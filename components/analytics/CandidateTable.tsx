@@ -14,7 +14,8 @@ import {
   XCircle,
   AlertTriangle,
   ThumbsUp,
-  Eye
+  Eye,
+  PlayCircle
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -258,12 +259,22 @@ export function CandidateTable({ candidates }: CandidateTableProps) {
 
                   {/* Actions */}
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <Link href={`/candidates/${candidate.id}`}>
-                      <Button variant="ghost" size="sm">
-                        <Eye className="h-4 w-4 mr-1" />
-                        View
-                      </Button>
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link href={`/candidates/${candidate.id}`}>
+                        <Button variant="ghost" size="sm">
+                          <Eye className="h-4 w-4 mr-1" />
+                          View
+                        </Button>
+                      </Link>
+                      {candidate.assessmentCompleted && (
+                        <Link href={`/dashboard/sessions/${candidate.id}`}>
+                          <Button variant="ghost" size="sm">
+                            <PlayCircle className="h-4 w-4 mr-1" />
+                            Replay
+                          </Button>
+                        </Link>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))

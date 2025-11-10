@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { modal, questions } from "@/lib/services";
+import { modal, questions, sessions } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
 
 /**
@@ -237,7 +237,23 @@ module.exports = longestPalindrome;`,
 
     // Calculate time remaining
     const timeLimit = candidate.assessment?.timeLimit || 3600; // Default 1 hour
-    const startedAt = sessionRecording.startedAt || new Date();
+    const startedAt = sessionRecording.startTime || new Date();
+
+    // Record session_start event (only if this is a new session)
+    if (!sessionRecording.startTime) {
+      await sessions.recordEvent(sessionRecording.id, {
+        type: "session_start",
+        data: {
+          questionId: question.id,
+          questionTitle: question.title,
+          difficulty: question.difficulty,
+          language: question.language,
+          timeLimit,
+          startTime: startedAt.toISOString(),
+        },
+        checkpoint: true, // Mark as checkpoint for replay seeking
+      });
+    }
     const elapsedSeconds = Math.floor(
       (Date.now() - startedAt.getTime()) / 1000
     );

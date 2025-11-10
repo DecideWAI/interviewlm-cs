@@ -238,11 +238,14 @@ export async function POST(
 
     // Record code change event (for session replay)
     if (candidate.sessionRecording) {
-      await sessions.recordEvent(candidate.sessionRecording.id, "code_edit", {
-        fileName: path,
-        language: language || getLanguageFromExtension(path),
-        content,
-        timestamp: new Date().toISOString(),
+      await sessions.recordEvent(candidate.sessionRecording.id, {
+        type: "code_edit",
+        data: {
+          fileName: path,
+          language: language || getLanguageFromExtension(path),
+          content,
+          timestamp: new Date().toISOString(),
+        },
       });
 
       // Create code snapshot for significant changes
