@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
+import React, { useEffect, useRef, useImperativeHandle, forwardRef, useState } from "react";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalProps {
+  sessionId: string;
   onCommand?: (command: string) => void;
   className?: string;
 }
@@ -14,13 +15,24 @@ interface TerminalProps {
 export interface TerminalHandle {
   write: (data: string) => void;
   writeln: (data: string) => void;
+  connectionStatus: "connected" | "disconnected" | "connecting";
 }
 
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
-  ({ onCommand, className = "" }, ref) => {
+  ({ sessionId, onCommand, className = "" }, ref) => {
     const terminalRef = useRef<HTMLDivElement>(null);
     const xtermRef = useRef<XTerm | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
+    const eventSourceRef = useRef<EventSource | null>(null);
+    const connectionStatusRef = useRef<"connected" | "disconnected" | "connecting">("connecting");
+    const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting">("connecting");
+    const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Helper to update connection status in both ref and state
+    const updateConnectionStatus = (status: "connected" | "disconnected" | "connecting") => {
+      connectionStatusRef.current = status;
+      setConnectionStatus(status);
+    };
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -88,7 +100,52 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     terminal.writeln("\x1b[32m✓ Connected to Modal AI Sandbox\x1b[0m");
     terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
     terminal.writeln("");
-    terminal.write("\x1b[1;32m$\x1b[0m ");
+
+    // SSE connection for terminal output
+    const connectSSE = () => {
+      const sseUrl = `/api/interview/${sessionId}/terminal`;
+
+      try {
+        updateConnectionStatus("connecting");
+        const eventSource = new EventSource(sseUrl);
+        eventSourceRef.current = eventSource;
+
+        eventSource.onopen = () => {
+          updateConnectionStatus("connected");
+          terminal.writeln("\x1b[32m✓ Terminal connected to backend\x1b[0m");
+          terminal.write("\x1b[1;32m$\x1b[0m ");
+        };
+
+        eventSource.onmessage = (event) => {
+          // Receive output from backend terminal
+          try {
+            const data = JSON.parse(event.data);
+            if (data.output) {
+              terminal.write(data.output);
+            }
+          } catch (e) {
+            // If not JSON, write raw data
+            terminal.write(event.data);
+          }
+        };
+
+        eventSource.onerror = (error) => {
+          console.error("SSE error:", error);
+          updateConnectionStatus("disconnected");
+          eventSource.close();
+
+          terminal.writeln("\r\n\x1b[31m✗ Terminal disconnected. Reconnecting...\x1b[0m");
+
+          // Auto-reconnect after 3 seconds
+          reconnectTimeoutRef.current = setTimeout(() => {
+            connectSSE();
+          }, 3000);
+        };
+      } catch (error) {
+        console.error("Failed to connect SSE:", error);
+        updateConnectionStatus("disconnected");
+      }
+    };
 
     // Handle data input
     let currentLine = "";
@@ -99,7 +156,38 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       if (code === 13) {
         terminal.write("\r\n");
         if (currentLine.trim()) {
-          onCommand?.(currentLine.trim());
+          const command = currentLine.trim();
+
+          // Send command via HTTP POST if connected
+          if (connectionStatusRef.current === "connected") {
+            fetch(`/api/interview/${sessionId}/terminal/input`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "input",
+                data: command + "\n",
+              }),
+            }).catch((err) => {
+              console.error("Failed to send terminal input:", err);
+              terminal.writeln("\x1b[31mFailed to send command\x1b[0m");
+            });
+          } else {
+            // Fallback to local echo if not connected
+            terminal.writeln("Command: " + command);
+            terminal.writeln("\x1b[33m(Not connected to backend)\x1b[0m");
+          }
+
+          // Record terminal event
+          fetch(`/api/interview/${sessionId}/events`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              eventType: "terminal_command",
+              data: { command },
+            }),
+          }).catch((err) => console.error("Failed to record terminal event:", err));
+
+          onCommand?.(command);
         }
         currentLine = "";
         terminal.write("\x1b[1;32m$\x1b[0m ");
@@ -115,6 +203,18 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       else if (code === 3) {
         terminal.write("^C");
         terminal.write("\r\n");
+
+        // Send interrupt signal via HTTP POST
+        if (connectionStatusRef.current === "connected") {
+          fetch(`/api/interview/${sessionId}/terminal/input`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "interrupt",
+            }),
+          }).catch((err) => console.error("Failed to send interrupt:", err));
+        }
+
         currentLine = "";
         terminal.write("\x1b[1;32m$\x1b[0m ");
       }
@@ -124,6 +224,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         terminal.write(data);
       }
     });
+
+    // Connect SSE
+    connectSSE();
 
     // Handle window resize
     const handleResize = () => {
@@ -141,9 +244,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     // Cleanup
     return () => {
       window.removeEventListener("resize", handleResize);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       terminal.dispose();
     };
-  }, [onCommand]);
+  }, [sessionId, onCommand]);
 
     // Expose methods via ref using useImperativeHandle
     useImperativeHandle(ref, () => ({
@@ -153,6 +262,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       writeln: (data: string) => {
         xtermRef.current?.writeln(data);
       },
+      connectionStatus,
     }));
 
     return (

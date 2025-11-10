@@ -226,7 +226,168 @@ model Candidate {
   assessment     Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
   createdBy      User         @relation(fields: [createdById], references: [id])
 
+  // Relations to session data
+  sessionRecording SessionRecording?
+  generatedQuestions GeneratedQuestion[]
+
   @@map("candidates")
+}
+
+// Session Recording and Events
+
+model SessionRecording {
+  id          String   @id @default(cuid())
+  candidateId String   @unique @map("candidate_id")
+
+  startTime   DateTime @default(now()) @map("start_time")
+  endTime     DateTime? @map("end_time")
+  duration    Int?     // in seconds
+
+  status      SessionStatus @default(ACTIVE)
+
+  // Storage info
+  eventCount  Int      @default(0) @map("event_count")
+  storagePath String?  @map("storage_path") // S3 path to compressed events
+  storageSize Int?     @map("storage_size") // bytes
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  // Relations
+  events      SessionEvent[]
+  claudeInteractions ClaudeInteraction[]
+  codeSnapshots CodeSnapshot[]
+  testResults TestResult[]
+
+  @@index([candidateId])
+  @@map("session_recordings")
+}
+
+model SessionEvent {
+  id          String   @id @default(cuid())
+  sessionId   String   @map("session_id")
+
+  timestamp   DateTime @default(now())
+  type        String   // keystroke, code_snapshot, file_created, terminal_output, etc.
+  fileId      String?  @map("file_id")
+
+  // Event data stored as JSON
+  data        Json
+
+  // For fast seeking in replay
+  checkpoint  Boolean  @default(false)
+
+  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, timestamp])
+  @@index([sessionId, checkpoint])
+  @@map("session_events")
+}
+
+model ClaudeInteraction {
+  id          String   @id @default(cuid())
+  sessionId   String   @map("session_id")
+
+  timestamp   DateTime @default(now())
+  role        String   // user, assistant, system
+  content     String   @db.Text
+
+  // Metadata
+  model       String?
+  inputTokens Int?     @map("input_tokens")
+  outputTokens Int?    @map("output_tokens")
+  latency     Int?     // milliseconds
+  stopReason  String?  @map("stop_reason")
+
+  // AI collaboration scoring
+  promptQuality Float? @map("prompt_quality") // 1-5 rating
+
+  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, timestamp])
+  @@map("claude_interactions")
+}
+
+model CodeSnapshot {
+  id          String   @id @default(cuid())
+  sessionId   String   @map("session_id")
+
+  timestamp   DateTime @default(now())
+  fileId      String   @map("file_id")
+  fileName    String   @map("file_name")
+  language    String
+
+  // Content storage
+  contentHash String   @map("content_hash")
+  fullContent String?  @map("full_content") @db.Text
+  diffFromPrevious Json? @map("diff_from_previous")
+
+  // Metrics
+  linesAdded  Int      @default(0) @map("lines_added")
+  linesDeleted Int     @default(0) @map("lines_deleted")
+
+  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, timestamp])
+  @@index([sessionId, fileId])
+  @@map("code_snapshots")
+}
+
+model TestResult {
+  id          String   @id @default(cuid())
+  sessionId   String   @map("session_id")
+
+  timestamp   DateTime @default(now())
+  testName    String   @map("test_name")
+
+  passed      Boolean
+  output      String?  @db.Text
+  error       String?  @db.Text
+  duration    Int?     // milliseconds
+
+  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, timestamp])
+  @@map("test_results")
+}
+
+// Dynamic Question Generation
+
+model GeneratedQuestion {
+  id          String   @id @default(cuid())
+  candidateId String   @map("candidate_id")
+  questionSeedId String? @map("question_seed_id")
+
+  order       Int      // Question order in assessment
+  title       String
+  description String   @db.Text
+  difficulty  Difficulty
+
+  // Problem details
+  language    String   @default("typescript")
+  requirements String[] @default([])
+  estimatedTime Int    @map("estimated_time") // minutes
+
+  // Code templates and tests
+  starterCode Json     @map("starter_code") // array of {fileName, content}
+  testCases   Json     @map("test_cases")   // array of {name, input, expected, hidden}
+
+  // Question state
+  status      QuestionStatus @default(PENDING)
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+
+  // Scoring
+  score       Float?
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, order])
+  @@map("generated_questions")
 }
 
 // Enums
@@ -282,4 +443,18 @@ enum CandidateStatus {
   EVALUATED
   HIRED
   REJECTED
+}
+
+enum SessionStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ABANDONED
+}
+
+enum QuestionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  SKIPPED
 }
