@@ -72,6 +72,7 @@ export default function InterviewPage() {
   const [isAIChatOpen, setIsAIChatOpen] = useState(true);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -175,8 +176,51 @@ export default function InterviewPage() {
   }
 
   const handleSubmit = async () => {
-    // TODO: Implement submission
-    console.log("Submitting assessment...");
+    if (!sessionData || isSubmitting) return;
+
+    // Confirm submission
+    const confirmSubmit = window.confirm(
+      "Are you sure you want to submit your assessment? This action cannot be undone."
+    );
+
+    if (!confirmSubmit) return;
+
+    try {
+      setIsSubmitting(true);
+
+      // Submit assessment
+      const response = await fetch(`/api/interview/${candidateId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finalCode: {
+            [`solution.${sessionData.question.language === "python" ? "py" : "js"}`]: code,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Submission failed");
+      }
+
+      const result = await response.json();
+
+      // Show success message
+      alert(
+        `Assessment submitted successfully!\n\n` +
+        `Overall Score: ${result.overallScore?.toFixed(1) || "N/A"}/100\n` +
+        `Tests Passed: ${result.testsPassed || 0}/${result.totalTests || 0}\n\n` +
+        `Recommendation: ${result.recommendation?.decision || "Pending"}`
+      );
+
+      // Redirect to dashboard or thank you page
+      router.push("/dashboard");
+    } catch (err) {
+      console.error("Submission error:", err);
+      alert(`Failed to submit assessment: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setIsSubmitting(false);
+    }
   };
 
   // Format time remaining
@@ -294,8 +338,14 @@ export default function InterviewPage() {
               Run Tests
             </Button>
 
-            <Button size="sm" variant="primary" onClick={handleSubmit}>
-              Submit Assessment
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={handleSubmit}
+              disabled={isSubmitting || timeRemaining === 0}
+              loading={isSubmitting}
+            >
+              {isSubmitting ? "Submitting..." : "Submit Assessment"}
             </Button>
           </div>
         </div>

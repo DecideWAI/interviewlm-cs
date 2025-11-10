@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queueTerminalOutput } from "@/lib/terminal-state";
 import { getSession } from "@/lib/auth-helpers";
+import prisma from "@/lib/prisma";
+import { modal } from "@/lib/services";
 
 /**
  * Demo terminal command simulator
@@ -136,15 +138,61 @@ export async function POST(
         }
         queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
       } else {
-        // Production mode: Forward to Modal sandbox
-        // TODO: Implement Modal sandbox integration
-        // For now, echo back
-        queueTerminalOutput(id, `Command received: ${command}\r\n`);
-        queueTerminalOutput(
-          id,
-          "\x1b[33m(Modal sandbox not connected)\x1b[0m\r\n"
-        );
-        queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
+        // Production mode: Execute in Modal sandbox
+        try {
+          // Get candidate to find volumeId
+          const candidate = await prisma.candidate.findUnique({
+            where: { id },
+            select: { volumeId: true, generatedQuestion: true },
+          });
+
+          if (!candidate || !candidate.volumeId) {
+            queueTerminalOutput(id, "\x1b[31mError: Sandbox not initialized\x1b[0m\r\n");
+            queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
+            return NextResponse.json({ success: true });
+          }
+
+          // Check if sandbox exists, create if needed
+          const sandboxes = await modal.listActiveSandboxes();
+          let sandbox = sandboxes.find(s => s.sessionId === id);
+
+          if (!sandbox) {
+            // Create sandbox for this session
+            const language = candidate.generatedQuestion?.language || "javascript";
+            sandbox = await modal.createSandbox(id, language, candidate.volumeId);
+          }
+
+          // Execute command in Modal sandbox
+          const result = await modal.runCommand(id, command, "/");
+
+          // Queue stdout output
+          if (result.stdout) {
+            queueTerminalOutput(id, result.stdout);
+          }
+
+          // Queue stderr output (in red)
+          if (result.stderr) {
+            queueTerminalOutput(id, `\x1b[31m${result.stderr}\x1b[0m`);
+          }
+
+          // Show exit code if non-zero
+          if (result.exitCode !== 0) {
+            queueTerminalOutput(
+              id,
+              `\x1b[31m[Exit code: ${result.exitCode}]\x1b[0m\r\n`
+            );
+          }
+
+          // Queue prompt
+          queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
+        } catch (error) {
+          console.error("Terminal command execution error:", error);
+          queueTerminalOutput(
+            id,
+            `\x1b[31mError: ${error instanceof Error ? error.message : "Command failed"}\x1b[0m\r\n`
+          );
+          queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
+        }
       }
 
       return NextResponse.json({ success: true });
