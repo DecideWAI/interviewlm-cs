@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { getOutputQueue, clearOutputQueue } from "@/lib/terminal-state";
+import { getSession } from "@/lib/auth-helpers";
 
 /**
  * GET /api/interview/[id]/terminal
@@ -15,13 +16,12 @@ export async function GET(
   const isDemoMode = id === "demo";
 
   try {
-    // Skip auth for demo mode
+    // Skip auth for demo mode, enforce for real sessions
     if (!isDemoMode) {
-      // In production, verify authentication and authorization here
-      // const session = await auth();
-      // if (!session?.user) {
-      //   return new Response("Unauthorized", { status: 401 });
-      // }
+      const session = await getSession();
+      if (!session?.user) {
+        return new Response("Unauthorized", { status: 401 });
+      }
     }
 
     // Initialize output queue for this session

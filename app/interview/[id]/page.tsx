@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
@@ -15,6 +15,7 @@ const Terminal = dynamic(
 );
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Play,
   Square,
@@ -26,76 +27,157 @@ import {
   Terminal as TerminalIcon,
 } from "lucide-react";
 
-// Sample file structure
-const sampleFiles: FileNode[] = [
-  {
-    id: "1",
-    name: "src",
-    type: "folder",
-    path: "src",
-    children: [
-      {
-        id: "2",
-        name: "index.ts",
-        type: "file",
-        path: "src/index.ts",
-      },
-      {
-        id: "3",
-        name: "utils.ts",
-        type: "file",
-        path: "src/utils.ts",
-      },
-    ],
-  },
-  {
-    id: "4",
-    name: "tests",
-    type: "folder",
-    path: "tests",
-    children: [
-      {
-        id: "5",
-        name: "index.test.ts",
-        type: "file",
-        path: "tests/index.test.ts",
-      },
-    ],
-  },
-  {
-    id: "6",
-    name: "package.json",
-    type: "file",
-    path: "package.json",
-  },
-  {
-    id: "7",
-    name: "README.md",
-    type: "file",
-    path: "README.md",
-  },
-];
-
-const sampleCode = `// Implement a function to find the longest palindromic substring
-function longestPalindrome(s: string): string {
-  // Your implementation here
-  return "";
+// Session initialization data interface
+interface SessionData {
+  sessionId: string;
+  candidateId: string;
+  question: {
+    id: string;
+    title: string;
+    description: string;
+    difficulty: string;
+    language: string;
+    starterCode: string;
+    testCases: Array<{
+      name: string;
+      input: string;
+      expectedOutput: string;
+      hidden: boolean;
+    }>;
+  };
+  sandbox: {
+    volumeId: string;
+    workspaceDir: string;
+    status: string;
+  };
+  files: FileNode[];
+  timeLimit: number;
+  timeRemaining: number;
+  startedAt: string;
 }
-
-// Test cases
-console.log(longestPalindrome("babad")); // Expected: "bab" or "aba"
-console.log(longestPalindrome("cbbd"));  // Expected: "bb"
-`;
 
 export default function InterviewPage() {
   const params = useParams();
-  const sessionId = params.id as string;
+  const router = useRouter();
+  const candidateId = params.id as string;
 
+  // Session state
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  // UI state
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
-  const [code, setCode] = useState(sampleCode);
+  const [code, setCode] = useState("");
   const [isAIChatOpen, setIsAIChatOpen] = useState(true);
-  const [timeRemaining, setTimeRemaining] = useState(5400); // 90 minutes in seconds
-  const [currentQuestionId] = useState("question-1"); // TODO: Get from API
+  const [timeRemaining, setTimeRemaining] = useState(0);
+  const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
+
+  // Debounce timer ref
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Initialize session on mount
+  useEffect(() => {
+    const initializeSession = async () => {
+      try {
+        setIsInitializing(true);
+        setInitError(null);
+
+        const response = await fetch(`/api/interview/${candidateId}/initialize`, {
+          method: "POST",
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to initialize session");
+        }
+
+        const data: SessionData = await response.json();
+        setSessionData(data);
+        setCode(data.question.starterCode);
+        setTimeRemaining(data.timeRemaining);
+
+        // Set default selected file
+        if (data.files.length > 0) {
+          const mainFile = data.files.find(
+            (f) => f.name.includes("solution") || f.name.includes("index")
+          ) || data.files[0];
+          setSelectedFile(mainFile);
+        }
+      } catch (err) {
+        console.error("Session initialization error:", err);
+        setInitError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+
+    initializeSession();
+  }, [candidateId]);
+
+  // Timer countdown
+  useEffect(() => {
+    if (!sessionData || timeRemaining <= 0) return;
+
+    const intervalId = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          // Time's up - auto-submit
+          handleSubmit();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [sessionData, timeRemaining]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Loading state
+  if (isInitializing) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Spinner className="mx-auto mb-4" />
+          <p className="text-text-secondary">Initializing interview session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (initError || !sessionData) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="text-center max-w-md">
+          <AlertCircle className="h-12 w-12 text-error mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-text-primary mb-2">
+            Failed to Initialize Interview
+          </h2>
+          <p className="text-text-secondary mb-4">
+            {initError || "Unknown error occurred"}
+          </p>
+          <Button onClick={() => router.push("/dashboard")}>
+            Return to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleSubmit = async () => {
+    // TODO: Implement submission
+    console.log("Submitting assessment...");
+  };
 
   // Format time remaining
   const formatTime = (seconds: number) => {
@@ -104,16 +186,69 @@ export default function InterviewPage() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const handleFileSelect = (file: FileNode) => {
+  const handleFileSelect = async (file: FileNode) => {
     if (file.type === "file") {
       setSelectedFile(file);
-      // In a real app, load file content here
+      // TODO: Load file content from Modal volume
+      // For now, use starter code
+      setCode(sessionData?.question.starterCode || "");
     }
   };
 
-  const handleTerminalCommand = (command: string) => {
-    console.log("Command:", command);
-    // In a real app, send to backend/Modal sandbox
+  const handleCodeChange = useCallback((newCode: string) => {
+    // Update local state immediately (optimistic update)
+    setCode(newCode);
+
+    // Clear previous debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Debounce API call (2 seconds)
+    debounceTimerRef.current = setTimeout(async () => {
+      if (sessionData && selectedFile) {
+        try {
+          await fetch(`/api/interview/${candidateId}/files`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              path: selectedFile.path,
+              content: newCode,
+              language: sessionData.question.language,
+            }),
+          });
+        } catch (err) {
+          console.error("Failed to sync file:", err);
+        }
+      }
+    }, 2000); // 2 second debounce
+  }, [sessionData, selectedFile, candidateId]);
+
+  const handleRunTests = async () => {
+    if (!sessionData) return;
+
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/run-tests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          language: sessionData.question.language,
+          testCases: sessionData.question.testCases,
+          fileName: selectedFile?.name,
+        }),
+      });
+
+      if (response.ok) {
+        const results = await response.json();
+        setTestResults({
+          passed: results.passed,
+          total: results.total,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to run tests:", err);
+    }
   };
 
   return (
@@ -124,10 +259,10 @@ export default function InterviewPage() {
           <div className="flex items-center gap-4">
             <div>
               <h1 className="text-lg font-semibold text-text-primary">
-                Assessment: Longest Palindrome Substring
+                {sessionData.question.title}
               </h1>
               <p className="text-sm text-text-secondary">
-                Senior Software Engineer - Full Stack
+                {sessionData.question.difficulty} • {sessionData.question.language}
               </p>
             </div>
           </div>
@@ -135,25 +270,31 @@ export default function InterviewPage() {
           <div className="flex items-center gap-4">
             {/* Time Remaining */}
             <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-warning" />
-              <span className="text-sm font-mono text-text-primary">
+              <Clock className={`h-4 w-4 ${timeRemaining < 300 ? "text-error" : "text-warning"}`} />
+              <span className={`text-sm font-mono ${timeRemaining < 300 ? "text-error" : "text-text-primary"}`}>
                 {formatTime(timeRemaining)}
               </span>
             </div>
 
             {/* Test Status */}
-            <Badge variant="default" className="gap-1">
-              <AlertCircle className="h-3 w-3" />
-              3/5 tests passing
-            </Badge>
+            {testResults.total > 0 && (
+              <Badge variant={testResults.passed === testResults.total ? "success" : "default"} className="gap-1">
+                {testResults.passed === testResults.total ? (
+                  <CheckCircle2 className="h-3 w-3" />
+                ) : (
+                  <AlertCircle className="h-3 w-3" />
+                )}
+                {testResults.passed}/{testResults.total} tests passing
+              </Badge>
+            )}
 
             {/* Actions */}
-            <Button size="sm" variant="outline">
+            <Button size="sm" variant="outline" onClick={handleRunTests}>
               <Play className="h-4 w-4 mr-2" />
               Run Tests
             </Button>
 
-            <Button size="sm" variant="primary">
+            <Button size="sm" variant="primary" onClick={handleSubmit}>
               Submit Assessment
             </Button>
           </div>
@@ -172,8 +313,8 @@ export default function InterviewPage() {
                 </p>
               </div>
               <FileTree
-                sessionId={sessionId}
-                files={sampleFiles}
+                sessionId={sessionData.sessionId}
+                files={sessionData.files}
                 selectedFile={selectedFile?.path}
                 onFileSelect={handleFileSelect}
                 className="flex-1"
@@ -202,11 +343,11 @@ export default function InterviewPage() {
                   {/* Editor */}
                   <div className="flex-1">
                     <CodeEditor
-                      sessionId={sessionId}
-                      questionId={currentQuestionId}
+                      sessionId={sessionData.sessionId}
+                      questionId={sessionData.question.id}
                       value={code}
-                      onChange={setCode}
-                      language="typescript"
+                      onChange={handleCodeChange}
+                      language={sessionData.question.language as any}
                       fileName={selectedFile?.name}
                     />
                   </div>
@@ -225,7 +366,7 @@ export default function InterviewPage() {
                     </p>
                   </div>
                   <div className="flex-1">
-                    <Terminal sessionId={sessionId} onCommand={handleTerminalCommand} />
+                    <Terminal sessionId={sessionData.sessionId} />
                   </div>
                 </div>
               </Panel>
@@ -239,7 +380,7 @@ export default function InterviewPage() {
               <Panel defaultSize={30} minSize={20} maxSize={50}>
                 <div className="h-full border-l border-border">
                   <AIChat
-                    sessionId={sessionId}
+                    sessionId={sessionData.sessionId}
                   />
                 </div>
               </Panel>
