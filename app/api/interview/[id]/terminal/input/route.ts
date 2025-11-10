@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { queueTerminalOutput } from "@/lib/terminal-state";
 import { getSession } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
-import { modal } from "@/lib/services";
+import { modal, sessions } from "@/lib/services";
 
 /**
  * Demo terminal command simulator
@@ -140,10 +140,16 @@ export async function POST(
       } else {
         // Production mode: Execute in Modal sandbox
         try {
-          // Get candidate to find volumeId
+          // Get candidate to find volumeId and session recording
           const candidate = await prisma.candidate.findUnique({
             where: { id },
-            select: { volumeId: true, generatedQuestion: true },
+            select: {
+              volumeId: true,
+              generatedQuestion: true,
+              sessionRecording: {
+                select: { id: true }
+              }
+            },
           });
 
           if (!candidate || !candidate.volumeId) {
@@ -160,6 +166,18 @@ export async function POST(
             // Create sandbox for this session
             const language = candidate.generatedQuestion?.language || "javascript";
             sandbox = await modal.createSandbox(id, language, candidate.volumeId);
+          }
+
+          // Record terminal input event
+          if (candidate.sessionRecording) {
+            await sessions.recordEvent(candidate.sessionRecording.id, {
+              type: "terminal_input",
+              data: {
+                command,
+                workingDirectory: "/",
+                timestamp: new Date().toISOString(),
+              },
+            });
           }
 
           // Execute command in Modal sandbox
@@ -181,6 +199,26 @@ export async function POST(
               id,
               `\x1b[31m[Exit code: ${result.exitCode}]\x1b[0m\r\n`
             );
+          }
+
+          // Record terminal output event
+          if (candidate.sessionRecording) {
+            const fullOutput = [
+              result.stdout || "",
+              result.stderr ? `\x1b[31m${result.stderr}\x1b[0m` : "",
+              result.exitCode !== 0 ? `\x1b[31m[Exit code: ${result.exitCode}]\x1b[0m\r\n` : "",
+            ].filter(Boolean).join("");
+
+            await sessions.recordEvent(candidate.sessionRecording.id, {
+              type: "terminal_output",
+              data: {
+                output: fullOutput,
+                stdout: result.stdout || "",
+                stderr: result.stderr || "",
+                exitCode: result.exitCode,
+                timestamp: new Date().toISOString(),
+              },
+            });
           }
 
           // Queue prompt

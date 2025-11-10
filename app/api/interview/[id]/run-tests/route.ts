@@ -123,8 +123,8 @@ export async function POST(
     }
 
     // Write code to sandbox volume before running tests
-    const fileName = `solution.${language === "python" ? "py" : "js"}`;
-    await modal.writeFile(candidate.volumeId, fileName, code);
+    const fileToWrite = fileName || `solution.${language === "python" ? "py" : "js"}`;
+    await modal.writeFile(candidate.volumeId, fileToWrite, code);
 
     // Execute tests in Modal sandbox
     const executionResult = await modal.executeCode(
