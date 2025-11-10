@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queueTerminalOutput } from "@/lib/terminal-state";
+import { getSession } from "@/lib/auth-helpers";
 
 /**
  * Demo terminal command simulator
@@ -117,11 +118,10 @@ export async function POST(
     const isDemoMode = id === "demo";
 
     if (!isDemoMode) {
-      // In production, verify authentication and authorization here
-      // const session = await auth();
-      // if (!session?.user) {
-      //   return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      // }
+      const session = await getSession();
+      if (!session?.user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      }
     }
 
     if (type === "input") {
