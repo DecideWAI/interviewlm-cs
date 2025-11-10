@@ -76,7 +76,7 @@ export async function GET(
 
     // Get current question (first non-completed question)
     const currentQuestion = candidate.generatedQuestions.find(
-      (q) => q.status === "PENDING" || q.status === "IN_PROGRESS"
+      (q: any) => q.status === "PENDING" || q.status === "IN_PROGRESS"
     );
 
     if (!currentQuestion) {
@@ -192,7 +192,7 @@ export async function POST(
     // Mark previous question as completed if provided
     if (previousPerformance) {
       const previousQuestion = candidate.generatedQuestions.find(
-        (q) => q.id === previousPerformance.questionId
+        (q: any) => q.id === previousPerformance.questionId
       );
 
       if (previousQuestion) {

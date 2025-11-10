@@ -57,7 +57,7 @@ export interface StreamChunk {
 export interface ChatResponse {
   content: string;
   usage: TokenUsage;
-  stopReason: string;
+  stopReason?: string;
   latency: number; // milliseconds
 }
 
@@ -198,7 +198,7 @@ export async function* streamChatCompletion(
       content: "",
       done: true,
       usage,
-      stopReason: finalMessage.stop_reason,
+      stopReason: finalMessage.stop_reason || undefined,
     };
 
   } catch (error) {
@@ -267,7 +267,7 @@ export async function getChatCompletion(
     return {
       content: textContent,
       usage,
-      stopReason: response.stop_reason,
+      stopReason: response.stop_reason || undefined,
       latency: endTime - startTime,
     };
 

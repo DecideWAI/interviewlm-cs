@@ -130,7 +130,8 @@ export async function POST(
             } else if (event.type === "message_start") {
               inputTokens = event.message.usage.input_tokens;
             } else if (event.type === "message_delta") {
-              outputTokens = event.delta.usage?.output_tokens || 0;
+              // @ts-ignore - usage exists on MessageDeltaEvent but not on Delta type
+              outputTokens = event.usage?.output_tokens || 0;
             }
           }
 
