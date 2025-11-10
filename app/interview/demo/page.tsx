@@ -80,120 +80,11 @@ console.log(longestPalindrome("cbbd"));  // Expected: "bb"
 export default function DemoInterviewPage() {
   const [selectedFile, setSelectedFile] = useState<FileNode>(demoFiles[0]);
   const [code, setCode] = useState(demoCode);
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "👋 Welcome to the InterviewLM demo!\n\nI'm Claude, and I'll be assisting you today. Try solving the problem, and feel free to ask me for help, hints, or code examples.\n\nSome things you can try:\n• \"Can you explain the problem?\"\n• \"What's a good approach for finding palindromes?\"\n• \"Help me debug this code\"\n\nLet's get started!",
-      timestamp: new Date(),
-    },
-  ]);
-  const [isLoading, setIsLoading] = useState(false);
 
   const handleFileSelect = (file: FileNode) => {
     if (file.type === "file") {
       setSelectedFile(file);
     }
-  };
-
-  const handleSendMessage = (message: string) => {
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: message,
-      timestamp: new Date(),
-    };
-    setMessages([...messages, userMessage]);
-    setIsLoading(true);
-
-    // Simulate AI response based on user question
-    setTimeout(() => {
-      let responseContent = "";
-
-      if (message.toLowerCase().includes("approach") || message.toLowerCase().includes("algorithm")) {
-        responseContent = `Great question! Here's a recommended approach:
-
-**Expand Around Center Method:**
-
-1. A palindrome mirrors around its center
-2. For each possible center, expand outward while characters match
-3. Track the longest palindrome found
-
-Key insights:
-- A palindrome can have an odd length (one center) or even length (two centers)
-- Time complexity: O(n²), Space: O(1)
-
-Would you like me to show you the code for this approach?`;
-      } else if (message.toLowerCase().includes("code") || message.toLowerCase().includes("example") || message.toLowerCase().includes("implementation")) {
-        responseContent = `Here's a clean implementation:
-
-\`\`\`typescript
-function longestPalindrome(s: string): string {
-  if (s.length < 2) return s;
-
-  let start = 0;
-  let maxLen = 0;
-
-  function expandAroundCenter(left: number, right: number): void {
-    while (left >= 0 && right < s.length && s[left] === s[right]) {
-      const currentLen = right - left + 1;
-      if (currentLen > maxLen) {
-        start = left;
-        maxLen = currentLen;
-      }
-      left--;
-      right++;
-    }
-  }
-
-  for (let i = 0; i < s.length; i++) {
-    expandAroundCenter(i, i);     // odd length
-    expandAroundCenter(i, i + 1); // even length
-  }
-
-  return s.substring(start, start + maxLen);
-}
-\`\`\`
-
-Feel free to copy this and modify it! Want me to explain any part?`;
-      } else if (message.toLowerCase().includes("debug") || message.toLowerCase().includes("error") || message.toLowerCase().includes("wrong")) {
-        responseContent = `Let me help you debug! Common issues to check:
-
-1. **Edge cases**: Empty string, single character
-2. **Index bounds**: Make sure you're not going out of array bounds
-3. **Palindrome check**: Are you checking both odd and even length palindromes?
-4. **Return value**: Are you returning the substring or just the length?
-
-Share your code and I'll take a closer look!`;
-      } else if (message.toLowerCase().includes("test")) {
-        responseContent = `To test your solution, run:
-
-\`\`\`bash
-npm test
-\`\`\`
-
-This will run all test cases. If tests fail, I can help you understand why and fix the issues!`;
-      } else {
-        responseContent = `I'm here to help! I can assist with:
-
-• Explaining the problem in detail
-• Suggesting algorithms and approaches
-• Writing code examples
-• Debugging your solution
-• Running tests
-
-What would you like help with?`;
-      }
-
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: responseContent,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-      setIsLoading(false);
-    }, 1500);
   };
 
   const handleTerminalCommand = (command: string) => {
@@ -265,6 +156,7 @@ What would you like help with?`;
                 </p>
               </div>
               <FileTree
+                sessionId="demo"
                 files={demoFiles}
                 selectedFile={selectedFile?.path}
                 onFileSelect={handleFileSelect}
@@ -294,6 +186,8 @@ What would you like help with?`;
                   {/* Editor */}
                   <div className="flex-1">
                     <CodeEditor
+                      sessionId="demo"
+                      questionId="demo-question"
                       value={code}
                       onChange={setCode}
                       language="typescript"
@@ -331,9 +225,7 @@ What would you like help with?`;
           <Panel defaultSize={30} minSize={25} maxSize={45}>
             <div className="h-full border-l border-border">
               <AIChat
-                messages={messages}
-                onSendMessage={handleSendMessage}
-                isLoading={isLoading}
+                sessionId="demo"
               />
             </div>
           </Panel>

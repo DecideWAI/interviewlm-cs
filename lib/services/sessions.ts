@@ -21,7 +21,7 @@ import type {
   CodeSnapshot,
   TestResult,
   SessionStatus,
-} from "@prisma/client";
+} from "@/lib/prisma-types";
 
 // Validation schemas
 const sessionEventDataSchema = z.object({

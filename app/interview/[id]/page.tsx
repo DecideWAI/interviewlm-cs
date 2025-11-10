@@ -93,9 +93,9 @@ export default function InterviewPage() {
 
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [code, setCode] = useState(sampleCode);
-  const [messages, setMessages] = useState<Message[]>([]);
   const [isAIChatOpen, setIsAIChatOpen] = useState(true);
   const [timeRemaining, setTimeRemaining] = useState(5400); // 90 minutes in seconds
+  const [currentQuestionId] = useState("question-1"); // TODO: Get from API
 
   // Format time remaining
   const formatTime = (seconds: number) => {
@@ -109,27 +109,6 @@ export default function InterviewPage() {
       setSelectedFile(file);
       // In a real app, load file content here
     }
-  };
-
-  const handleSendMessage = (message: string) => {
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: message,
-      timestamp: new Date(),
-    };
-    setMessages([...messages, userMessage]);
-
-    // Simulate AI response
-    setTimeout(() => {
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        role: "assistant",
-        content: "I can help you with that! Here's a suggested approach:\n\n1. Use dynamic programming\n2. Consider edge cases\n3. Optimize for time complexity\n\nWould you like me to provide a code example?",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-    }, 1000);
   };
 
   const handleTerminalCommand = (command: string) => {
@@ -193,6 +172,7 @@ export default function InterviewPage() {
                 </p>
               </div>
               <FileTree
+                sessionId={sessionId}
                 files={sampleFiles}
                 selectedFile={selectedFile?.path}
                 onFileSelect={handleFileSelect}
@@ -222,6 +202,8 @@ export default function InterviewPage() {
                   {/* Editor */}
                   <div className="flex-1">
                     <CodeEditor
+                      sessionId={sessionId}
+                      questionId={currentQuestionId}
                       value={code}
                       onChange={setCode}
                       language="typescript"
@@ -257,9 +239,7 @@ export default function InterviewPage() {
               <Panel defaultSize={30} minSize={20} maxSize={50}>
                 <div className="h-full border-l border-border">
                   <AIChat
-                    messages={messages}
-                    onSendMessage={handleSendMessage}
-                    isLoading={false}
+                    sessionId={sessionId}
                   />
                 </div>
               </Panel>
