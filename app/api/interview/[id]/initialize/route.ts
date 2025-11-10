@@ -233,7 +233,7 @@ module.exports = longestPalindrome;`,
     }
 
     // Get file structure from Modal volume
-    const files = await modal.listFiles(volumeId);
+    const files = await modal.getFileSystem(candidateId, "/");
 
     // Calculate time remaining
     const timeLimit = candidate.assessment?.timeLimit || 3600; // Default 1 hour

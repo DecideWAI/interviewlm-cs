@@ -100,7 +100,7 @@ export async function GET(
     }
 
     // Get files from Modal volume
-    const files = await modal.listFiles(volumeId);
+    const files = await modal.getFileSystem(candidateId, "/");
 
     return NextResponse.json({
       files: files.map((file, index) => ({

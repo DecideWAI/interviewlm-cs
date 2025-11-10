@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import { modal } from "@/lib/services";
 
 // Request validation schema
 const runTestsRequestSchema = z.object({
@@ -112,23 +113,43 @@ export async function POST(
 
     // Execute code in Modal sandbox
     const executionStart = Date.now();
-    const executionResult = await executeInModalSandbox(
+
+    // Get volumeId from candidate
+    if (!candidate.volumeId) {
+      return NextResponse.json(
+        { error: "Sandbox not initialized. Please refresh the interview." },
+        { status: 400 }
+      );
+    }
+
+    // Write code to sandbox volume before running tests
+    const fileName = `solution.${language === "python" ? "py" : "js"}`;
+    await modal.writeFile(candidate.volumeId, fileName, code);
+
+    // Execute tests in Modal sandbox
+    const executionResult = await modal.executeCode(
+      id, // session ID (candidate ID)
       code,
-      language,
-      testCases
+      testCases.map(tc => ({
+        name: tc.name,
+        input: tc.input,
+        expected: tc.expectedOutput,
+        hidden: tc.hidden || false,
+      }))
     );
+
     const executionTime = Date.now() - executionStart;
 
     // Record test results to database
-    const testResultPromises = executionResult.results.map((result) =>
+    const testResultPromises = executionResult.testResults.map((result) =>
       prisma.testResult.create({
         data: {
           sessionId: sessionRecording.id,
           testName: result.name,
           passed: result.passed,
-          output: result.actualOutput || null,
+          output: result.output || null,
           error: result.error || null,
-          duration: result.duration || executionTime,
+          duration: result.duration,
         },
       })
     );
@@ -149,10 +170,17 @@ export async function POST(
 
     // Return execution results
     const response: ExecutionResponse = {
-      passed: executionResult.passed,
-      failed: executionResult.failed,
-      total: executionResult.total,
-      results: executionResult.results,
+      passed: executionResult.passedTests,
+      failed: executionResult.failedTests,
+      total: executionResult.totalTests,
+      results: executionResult.testResults.map(tr => ({
+        name: tr.name,
+        passed: tr.passed,
+        actualOutput: tr.output,
+        expectedOutput: testCases.find(tc => tc.name === tr.name)?.expectedOutput || "",
+        error: tr.error,
+        duration: tr.duration,
+      })),
       executionTime,
     };
 
@@ -167,109 +195,6 @@ export async function POST(
       { status: 500 }
     );
   }
-}
-
-/**
- * Execute code in Modal AI Sandbox
- * This is a placeholder that should be replaced with actual Modal integration
- */
-async function executeInModalSandbox(
-  code: string,
-  language: string,
-  testCases: Array<{
-    name: string;
-    input: string;
-    expectedOutput: string;
-    hidden?: boolean;
-  }>
-): Promise<{
-  passed: number;
-  failed: number;
-  total: number;
-  results: TestCaseResult[];
-}> {
-  // TODO: Replace with actual Modal sandbox execution
-  // For now, this is a mock implementation
-
-  const modalApiUrl = process.env.MODAL_API_URL || "https://modal.ai/api/execute";
-  const modalApiKey = process.env.MODAL_API_KEY;
-
-  if (!modalApiKey) {
-    console.warn("MODAL_API_KEY not set, using mock execution");
-    return mockExecution(code, language, testCases);
-  }
-
-  try {
-    const response = await fetch(modalApiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${modalApiKey}`,
-      },
-      body: JSON.stringify({
-        code,
-        language,
-        testCases,
-        timeout: 30000, // 30 seconds
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Modal API error: ${response.statusText}`);
-    }
-
-    const result = await response.json();
-    return result;
-  } catch (error) {
-    console.error("Modal sandbox execution error:", error);
-    // Fallback to mock execution
-    return mockExecution(code, language, testCases);
-  }
-}
-
-/**
- * Mock execution for development/testing
- */
-function mockExecution(
-  code: string,
-  language: string,
-  testCases: Array<{
-    name: string;
-    input: string;
-    expectedOutput: string;
-    hidden?: boolean;
-  }>
-): {
-  passed: number;
-  failed: number;
-  total: number;
-  results: TestCaseResult[];
-} {
-  const results: TestCaseResult[] = testCases.map((testCase) => {
-    // Simple mock: randomly pass or fail tests
-    const passed = Math.random() > 0.3; // 70% pass rate for demo
-
-    return {
-      name: testCase.name,
-      passed,
-      actualOutput: passed
-        ? testCase.expectedOutput
-        : "Mock output (different from expected)",
-      expectedOutput: testCase.expectedOutput,
-      error: passed ? undefined : "Mock execution error",
-      duration: Math.floor(Math.random() * 100) + 50,
-    };
-  });
-
-  const passed = results.filter((r) => r.passed).length;
-  const failed = results.filter((r) => !r.passed).length;
-
-  return {
-    passed,
-    failed,
-    total: testCases.length,
-    results,
-  };
 }
 
 /**
