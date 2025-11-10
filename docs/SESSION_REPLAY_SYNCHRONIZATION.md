@@ -232,18 +232,18 @@ async function seekToTime(targetTime: number) {
 ## Implementation Checklist
 
 - [x] Code edit event recording (files API)
-- [ ] Terminal input event recording (terminal API)
-- [ ] Terminal output event recording (terminal API)
-- [ ] File switch event recording (client-side)
-- [ ] Session start event recording (initialize API)
-- [ ] Session submit event recording (submit API)
-- [ ] Test run start event recording (run-tests API)
+- [x] Terminal input event recording (terminal API)
+- [x] Terminal output event recording (terminal API)
+- [ ] File switch event recording (client-side - to be implemented)
+- [x] Session start event recording (initialize API)
+- [x] Session submit event recording (submit API)
+- [x] Test run start event recording (run-tests API)
 - [x] Test result recording (run-tests API)
 - [x] AI interaction recording (chat API)
 - [x] Unified timeline construction (sessions API)
 - [x] Replay state reconstruction (replay viewer)
-- [ ] Checkpoint creation system
-- [ ] Fast seeking implementation
+- [x] Checkpoint creation system (session_start and session_submit marked as checkpoints)
+- [x] Fast seeking implementation (replay viewer with timeline scrubber)
 
 ## Testing Strategy
 

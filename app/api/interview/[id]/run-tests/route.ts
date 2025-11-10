@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
-import { modal } from "@/lib/services";
+import { modal, sessions } from "@/lib/services";
 
 // Request validation schema
 const runTestsRequestSchema = z.object({
@@ -125,6 +125,17 @@ export async function POST(
     // Write code to sandbox volume before running tests
     const fileToWrite = fileName || `solution.${language === "python" ? "py" : "js"}`;
     await modal.writeFile(candidate.volumeId, fileToWrite, code);
+
+    // Record test_run_start event
+    await sessions.recordEvent(sessionRecording.id, {
+      type: "test_run_start",
+      data: {
+        testCount: testCases.length,
+        language,
+        fileName: fileToWrite,
+        timestamp: new Date().toISOString(),
+      },
+    });
 
     // Execute tests in Modal sandbox
     const executionResult = await modal.executeCode(

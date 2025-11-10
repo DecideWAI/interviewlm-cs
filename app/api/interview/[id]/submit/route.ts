@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
-import { modal } from "@/lib/services";
+import { modal, sessions } from "@/lib/services";
 import {
   calculateOverallScore,
   calculateAICollaborationScore,
@@ -271,6 +271,21 @@ export async function POST(
           percentileRank,
         },
       },
+    });
+
+    // Record session_submit event
+    await sessions.recordEvent(sessionRecording.id, {
+      type: "session_submit",
+      data: {
+        finalCode,
+        testsPassed: finalTestResults?.passed || 0,
+        testsFailed: finalTestResults?.failed || 0,
+        overallScore: overallScore.overall,
+        aiCollaborationScore: aiCollaborationScore.overall,
+        duration: metrics.timeUsed,
+        timestamp: new Date().toISOString(),
+      },
+      checkpoint: true, // Mark as checkpoint for replay seeking
     });
 
     // Update session recording
