@@ -23,9 +23,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const terminalRef = useRef<HTMLDivElement>(null);
     const xtermRef = useRef<XTerm | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
-    const wsRef = useRef<WebSocket | null>(null);
+    const eventSourceRef = useRef<EventSource | null>(null);
+    const connectionStatusRef = useRef<"connected" | "disconnected" | "connecting">("connecting");
     const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting">("connecting");
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Helper to update connection status in both ref and state
+    const updateConnectionStatus = (status: "connected" | "disconnected" | "connecting") => {
+      connectionStatusRef.current = status;
+      setConnectionStatus(status);
+    };
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -95,44 +102,49 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     terminal.writeln("");
     terminal.write("\x1b[1;32m$\x1b[0m ");
 
-    // WebSocket connection
-    const connectWebSocket = () => {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/api/interview/${sessionId}/terminal`;
+    // SSE connection for terminal output
+    const connectSSE = () => {
+      const sseUrl = `/api/interview/${sessionId}/terminal`;
 
       try {
-        setConnectionStatus("connecting");
-        const ws = new WebSocket(wsUrl);
-        wsRef.current = ws;
+        updateConnectionStatus("connecting");
+        const eventSource = new EventSource(sseUrl);
+        eventSourceRef.current = eventSource;
 
-        ws.onopen = () => {
-          setConnectionStatus("connected");
+        eventSource.onopen = () => {
+          updateConnectionStatus("connected");
           terminal.writeln("\x1b[32m✓ Terminal connected to backend\x1b[0m");
           terminal.write("\x1b[1;32m$\x1b[0m ");
         };
 
-        ws.onmessage = (event) => {
+        eventSource.onmessage = (event) => {
           // Receive output from backend terminal
-          terminal.write(event.data);
+          try {
+            const data = JSON.parse(event.data);
+            if (data.output) {
+              terminal.write(data.output);
+            }
+          } catch (e) {
+            // If not JSON, write raw data
+            terminal.write(event.data);
+          }
         };
 
-        ws.onerror = (error) => {
-          console.error("WebSocket error:", error);
-          setConnectionStatus("disconnected");
-        };
+        eventSource.onerror = (error) => {
+          console.error("SSE error:", error);
+          updateConnectionStatus("disconnected");
+          eventSource.close();
 
-        ws.onclose = () => {
-          setConnectionStatus("disconnected");
           terminal.writeln("\r\n\x1b[31m✗ Terminal disconnected. Reconnecting...\x1b[0m");
 
           // Auto-reconnect after 3 seconds
           reconnectTimeoutRef.current = setTimeout(() => {
-            connectWebSocket();
+            connectSSE();
           }, 3000);
         };
       } catch (error) {
-        console.error("Failed to connect WebSocket:", error);
-        setConnectionStatus("disconnected");
+        console.error("Failed to connect SSE:", error);
+        updateConnectionStatus("disconnected");
       }
     };
 
@@ -145,16 +157,25 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       if (code === 13) {
         terminal.write("\r\n");
         if (currentLine.trim()) {
-          // Send command to WebSocket if connected
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: "input",
-              data: currentLine.trim() + "\n",
-            }));
+          const command = currentLine.trim();
+
+          // Send command via HTTP POST if connected
+          if (connectionStatusRef.current === "connected") {
+            fetch(`/api/interview/${sessionId}/terminal/input`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "input",
+                data: command + "\n",
+              }),
+            }).catch((err) => {
+              console.error("Failed to send terminal input:", err);
+              terminal.writeln("\x1b[31mFailed to send command\x1b[0m");
+            });
           } else {
-            // Fallback to local echo if WebSocket not connected
-            terminal.writeln("Command: " + currentLine.trim());
-            terminal.writeln("(Not connected to backend)");
+            // Fallback to local echo if not connected
+            terminal.writeln("Command: " + command);
+            terminal.writeln("\x1b[33m(Not connected to backend)\x1b[0m");
           }
 
           // Record terminal event
@@ -163,13 +184,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               eventType: "terminal_command",
-              data: {
-                command: currentLine.trim(),
-              },
+              data: { command },
             }),
           }).catch((err) => console.error("Failed to record terminal event:", err));
 
-          onCommand?.(currentLine.trim());
+          onCommand?.(command);
         }
         currentLine = "";
         terminal.write("\x1b[1;32m$\x1b[0m ");
@@ -186,11 +205,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         terminal.write("^C");
         terminal.write("\r\n");
 
-        // Send interrupt signal to WebSocket
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: "interrupt",
-          }));
+        // Send interrupt signal via HTTP POST
+        if (connectionStatusRef.current === "connected") {
+          fetch(`/api/interview/${sessionId}/terminal/input`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "interrupt",
+            }),
+          }).catch((err) => console.error("Failed to send interrupt:", err));
         }
 
         currentLine = "";
@@ -203,8 +226,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       }
     });
 
-    // Connect WebSocket
-    connectWebSocket();
+    // Connect SSE
+    connectSSE();
 
     // Handle window resize
     const handleResize = () => {
@@ -222,8 +245,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     // Cleanup
     return () => {
       window.removeEventListener("resize", handleResize);
-      if (wsRef.current) {
-        wsRef.current.close();
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
