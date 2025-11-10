@@ -9,7 +9,7 @@
 import prisma from "@/lib/prisma";
 import { z } from "zod";
 import { getChatCompletion } from "./claude";
-import type { Difficulty, QuestionStatus, GeneratedQuestion } from "@prisma/client";
+import type { Difficulty, QuestionStatus, GeneratedQuestion } from "@/lib/prisma-types";
 
 // Configuration
 const DEFAULT_ESTIMATED_TIME = 30; // minutes

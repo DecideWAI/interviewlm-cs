@@ -100,7 +100,6 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     terminal.writeln("\x1b[32m✓ Connected to Modal AI Sandbox\x1b[0m");
     terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
     terminal.writeln("");
-    terminal.write("\x1b[1;32m$\x1b[0m ");
 
     // SSE connection for terminal output
     const connectSSE = () => {
