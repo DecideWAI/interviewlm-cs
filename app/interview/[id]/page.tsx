@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import dynamic from "next/dynamic";
+import { useParams } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
@@ -87,6 +88,9 @@ console.log(longestPalindrome("cbbd"));  // Expected: "bb"
 `;
 
 export default function InterviewPage() {
+  const params = useParams();
+  const sessionId = params.id as string;
+
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [code, setCode] = useState(sampleCode);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -239,7 +243,7 @@ export default function InterviewPage() {
                     </p>
                   </div>
                   <div className="flex-1">
-                    <Terminal onCommand={handleTerminalCommand} />
+                    <Terminal sessionId={sessionId} onCommand={handleTerminalCommand} />
                   </div>
                 </div>
               </Panel>

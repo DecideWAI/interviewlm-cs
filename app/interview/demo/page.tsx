@@ -318,7 +318,7 @@ What would you like help with?`;
                     </Badge>
                   </div>
                   <div className="flex-1">
-                    <Terminal onCommand={handleTerminalCommand} />
+                    <Terminal sessionId="demo" onCommand={handleTerminalCommand} />
                   </div>
                 </div>
               </Panel>
