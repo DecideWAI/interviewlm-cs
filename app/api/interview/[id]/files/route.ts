@@ -13,7 +13,8 @@ const writeFileSchema = z.object({
 
 /**
  * GET /api/interview/[id]/files
- * Get file tree from Modal sandbox volume
+ * Get file tree from Modal sandbox volume, or specific file content
+ * Query params: path (optional) - if provided, returns file content instead of tree
  */
 export async function GET(
   request: NextRequest,
@@ -21,9 +22,33 @@ export async function GET(
 ) {
   try {
     const { id: candidateId } = await params;
+    const { searchParams } = new URL(request.url);
+    const filePath = searchParams.get("path");
 
-    // Demo mode - return mock files
+    // Demo mode
     if (candidateId === "demo") {
+      // If requesting specific file content
+      if (filePath) {
+        const demoContent = {
+          "/workspace/solution.js": `function longestPalindrome(s) {
+  // Implement your solution here
+  return "";
+}
+
+module.exports = longestPalindrome;`,
+          "/workspace/README.md": `# Longest Palindromic Substring
+
+## Problem
+Given a string s, return the longest palindromic substring in s.`,
+        };
+
+        return NextResponse.json({
+          content: demoContent[filePath] || "",
+          path: filePath,
+        });
+      }
+
+      // Return file list
       return NextResponse.json({
         files: [
           {
@@ -99,7 +124,16 @@ export async function GET(
       );
     }
 
-    // Get files from Modal volume
+    // If requesting specific file content
+    if (filePath) {
+      const content = await modal.readFile(volumeId, filePath);
+      return NextResponse.json({
+        content,
+        path: filePath,
+      });
+    }
+
+    // Get files from Modal volume (file list)
     const files = await modal.getFileSystem(candidateId, "/");
 
     return NextResponse.json({

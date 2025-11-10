@@ -95,15 +95,31 @@ export default function InterviewPage() {
 
         const data: SessionData = await response.json();
         setSessionData(data);
-        setCode(data.question.starterCode);
         setTimeRemaining(data.timeRemaining);
 
-        // Set default selected file
+        // Set default selected file and load its content
         if (data.files.length > 0) {
           const mainFile = data.files.find(
             (f) => f.name.includes("solution") || f.name.includes("index")
           ) || data.files[0];
           setSelectedFile(mainFile);
+
+          // Load initial file content
+          try {
+            const fileResponse = await fetch(
+              `/api/interview/${candidateId}/files?path=${encodeURIComponent(mainFile.path)}`
+            );
+            if (fileResponse.ok) {
+              const fileData = await fileResponse.json();
+              setCode(fileData.content || data.question.starterCode);
+            } else {
+              setCode(data.question.starterCode);
+            }
+          } catch {
+            setCode(data.question.starterCode);
+          }
+        } else {
+          setCode(data.question.starterCode);
         }
       } catch (err) {
         console.error("Session initialization error:", err);
@@ -233,9 +249,26 @@ export default function InterviewPage() {
   const handleFileSelect = async (file: FileNode) => {
     if (file.type === "file") {
       setSelectedFile(file);
-      // TODO: Load file content from Modal volume
-      // For now, use starter code
-      setCode(sessionData?.question.starterCode || "");
+
+      // Load file content from Modal volume
+      try {
+        const response = await fetch(
+          `/api/interview/${candidateId}/files?path=${encodeURIComponent(file.path)}`
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          setCode(data.content || "");
+        } else {
+          // Fallback to starter code if file read fails
+          console.error("Failed to load file content");
+          setCode(sessionData?.question.starterCode || "");
+        }
+      } catch (err) {
+        console.error("Error loading file:", err);
+        // Fallback to starter code
+        setCode(sessionData?.question.starterCode || "");
+      }
     }
   };
 
