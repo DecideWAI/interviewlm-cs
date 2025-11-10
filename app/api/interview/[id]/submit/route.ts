@@ -172,8 +172,8 @@ export async function POST(
     });
 
     const allScores = allCandidates
-      .map((c) => c.overallScore)
-      .filter((s): s is number => s !== null);
+      .map((c: any) => c.overallScore)
+      .filter((s: any): s is number => s !== null);
     const percentileRank = calculatePercentileRank(
       overallScore.overall,
       allScores

@@ -443,7 +443,7 @@ export async function closeSession(
     if (session.events.length > 0) {
       const uploadResult = await uploadSessionRecording(
         sessionId,
-        session.events.map((e) => ({
+        session.events.map((e: any) => ({
           timestamp: e.timestamp.toISOString(),
           type: e.type,
           fileId: e.fileId || undefined,
@@ -569,12 +569,12 @@ export async function getSessionStats(sessionId: string): Promise<{
     }
 
     const totalTokensUsed = session.claudeInteractions.reduce(
-      (sum, interaction) =>
+      (sum: number, interaction: any) =>
         sum + (interaction.inputTokens || 0) + (interaction.outputTokens || 0),
       0
     );
 
-    const testsPassedCount = session.testResults.filter((t) => t.passed).length;
+    const testsPassedCount = session.testResults.filter((t: any) => t.passed).length;
 
     return {
       eventCount: session.eventCount,

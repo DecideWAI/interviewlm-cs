@@ -353,7 +353,7 @@ export async function getNextQuestion(
     let previousPerformance: number | undefined;
     if (completedQuestions.length > 0) {
       const avgScore =
-        completedQuestions.reduce((sum, q) => sum + (q.score || 0), 0) /
+        completedQuestions.reduce((sum: number, q: any) => sum + (q.score || 0), 0) /
         completedQuestions.length;
       previousPerformance = avgScore;
     }
@@ -373,8 +373,8 @@ export async function getNextQuestion(
     }
 
     // Find a problem seed from the assessment
-    const unusedSeeds = candidate.assessment.questions.filter((q) => {
-      return !completedQuestions.some((cq) => cq.questionSeedId === q.problemSeedId);
+    const unusedSeeds = candidate.assessment.questions.filter((q: any) => {
+      return !completedQuestions.some((cq: any) => cq.questionSeedId === q.problemSeedId);
     });
 
     const seed = unusedSeeds.length > 0 ? unusedSeeds[0].problemSeedId : undefined;
@@ -517,15 +517,15 @@ export async function calculatePerformance(candidateId: string): Promise<{
       where: { candidateId },
     });
 
-    const completedQuestions = questions.filter((q) => q.status === "COMPLETED");
+    const completedQuestions = questions.filter((q: any) => q.status === "COMPLETED");
 
     const averageScore =
       completedQuestions.length > 0
-        ? completedQuestions.reduce((sum, q) => sum + (q.score || 0), 0) /
+        ? completedQuestions.reduce((sum: number, q: any) => sum + (q.score || 0), 0) /
           completedQuestions.length
         : 0;
 
-    const timeSpent = questions.reduce((total, q) => {
+    const timeSpent = questions.reduce((total: number, q: any) => {
       if (q.startedAt && q.completedAt) {
         const duration =
           (q.completedAt.getTime() - q.startedAt.getTime()) / (1000 * 60);
