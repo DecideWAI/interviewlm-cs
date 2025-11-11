@@ -87,31 +87,18 @@ export default function DashboardPage() {
     {
       label: "Active Assessments",
       value: stats.activeAssessments,
-      change: 0,
-      trend: "neutral" as const,
-      icon: "users",
     },
     {
       label: "Pending Review",
       value: stats.pendingReview,
-      change: 0,
-      trend: "neutral" as const,
-      icon: "clock",
     },
     {
       label: "Completed This Month",
       value: stats.completedThisMonth,
-      change: 0,
-      trend: "up" as const,
-      icon: "check",
     },
     {
       label: "Average Score",
       value: stats.avgScore ? Math.round(stats.avgScore) : 0,
-      change: 0,
-      trend: "neutral" as const,
-      icon: "award",
-      suffix: "/100",
     },
   ];
 
@@ -119,33 +106,18 @@ export default function DashboardPage() {
     {
       label: "Completion Rate",
       value: Math.round(stats.completionRate * 100),
-      change: 0,
-      trend: "neutral" as const,
-      icon: "percent",
-      suffix: "%",
     },
     {
       label: "Pass Rate",
       value: 0, // Not yet calculated in API
-      change: 0,
-      trend: "neutral" as const,
-      icon: "trending-up",
-      suffix: "%",
     },
     {
       label: "Avg AI Proficiency",
       value: 0, // Not yet calculated in API
-      change: 0,
-      trend: "neutral" as const,
-      icon: "sparkles",
     },
     {
       label: "Candidates Using AI",
       value: 0, // Not yet calculated in API
-      change: 0,
-      trend: "neutral" as const,
-      icon: "users",
-      suffix: "%",
     },
   ];
 

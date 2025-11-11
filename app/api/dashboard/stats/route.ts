@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 
@@ -6,7 +6,7 @@ import { getSession } from "@/lib/auth-helpers";
  * GET /api/dashboard/stats
  * Get dashboard statistics for the user's organization
  */
-export async function GET(request: NextRequest) {
+export async function GET() {
   try {
     const session = await getSession();
 
@@ -137,64 +137,6 @@ export async function GET(request: NextRequest) {
     );
     const completionRate = startedCandidates.length > 0
       ? completedCandidates.length / startedCandidates.length
-      : 0;
-
-    // Calculate pass rate (score >= 70)
-    const passThreshold = 70;
-    const passedCandidates = allCandidates.filter(
-      (c) => (c.overallScore || 0) >= passThreshold
-    );
-    const passRate = allCandidates.length > 0
-      ? passedCandidates.length / allCandidates.length
-      : 0;
-
-    // AI proficiency (using communication score as proxy)
-    const candidatesWithCommScore = allCandidates.filter(
-      (c) => c.communicationScore !== null
-    );
-    const avgAIProficiency = candidatesWithCommScore.length > 0
-      ? candidatesWithCommScore.reduce(
-          (sum, c) => sum + (c.communicationScore || 0),
-          0
-        ) / candidatesWithCommScore.length
-      : 0;
-
-    // Candidates using AI (assuming all with communication score used AI)
-    const candidatesUsingAI = candidatesWithCommScore.length;
-    const aiUsageRate = totalCandidates > 0
-      ? candidatesUsingAI / totalCandidates
-      : 0;
-
-    // Pipeline funnel
-    const invited = totalCandidates;
-    const started = startedCandidates.length;
-    const completed = completedCandidates.length;
-    const passed = passedCandidates.length;
-
-    // Calculate trends (last 30 days vs previous 30 days)
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    const sixtyDaysAgo = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000);
-
-    const [recentCompletions, previousCompletions] = await Promise.all([
-      prisma.candidate.count({
-        where: {
-          organizationId: orgId,
-          completedAt: { gte: thirtyDaysAgo },
-        },
-      }),
-      prisma.candidate.count({
-        where: {
-          organizationId: orgId,
-          completedAt: {
-            gte: sixtyDaysAgo,
-            lt: thirtyDaysAgo,
-          },
-        },
-      }),
-    ]);
-
-    const completionTrend = previousCompletions > 0
-      ? ((recentCompletions - previousCompletions) / previousCompletions) * 100
       : 0;
 
     return NextResponse.json({

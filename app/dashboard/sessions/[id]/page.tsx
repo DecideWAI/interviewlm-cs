@@ -96,6 +96,11 @@ interface PlaybackState {
   currentTime: number; // milliseconds from start
 }
 
+// Helper to validate language type
+function isValidLanguage(lang: string | undefined): lang is "javascript" | "typescript" | "python" | "go" {
+  return lang === "javascript" || lang === "typescript" || lang === "python" || lang === "go";
+}
+
 interface ReplayState {
   code: string;
   terminalOutput: string[];
@@ -462,7 +467,11 @@ export default function SessionReplayPage() {
             <CodeEditor
               value={replayState.code}
               onChange={() => {}}
-              language={sessionData.questions[0]?.language || "javascript"}
+              language={
+                isValidLanguage(sessionData.questions[0]?.language)
+                  ? sessionData.questions[0].language
+                  : "javascript"
+              }
               readOnly={true}
             />
           </div>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
-import { modal, sessions } from "@/lib/services";
+import { modalService as modal, sessionService as sessions } from "@/lib/services";
 import {
   calculateOverallScore,
   calculateAICollaborationScore,
@@ -81,6 +81,7 @@ export async function POST(
             codeSnapshots: true,
           },
         },
+        generatedQuestions: true,
       },
     });
 
@@ -115,14 +116,15 @@ export async function POST(
 
     // Run final test execution to ensure we have latest results
     let finalTestResults: any = null;
-    if (candidate.volumeId && candidate.generatedQuestion) {
+    const firstQuestion = candidate.generatedQuestions?.[0];
+    if (candidate.volumeId && firstQuestion) {
       try {
         // Read final code from Modal volume
-        const fileName = `solution.${candidate.generatedQuestion.language === "python" ? "py" : "js"}`;
+        const fileName = `solution.${firstQuestion.language === "python" ? "py" : "js"}`;
         const finalCodeContent = finalCode?.[fileName] || await modal.readFile(candidate.volumeId, fileName);
 
         // Run final tests
-        const testCases = candidate.generatedQuestion.testCases as Array<{
+        const testCases = firstQuestion.testCases as Array<{
           name: string;
           input: string;
           expectedOutput: string;
@@ -269,7 +271,7 @@ export async function POST(
           },
           recommendation,
           percentileRank,
-        },
+        } as any,
       },
     });
 

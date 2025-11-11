@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
-import { modal, sessions } from "@/lib/services";
+import { modalService as modal, sessionService as sessions } from "@/lib/services";
 
 // Request validation schema
 const runTestsRequestSchema = z.object({
