@@ -26,9 +26,19 @@ interface AIChatProps {
   className?: string;
   onFileModified?: (path: string) => void;
   onTestResultsUpdated?: (results: any) => void;
+  onSuggestNextQuestion?: (suggestion: {
+    reason: string;
+    performance: string;
+  }) => void;
 }
 
-export function AIChat({ sessionId, className, onFileModified, onTestResultsUpdated }: AIChatProps) {
+export function AIChat({
+  sessionId,
+  className,
+  onFileModified,
+  onTestResultsUpdated,
+  onSuggestNextQuestion
+}: AIChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -186,6 +196,13 @@ export function AIChat({ sessionId, className, onFileModified, onTestResultsUpda
                   if (data.toolName === "run_tests" && data.output.success) {
                     onTestResultsUpdated?.(data.output);
                   }
+
+                  if (data.toolName === "suggest_next_question" && data.output.success) {
+                    onSuggestNextQuestion?.({
+                      reason: data.output.reason,
+                      performance: data.output.performance,
+                    });
+                  }
                   break;
 
                 case "tool_error":
@@ -287,7 +304,7 @@ export function AIChat({ sessionId, className, onFileModified, onTestResultsUpda
           </div>
         </div>
         <p className="text-xs text-text-tertiary mt-1">
-          AI can read files, write code, run tests, and execute commands
+          AI can read files, write code, run tests, execute commands, and suggest next steps
         </p>
         {error && (
           <div className="mt-2 flex items-center gap-2 text-xs text-error bg-error/10 p-2 rounded">
@@ -511,6 +528,9 @@ function formatToolResult(toolName: string, output: any): string {
 
     case "execute_bash":
       return `✅ Command executed (exit code: ${output.exitCode || 0})`;
+
+    case "suggest_next_question":
+      return `🎉 ${output.performance}\n${output.reason}\n${output.suggestion}`;
 
     default:
       return `✅ ${toolName} completed`;

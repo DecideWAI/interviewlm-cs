@@ -7,16 +7,19 @@ import {
   writeFileTool,
   runTestsTool,
   executeBashTool,
+  suggestNextQuestionTool,
   executeReadFile,
   executeWriteFile,
   executeRunTests,
   executeExecuteBash,
+  executeSuggestNextQuestion,
 } from "@/lib/agent-tools";
 import type {
   ReadFileToolInput,
   WriteFileToolInput,
   RunTestsToolInput,
   ExecuteBashToolInput,
+  SuggestNextQuestionToolInput,
 } from "@/lib/agent-tools";
 
 // Initialize Anthropic client
@@ -108,13 +111,23 @@ export async function POST(
           let outputTokens = 0;
           const startTime = Date.now();
 
+          // Track content blocks manually
+          const contentBlocks: any[] = [];
+          let currentToolUseBlock: any = null;
+
           // Stream from Claude API with tool use
           const messageStream = await anthropic.messages.stream({
             model: "claude-sonnet-4-5-20250929",
             max_tokens: 4096,
             system: systemPrompt,
             messages: messages as Anthropic.MessageParam[],
-            tools: [readFileTool, writeFileTool, runTestsTool, executeBashTool],
+            tools: [
+              readFileTool,
+              writeFileTool,
+              runTestsTool,
+              executeBashTool,
+              suggestNextQuestionTool,
+            ],
           });
 
           // Handle streaming events
@@ -130,6 +143,14 @@ export async function POST(
 
               // Tool use started
               if (block.type === "tool_use") {
+                currentToolUseBlock = {
+                  type: "tool_use",
+                  id: block.id,
+                  name: block.name,
+                  input: {},
+                };
+                contentBlocks[event.index] = currentToolUseBlock;
+
                 // Send tool_use_start event
                 controller.enqueue(
                   encoder.encode(
@@ -139,6 +160,11 @@ export async function POST(
                     })}\n\n`
                   )
                 );
+              } else if (block.type === "text") {
+                contentBlocks[event.index] = {
+                  type: "text",
+                  text: block.text || "",
+                };
               }
             }
 
@@ -160,17 +186,17 @@ export async function POST(
                 );
               }
 
-              // Tool input delta (accumulate but don't send yet)
+              // Tool input delta
               if (delta.type === "input_json_delta") {
-                // Tool input is being built, we'll execute when complete
+                if (currentToolUseBlock) {
+                  currentToolUseBlock.input = delta.partial_json ? JSON.parse(delta.partial_json) : currentToolUseBlock.input;
+                }
               }
             }
 
             // Content block stop - tool use complete, execute it
             if (event.type === "content_block_stop") {
-              const block = messageStream.currentMessageSnapshot.content[
-                event.index
-              ];
+              const block = contentBlocks[event.index];
 
               if (block.type === "tool_use") {
                 const toolName = block.name;
@@ -369,6 +395,11 @@ async function executeTool(
     case "execute_bash":
       return executeExecuteBash(candidateId, toolInput as ExecuteBashToolInput);
 
+    case "suggest_next_question":
+      return executeSuggestNextQuestion(
+        toolInput as SuggestNextQuestionToolInput
+      );
+
     default:
       throw new Error(`Unknown tool: ${toolName}`);
   }
@@ -418,12 +449,14 @@ function buildInterviewSystemPrompt(candidate: any): string {
 2. Help debug issues and explain concepts clearly
 3. Suggest best practices and improvements
 4. Be proactive - if you see a problem, offer to fix it
+5. When all tests pass and the solution is complete, use the suggest_next_question tool to recommend advancing to the next challenge
 
 You have access to these tools:
 - read_file: Read any file in the workspace to understand the code
 - write_file: Create or modify files to implement features or fix bugs
 - run_tests: Execute the test suite to validate code changes
 - execute_bash: Run terminal commands (install packages, check structure, etc.)
+- suggest_next_question: Suggest advancing to the next question when the current one is successfully completed
 
 Be concise but thorough. When making code changes, always run tests afterward to verify they work.`;
 

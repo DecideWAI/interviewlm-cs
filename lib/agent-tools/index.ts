@@ -7,6 +7,7 @@ export { readFileTool, executeReadFile } from "./read-file";
 export { writeFileTool, executeWriteFile } from "./write-file";
 export { runTestsTool, executeRunTests } from "./run-tests";
 export { executeBashTool, executeExecuteBash } from "./execute-bash";
+export { suggestNextQuestionTool, executeSuggestNextQuestion } from "./suggest-next-question";
 
 export type {
   ReadFileToolInput,
@@ -28,3 +29,8 @@ export type {
   ExecuteBashToolInput,
   ExecuteBashToolOutput,
 } from "./execute-bash";
+
+export type {
+  SuggestNextQuestionToolInput,
+  SuggestNextQuestionToolOutput,
+} from "./suggest-next-question";

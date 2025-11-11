@@ -9,6 +9,9 @@ import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, Message } from "@/components/interview/AIChat";
 import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
+import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
+import { QuestionCompletionCard } from "@/components/interview/QuestionCompletionCard";
+import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(
@@ -75,6 +78,18 @@ export default function InterviewPage() {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Question progression state
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [totalQuestions, setTotalQuestions] = useState(3); // Default, will be updated
+  const [questionStartTime, setQuestionStartTime] = useState<Date | null>(null);
+  const [questionTimeElapsed, setQuestionTimeElapsed] = useState(0);
+  const [isLoadingNextQuestion, setIsLoadingNextQuestion] = useState(false);
+  const [showCompletionCard, setShowCompletionCard] = useState(false);
+  const [previousQuestionPerformance, setPreviousQuestionPerformance] = useState<{
+    score: number;
+    timeSpent: number;
+  } | null>(null);
 
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -161,6 +176,33 @@ export default function InterviewPage() {
     };
   }, []);
 
+  // Track question time elapsed
+  useEffect(() => {
+    if (!questionStartTime) {
+      // Set start time when session initializes
+      if (sessionData) {
+        setQuestionStartTime(new Date());
+      }
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - questionStartTime.getTime()) / 1000);
+      setQuestionTimeElapsed(elapsed);
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [questionStartTime, sessionData]);
+
+  // Show completion card when all tests pass
+  useEffect(() => {
+    if (testResults.total > 0 && testResults.passed === testResults.total) {
+      setShowCompletionCard(true);
+    } else {
+      setShowCompletionCard(false);
+    }
+  }, [testResults]);
+
   // Confirmation before leaving page
   useEffect(() => {
     if (!sessionData || isSubmitting) return;
@@ -202,14 +244,6 @@ export default function InterviewPage() {
     }
   }, [sessionData, selectedFile, candidateId, code]);
 
-  // Keyboard shortcuts
-  useInterviewKeyboardShortcuts({
-    onSave: handleManualSave,
-    onRunTests: handleRunTests,
-    onToggleAIChat: () => setIsAIChatOpen((prev) => !prev),
-    onSubmit: handleSubmit,
-  });
-
   // Loading state
   if (isInitializing) {
     return (
@@ -241,6 +275,85 @@ export default function InterviewPage() {
       </div>
     );
   }
+
+  const handleNextQuestion = async () => {
+    if (!sessionData || isLoadingNextQuestion) return;
+
+    try {
+      setIsLoadingNextQuestion(true);
+      setShowCompletionCard(false);
+
+      // Calculate performance score
+      const timeSpent = questionTimeElapsed;
+      const testsPassedRatio = testResults.total > 0 ? testResults.passed / testResults.total : 0;
+      const score = Math.round(testsPassedRatio * 100); // Simple score calculation
+
+      // Store performance for loading screen
+      setPreviousQuestionPerformance({ score, timeSpent });
+
+      // Call API to generate next question
+      const response = await fetch(`/api/interview/${candidateId}/questions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          previousPerformance: {
+            questionId: sessionData.question.id,
+            score,
+            timeSpent,
+            testsPassedRatio,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to generate next question");
+      }
+
+      const data = await response.json();
+
+      // Check if this was the last question
+      if (data.completed) {
+        // Show final summary and submit
+        alert("All questions completed! Ready to submit your assessment.");
+        await handleSubmit();
+        return;
+      }
+
+      // Update session with new question
+      setSessionData({
+        ...sessionData,
+        question: {
+          id: data.question.id,
+          title: data.question.title,
+          description: data.question.description,
+          difficulty: data.question.difficulty.toUpperCase(),
+          language: data.question.language,
+          starterCode: data.question.starterCode[0]?.content || "",
+          testCases: data.question.testCases,
+        },
+      });
+
+      // Update question tracking
+      setCurrentQuestionIndex((prev) => prev + 1);
+      setQuestionStartTime(new Date());
+      setQuestionTimeElapsed(0);
+      setTestResults({ passed: 0, total: 0 });
+
+      // Reset editor with new starter code
+      setCode(data.question.starterCode[0]?.content || "");
+
+      // Clear previous performance after loading
+      setTimeout(() => {
+        setPreviousQuestionPerformance(null);
+        setIsLoadingNextQuestion(false);
+      }, 2000); // Show loading screen for 2 seconds
+    } catch (err) {
+      console.error("Failed to load next question:", err);
+      alert(`Failed to load next question: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setIsLoadingNextQuestion(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!sessionData || isSubmitting) return;
@@ -379,31 +492,40 @@ export default function InterviewPage() {
     }
   };
 
+  // Keyboard shortcuts
+  useInterviewKeyboardShortcuts({
+    onSave: handleManualSave,
+    onRunTests: handleRunTests,
+    onToggleAIChat: () => setIsAIChatOpen((prev) => !prev),
+    onSubmit: handleSubmit,
+  });
+
   return (
     <div className="h-screen flex flex-col bg-background">
-      {/* Header */}
-      <div className="border-b border-border bg-background-secondary">
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div>
-              <h1 className="text-lg font-semibold text-text-primary">
-                {sessionData.question.title}
-              </h1>
-              <p className="text-sm text-text-secondary">
-                {sessionData.question.difficulty} • {sessionData.question.language}
-              </p>
-            </div>
-          </div>
+      {/* Loading Next Question Overlay */}
+      {isLoadingNextQuestion && (
+        <NextQuestionLoading
+          previousScore={previousQuestionPerformance?.score}
+          previousTime={previousQuestionPerformance?.timeSpent}
+          nextDifficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
+          nextQuestionNumber={currentQuestionIndex + 2}
+        />
+      )}
 
-          <div className="flex items-center gap-4">
-            {/* Time Remaining */}
-            <div className="flex items-center gap-2">
-              <Clock className={`h-4 w-4 ${timeRemaining < 300 ? "text-error" : "text-warning"}`} />
-              <span className={`text-sm font-mono ${timeRemaining < 300 ? "text-error" : "text-text-primary"}`}>
-                {formatTime(timeRemaining)}
-              </span>
-            </div>
+      {/* Question Progress Header */}
+      <QuestionProgressHeader
+        currentQuestion={currentQuestionIndex + 1}
+        totalQuestions={totalQuestions}
+        difficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
+        timeElapsed={questionTimeElapsed}
+        estimatedTime={sessionData.question.difficulty === "HARD" ? 45 : sessionData.question.difficulty === "MEDIUM" ? 30 : 20}
+        title={sessionData.question.title}
+      />
 
+      {/* Actions Bar */}
+      <div className="border-b border-border bg-background-secondary px-6 py-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
             {/* Test Status */}
             {testResults.total > 0 && (
               <Badge variant={testResults.passed === testResults.total ? "success" : "default"} className="gap-1">
@@ -416,6 +538,16 @@ export default function InterviewPage() {
               </Badge>
             )}
 
+            {/* Overall Time Remaining */}
+            <div className="flex items-center gap-2 text-sm text-text-tertiary">
+              <Clock className="h-4 w-4" />
+              <span className="font-mono">
+                Overall: {formatTime(timeRemaining)}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
             {/* Actions */}
             <Button size="sm" variant="outline" onClick={handleRunTests}>
               <Play className="h-4 w-4 mr-2" />
@@ -493,14 +625,36 @@ export default function InterviewPage() {
               {/* Terminal */}
               <Panel defaultSize={40} minSize={20}>
                 <div className="h-full flex flex-col">
-                  <div className="border-b border-border bg-background-secondary px-3 py-2 flex items-center gap-2">
-                    <TerminalIcon className="h-4 w-4 text-success" />
-                    <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                      Terminal
-                    </p>
+                  <div className="border-b border-border bg-background-secondary px-3 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <TerminalIcon className="h-4 w-4 text-success" />
+                      <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                        Terminal
+                      </p>
+                    </div>
+                    {showCompletionCard && (
+                      <Badge variant="success" className="animate-pulse">
+                        Ready for next question!
+                      </Badge>
+                    )}
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 relative">
                     <Terminal sessionId={sessionData.sessionId} />
+
+                    {/* Completion Card Overlay */}
+                    {showCompletionCard && (
+                      <div className="absolute bottom-4 left-4 right-4 z-10">
+                        <QuestionCompletionCard
+                          testsPassed={testResults.passed}
+                          testsTotal={testResults.total}
+                          timeSpent={questionTimeElapsed}
+                          score={Math.round((testResults.passed / testResults.total) * 100)}
+                          onNext={handleNextQuestion}
+                          isLastQuestion={currentQuestionIndex + 1 >= totalQuestions}
+                          isLoading={isLoadingNextQuestion}
+                        />
+                      </div>
+                    )}
                   </div>
                 </div>
               </Panel>

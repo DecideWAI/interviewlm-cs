@@ -229,10 +229,10 @@ export function calculatePipelineHealth(funnel: PipelineFunnel): number {
     hiredConversion: 0.2, // 20% weight
   };
 
-  const startConversion = funnel.stages[0].conversionToNext;
-  const completeConversion = funnel.stages[1].conversionToNext;
-  const evaluatedConversion = funnel.stages[2].conversionToNext;
-  const hiredConversion = funnel.stages[3].conversionToNext;
+  const startConversion = funnel.stages[0].conversionToNext || 0;
+  const completeConversion = funnel.stages[1].conversionToNext || 0;
+  const evaluatedConversion = funnel.stages[2].conversionToNext || 0;
+  const hiredConversion = funnel.stages[3].conversionToNext || 0;
 
   const score =
     startConversion * weights.startConversion * 100 +
