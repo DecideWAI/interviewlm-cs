@@ -26,7 +26,6 @@ import {
   sanitizeMessages,
   sanitizeToolOutput,
   validateBashCommand,
-  checkRateLimit,
 } from "@/lib/agent-security";
 
 // Initialize Anthropic client
@@ -65,15 +64,6 @@ export async function POST(
 
     // Security: Sanitize messages to prevent injection
     const sanitizedMessages = sanitizeMessages(messages);
-
-    // Security: Check rate limits
-    const rateLimitCheck = checkRateLimit(sanitizedMessages);
-    if (rateLimitCheck.exceeded) {
-      return NextResponse.json(
-        { error: rateLimitCheck.reason },
-        { status: 429 }
-      );
-    }
 
     // Get candidate and verify access
     const candidate = await prisma.candidate.findUnique({
@@ -115,6 +105,38 @@ export async function POST(
           status: "ACTIVE",
         },
       });
+    }
+
+    // Security: Server-side rate limiting (database-backed, cannot be bypassed)
+    // Find most recent conversation reset to determine current question boundary
+    const lastReset = await prisma.sessionEvent.findFirst({
+      where: {
+        sessionId: sessionRecording.id,
+        type: "conversation_reset",
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    // Count user messages since last reset (or start of session if no reset)
+    const messagesSinceReset = await prisma.claudeInteraction.count({
+      where: {
+        sessionId: sessionRecording.id,
+        role: "user",
+        ...(lastReset ? { createdAt: { gte: lastReset.createdAt } } : {}),
+      },
+    });
+
+    // Check if adding this message would exceed limit (50 messages per question)
+    const MAX_MESSAGES_PER_QUESTION = 50;
+    if (messagesSinceReset >= MAX_MESSAGES_PER_QUESTION) {
+      return NextResponse.json(
+        {
+          error: `Rate limit exceeded. Maximum ${MAX_MESSAGES_PER_QUESTION} messages per question.`,
+          messageCount: messagesSinceReset,
+          limit: MAX_MESSAGES_PER_QUESTION,
+        },
+        { status: 429 }
+      );
     }
 
     // Build secure system prompt with anti-leakage guardrails

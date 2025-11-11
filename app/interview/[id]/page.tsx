@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
-import { AIChat, Message } from "@/components/interview/AIChat";
+import { AIChat, AIChatHandle, Message } from "@/components/interview/AIChat";
 import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
 import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
@@ -94,6 +94,9 @@ export default function InterviewPage() {
 
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // AI Chat ref for resetConversation
+  const aiChatRef = useRef<AIChatHandle>(null);
 
   // Initialize session on mount
   useEffect(() => {
@@ -347,6 +350,9 @@ export default function InterviewPage() {
       // CRITICAL: Reset AI conversation history for new question
       // This prevents context leakage between questions
       await resetConversation(candidateId, data.question.id);
+
+      // Sync UI: Clear conversation in frontend
+      aiChatRef.current?.resetConversation();
 
       // Clear previous performance after loading
       setTimeout(() => {
@@ -673,6 +679,7 @@ export default function InterviewPage() {
               <Panel defaultSize={30} minSize={20} maxSize={50}>
                 <div className="h-full border-l border-border">
                   <AIChat
+                    ref={aiChatRef}
                     sessionId={sessionData.sessionId}
                     onFileModified={async (path) => {
                       // Reload file content when AI modifies it
@@ -696,6 +703,11 @@ export default function InterviewPage() {
                         passed: results.passed || 0,
                         total: results.total || 0,
                       });
+                    }}
+                    onSuggestNextQuestion={(suggestion) => {
+                      // AI suggests moving to next question
+                      console.log("AI suggests next question:", suggestion.reason);
+                      setShowCompletionCard(true);
                     }}
                   />
                 </div>
