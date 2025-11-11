@@ -52,10 +52,10 @@ export async function executeExecuteBash(
   input: ExecuteBashToolInput
 ): Promise<ExecuteBashToolOutput> {
   try {
-    const result = await modal.executeCommand(
+    const result = await modal.runCommand(
       candidateId,
       input.command,
-      input.timeout || 30000
+      "/"
     );
 
     return {
@@ -63,7 +63,6 @@ export async function executeExecuteBash(
       stdout: result.stdout,
       stderr: result.stderr,
       exitCode: result.exitCode,
-      duration: result.duration,
     };
   } catch (error) {
     return {

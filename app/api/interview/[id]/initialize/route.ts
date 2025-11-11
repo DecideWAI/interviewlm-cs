@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import type { GeneratedQuestion } from "@prisma/client";
 import { modalService as modal, questionService as questions, sessionService as sessions } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
 
