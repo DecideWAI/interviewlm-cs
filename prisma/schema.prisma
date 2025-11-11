@@ -126,6 +126,7 @@ model Assessment {
   role           String
   seniority      Seniority
   duration       Int             // in minutes
+  techStack      String[]        @default([])    // Technologies/languages
 
   status         AssessmentStatus @default(DRAFT)
 
@@ -209,6 +210,15 @@ model Candidate {
   invitedAt      DateTime @default(now()) @map("invited_at")
   startedAt      DateTime? @map("started_at")
   completedAt    DateTime? @map("completed_at")
+
+  // Invitation
+  invitationToken     String?   @unique @map("invitation_token")
+  invitationSentAt    DateTime? @map("invitation_sent_at")
+  invitationExpiresAt DateTime? @map("invitation_expires_at")
+  deadlineAt          DateTime? @map("deadline_at")
+
+  // Modal sandbox
+  volumeId       String?  @map("volume_id")
 
   // Scoring
   overallScore   Float?   @map("overall_score")
