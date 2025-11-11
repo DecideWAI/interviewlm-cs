@@ -7,6 +7,8 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, Message } from "@/components/interview/AIChat";
+import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(
@@ -158,6 +160,55 @@ export default function InterviewPage() {
       }
     };
   }, []);
+
+  // Confirmation before leaving page
+  useEffect(() => {
+    if (!sessionData || isSubmitting) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = 'You have an interview in progress. Are you sure you want to leave?';
+      return 'You have an interview in progress. Are you sure you want to leave?';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [sessionData, isSubmitting]);
+
+  // Manual save handler (for Ctrl+S)
+  const handleManualSave = useCallback(async () => {
+    if (!sessionData || !selectedFile) return;
+
+    try {
+      await fetch(`/api/interview/${candidateId}/files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: selectedFile.path,
+          content: code,
+          language: sessionData.question.language,
+        }),
+      });
+
+      // Show brief saved indicator
+      console.log('File saved successfully');
+      // TODO: Add toast notification
+    } catch (err) {
+      console.error("Failed to save file:", err);
+      // TODO: Show error toast
+    }
+  }, [sessionData, selectedFile, candidateId, code]);
+
+  // Keyboard shortcuts
+  useInterviewKeyboardShortcuts({
+    onSave: handleManualSave,
+    onRunTests: handleRunTests,
+    onToggleAIChat: () => setIsAIChatOpen((prev) => !prev),
+    onSubmit: handleSubmit,
+  });
 
   // Loading state
   if (isInitializing) {
@@ -481,6 +532,9 @@ export default function InterviewPage() {
           <MessageSquare className="h-6 w-6" />
         </button>
       )}
+
+      {/* Keyboard Shortcuts Panel */}
+      <KeyboardShortcutsPanel shortcuts={defaultInterviewShortcuts} showOnFirstVisit={true} />
     </div>
   );
 }
