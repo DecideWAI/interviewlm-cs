@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Button } from "@/components/ui/button";
@@ -25,10 +25,8 @@ import {
   Settings,
   Archive,
   Trash2,
+  Loader2,
 } from "lucide-react";
-import { MOCK_ASSESSMENT_DETAIL } from "@/lib/mock-assessment-detail-data";
-import { MOCK_CANDIDATES } from "@/lib/mock-analytics-data";
-import { MOCK_PROBLEM_SEEDS } from "@/lib/mock-seeds-data";
 import { cn } from "@/lib/utils";
 
 interface AssessmentDetailPageProps {
@@ -38,29 +36,82 @@ interface AssessmentDetailPageProps {
 export default function AssessmentDetailPage({ params }: AssessmentDetailPageProps) {
   const { id } = use(params);
   const [activeTab, setActiveTab] = useState("overview");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [assessment, setAssessment] = useState<any>(null);
 
-  // In production, fetch from API
-  const assessment = MOCK_ASSESSMENT_DETAIL;
+  useEffect(() => {
+    fetchAssessmentDetail();
+  }, [id]);
 
-  // Filter candidates for this assessment
-  const assessmentCandidates = MOCK_CANDIDATES.filter(c =>
-    assessment.candidateIds.includes(c.id)
-  );
+  const fetchAssessmentDetail = async () => {
+    setLoading(true);
+    setError(null);
 
-  // Get problem seeds
-  const problemSeeds = MOCK_PROBLEM_SEEDS.filter(s =>
-    assessment.problemSeedIds.includes(s.id)
-  );
+    try {
+      const response = await fetch(`/api/assessments/${id}`);
 
-  const stats = assessment.candidateStats;
-  const perf = assessment.performance;
+      if (!response.ok) {
+        throw new Error("Failed to fetch assessment details");
+      }
+
+      const data = await response.json();
+      setAssessment(data.assessment);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("Error fetching assessment details:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-[calc(100vh-200px)]">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error || !assessment) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)]">
+          <p className="text-error mb-4">{error || "Assessment not found"}</p>
+          <Link href="/assessments">
+            <Button variant="outline">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Assessments
+            </Button>
+          </Link>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const assessmentCandidates = assessment.candidates || [];
+  const problemSeeds = assessment.questions || [];
+
+  const stats = {
+    total: assessment.statistics.totalCandidates,
+    completed: assessment.statistics.completedCandidates,
+    inProgress: assessment.statistics.inProgressCandidates,
+    invited: assessment.statistics.invitedCandidates,
+  };
+
+  const perf = {
+    avgScore: assessment.statistics.avgScore || 0,
+    completionRate: assessment.statistics.completionRate,
+    passRate: assessment.statistics.passRate || 0,
+  };
 
   const getStatusVariant = () => {
     switch (assessment.status) {
-      case "active": return "success";
-      case "draft": return "warning";
-      case "completed": return "primary";
-      case "archived": return "default";
+      case "PUBLISHED": return "success";
+      case "DRAFT": return "warning";
+      case "ARCHIVED": return "default";
       default: return "default";
     }
   };
@@ -171,7 +222,7 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
               <div className="p-6">
                 {activeTab === "overview" && <OverviewTab assessment={assessment} problemSeeds={problemSeeds} />}
                 {activeTab === "candidates" && <CandidatesTab candidates={assessmentCandidates} />}
-                {activeTab === "analytics" && <AnalyticsTab performance={assessment.performance} aiMetrics={assessment.aiMetrics} />}
+                {activeTab === "analytics" && <AnalyticsTab performance={perf} />}
                 {activeTab === "settings" && <SettingsTab assessment={assessment} />}
               </div>
             </Card>
@@ -209,42 +260,62 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
               <h3 className="text-sm font-semibold text-text-primary mb-4">Configuration</h3>
               <div className="space-y-3 text-sm">
                 <InfoRow label="Role" value={assessment.role} capitalize />
-                <InfoRow label="Seniority" value={assessment.seniority} capitalize />
+                <InfoRow label="Seniority" value={assessment.seniority.toLowerCase()} capitalize />
                 <InfoRow label="Duration" value={`${assessment.duration} minutes`} />
-                <InfoRow label="AI Assistance" value={assessment.aiAssistanceEnabled ? "Enabled" : "Disabled"} />
-                <InfoRow label="AI Monitoring" value={assessment.aiMonitoringEnabled ? "Enabled" : "Disabled"} />
-                <InfoRow label="Created By" value={assessment.createdBy} />
+                <InfoRow label="Coding" value={assessment.enableCoding ? "Enabled" : "Disabled"} />
+                <InfoRow label="Terminal" value={assessment.enableTerminal ? "Enabled" : "Disabled"} />
+                <InfoRow label="AI" value={assessment.enableAI ? "Enabled" : "Disabled"} />
+                <InfoRow label="Tech Stack" value={assessment.techStack?.join(", ") || "Not specified"} />
               </div>
-              <Button variant="ghost" size="sm" className="mt-4 w-full">
-                <Edit className="h-4 w-4 mr-2" />
-                Edit Configuration
-              </Button>
+              <Link href={`/assessments/${id}/edit`}>
+                <Button variant="ghost" size="sm" className="mt-4 w-full">
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Configuration
+                </Button>
+              </Link>
             </Card>
 
-            {/* Problem Seeds */}
+            {/* Questions */}
             <Card className="bg-background-secondary border-border p-6">
               <h3 className="text-sm font-semibold text-text-primary mb-4">
-                Problem Seeds ({problemSeeds.length})
+                Questions ({problemSeeds.length})
               </h3>
-              <div className="space-y-2">
-                {problemSeeds.map((seed) => (
-                  <Link key={seed.id} href={`/problems/seeds/${seed.id}`}>
-                    <div className="p-3 bg-background-tertiary rounded hover:bg-background-hover transition-colors cursor-pointer">
-                      <p className="font-medium text-sm text-text-primary">{seed.title}</p>
-                      <p className="text-xs text-text-tertiary">{seed.estimatedTime} min</p>
+              {problemSeeds.length > 0 ? (
+                <div className="space-y-2">
+                  {problemSeeds.map((question: any) => (
+                    <div key={question.id} className="p-3 bg-background-tertiary rounded">
+                      <p className="font-medium text-sm text-text-primary">{question.title}</p>
+                      <p className="text-xs text-text-tertiary capitalize">{question.difficulty.toLowerCase()}</p>
                     </div>
-                  </Link>
-                ))}
-              </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-text-tertiary">No questions configured yet</p>
+              )}
             </Card>
 
             {/* Timeline */}
             <Card className="bg-background-secondary border-border p-6">
               <h3 className="text-sm font-semibold text-text-primary mb-4">Recent Activity</h3>
               <div className="space-y-3">
-                {assessment.timeline.slice(0, 5).map((event, idx) => (
-                  <TimelineItem key={event.id} event={event} isLast={idx === 4} />
-                ))}
+                <TimelineItem
+                  event={{
+                    type: "created",
+                    description: "Assessment created",
+                    timestamp: assessment.createdAt
+                  }}
+                  isLast={!assessment.publishedAt}
+                />
+                {assessment.publishedAt && (
+                  <TimelineItem
+                    event={{
+                      type: "updated",
+                      description: "Assessment published",
+                      timestamp: assessment.publishedAt
+                    }}
+                    isLast={true}
+                  />
+                )}
               </div>
             </Card>
           </div>
@@ -345,10 +416,12 @@ function MoreActionsMenu() {
 function OverviewTab({ assessment, problemSeeds }: any) {
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-sm font-semibold text-text-primary mb-2">Description</h3>
-        <p className="text-sm text-text-secondary">{assessment.description}</p>
-      </div>
+      {assessment.description && (
+        <div>
+          <h3 className="text-sm font-semibold text-text-primary mb-2">Description</h3>
+          <p className="text-sm text-text-secondary">{assessment.description}</p>
+        </div>
+      )}
 
       <div>
         <h3 className="text-sm font-semibold text-text-primary mb-3">Invitation Link</h3>
@@ -366,27 +439,26 @@ function OverviewTab({ assessment, problemSeeds }: any) {
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-text-primary mb-3">Problem Seeds</h3>
-        <div className="grid grid-cols-1 gap-3">
-          {problemSeeds.map((seed: any) => (
-            <div key={seed.id} className="p-4 bg-background-tertiary border border-border rounded-lg">
-              <div className="flex items-start justify-between mb-2">
-                <h4 className="font-medium text-text-primary">{seed.title}</h4>
-                <Badge variant="default" className="text-xs">{seed.estimatedTime} min</Badge>
+        <h3 className="text-sm font-semibold text-text-primary mb-3">Questions</h3>
+        {problemSeeds.length > 0 ? (
+          <div className="grid grid-cols-1 gap-3">
+            {problemSeeds.map((question: any) => (
+              <div key={question.id} className="p-4 bg-background-tertiary border border-border rounded-lg">
+                <div className="flex items-start justify-between mb-2">
+                  <h4 className="font-medium text-text-primary">{question.title}</h4>
+                  <Badge variant="default" className="text-xs capitalize">
+                    {question.difficulty.toLowerCase()}
+                  </Badge>
+                </div>
+                {question.description && (
+                  <p className="text-sm text-text-secondary">{question.description}</p>
+                )}
               </div>
-              {seed.description && (
-                <p className="text-sm text-text-secondary mb-2">{seed.description}</p>
-              )}
-              <div className="flex flex-wrap gap-1">
-                {seed.topics?.map((topic: string, idx: number) => (
-                  <span key={idx} className="text-xs px-2 py-1 bg-background-secondary text-text-tertiary rounded">
-                    {topic}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-text-tertiary">No questions configured yet</p>
+        )}
       </div>
     </div>
   );
@@ -416,33 +488,15 @@ function CandidatesTab({ candidates }: any) {
   );
 }
 
-function AnalyticsTab({ performance, aiMetrics }: any) {
+function AnalyticsTab({ performance }: any) {
   return (
     <div className="space-y-6">
-      <div>
-        <h3 className="text-sm font-semibold text-text-primary mb-4">Score Distribution</h3>
-        <div className="space-y-3">
-          {performance.scoreDistribution.map((bucket: any) => (
-            <div key={bucket.range}>
-              <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-text-secondary">{bucket.range}</span>
-                <span className="text-text-primary font-medium">{bucket.count} candidates</span>
-              </div>
-              <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full"
-                  style={{ width: `${(bucket.count / 15) * 100}%` }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div className="p-4 bg-background-tertiary rounded-lg">
-          <p className="text-sm text-text-tertiary mb-1">Avg Time to Complete</p>
-          <p className="text-2xl font-bold text-text-primary">{performance.avgTimeToComplete} min</p>
+          <p className="text-sm text-text-tertiary mb-1">Average Score</p>
+          <p className="text-2xl font-bold text-text-primary">
+            {performance.avgScore ? Math.round(performance.avgScore) : "—"}
+          </p>
         </div>
         <div className="p-4 bg-background-tertiary rounded-lg">
           <p className="text-sm text-text-tertiary mb-1">Completion Rate</p>
@@ -450,25 +504,20 @@ function AnalyticsTab({ performance, aiMetrics }: any) {
             {Math.round(performance.completionRate * 100)}%
           </p>
         </div>
+        <div className="p-4 bg-background-tertiary rounded-lg">
+          <p className="text-sm text-text-tertiary mb-1">Pass Rate</p>
+          <p className="text-2xl font-bold text-text-primary">
+            {Math.round(performance.passRate * 100)}%
+          </p>
+        </div>
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold text-text-primary mb-4">AI Usage Metrics</h3>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="p-4 bg-background-tertiary rounded-lg">
-            <p className="text-sm text-text-tertiary mb-1">Avg Interactions</p>
-            <p className="text-2xl font-bold text-text-primary">{aiMetrics.avgInteractions}</p>
-          </div>
-          <div className="p-4 bg-background-tertiary rounded-lg">
-            <p className="text-sm text-text-tertiary mb-1">Prompt Quality</p>
-            <p className="text-2xl font-bold text-text-primary">{aiMetrics.avgPromptQuality.toFixed(1)}/5.0</p>
-          </div>
-          <div className="p-4 bg-background-tertiary rounded-lg">
-            <p className="text-sm text-text-tertiary mb-1">Acceptance Rate</p>
-            <p className="text-2xl font-bold text-text-primary">
-              {Math.round(aiMetrics.avgAcceptanceRate * 100)}%
-            </p>
-          </div>
+        <h3 className="text-sm font-semibold text-text-primary mb-4">Performance Insights</h3>
+        <div className="p-4 bg-background-tertiary rounded-lg text-center">
+          <p className="text-sm text-text-tertiary">
+            Detailed analytics will be available once more candidates complete the assessment
+          </p>
         </div>
       </div>
     </div>
