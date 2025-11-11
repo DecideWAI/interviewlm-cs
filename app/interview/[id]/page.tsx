@@ -13,6 +13,7 @@ import { QuestionProgressHeader } from "@/components/interview/QuestionProgressH
 import { QuestionCompletionCard } from "@/components/interview/QuestionCompletionCard";
 import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
 import { resetConversation } from "@/lib/chat-resilience";
+import { useSessionRecovery, useSessionRecoveryDialog, SessionState } from "@/hooks/useSessionRecovery";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(
@@ -97,6 +98,50 @@ export default function InterviewPage() {
 
   // AI Chat ref for resetConversation
   const aiChatRef = useRef<AIChatHandle>(null);
+
+  // Session recovery for preventing data loss on refresh
+  const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false);
+  const [recoveredState, setRecoveredState] = useState<SessionState | null>(null);
+  const { saveSessionState, clearSessionState, checkRecoverableSession } = useSessionRecovery({
+    candidateId,
+    onRestore: (state) => {
+      setRecoveredState(state);
+      setShowRecoveryPrompt(true);
+    },
+  });
+  const { showRecoveryDialog } = useSessionRecoveryDialog();
+
+  // Handle session recovery acceptance
+  const handleRestoreSession = useCallback(async () => {
+    if (!recoveredState) return;
+
+    try {
+      setCode(recoveredState.code);
+      setTestResults(recoveredState.testResults);
+      setTimeRemaining(recoveredState.timeRemaining);
+      setCurrentQuestionIndex(recoveredState.currentQuestionIndex);
+      setQuestionTimeElapsed(recoveredState.questionTimeElapsed);
+
+      if (recoveredState.questionStartTime) {
+        setQuestionStartTime(new Date(recoveredState.questionStartTime));
+      }
+
+      // Find and select the file if it exists
+      if (sessionData && recoveredState.selectedFilePath) {
+        const file = sessionData.files.find(f => f.path === recoveredState.selectedFilePath);
+        if (file) {
+          setSelectedFile(file);
+        }
+      }
+
+      console.log('Session restored successfully');
+    } catch (error) {
+      console.error('Failed to restore session:', error);
+    } finally {
+      setShowRecoveryPrompt(false);
+      setRecoveredState(null);
+    }
+  }, [recoveredState, sessionData]);
 
   // Initialize session on mount
   useEffect(() => {
@@ -206,6 +251,47 @@ export default function InterviewPage() {
       setShowCompletionCard(false);
     }
   }, [testResults]);
+
+  // Auto-save session state to localStorage (prevents data loss on refresh)
+  useEffect(() => {
+    if (!sessionData) return;
+
+    saveSessionState({
+      code,
+      selectedFilePath: selectedFile?.path || null,
+      testResults,
+      timeRemaining,
+      currentQuestionIndex,
+      questionStartTime: questionStartTime?.toISOString() || null,
+      questionTimeElapsed,
+    });
+  }, [
+    code,
+    selectedFile,
+    testResults,
+    timeRemaining,
+    currentQuestionIndex,
+    questionStartTime,
+    questionTimeElapsed,
+    sessionData,
+    saveSessionState,
+  ]);
+
+  // Show recovery dialog when recovered state is available
+  useEffect(() => {
+    if (showRecoveryPrompt && recoveredState) {
+      showRecoveryDialog(recoveredState).then((shouldRestore) => {
+        if (shouldRestore) {
+          handleRestoreSession();
+        } else {
+          // User declined - clear saved state
+          clearSessionState();
+          setShowRecoveryPrompt(false);
+          setRecoveredState(null);
+        }
+      });
+    }
+  }, [showRecoveryPrompt, recoveredState, showRecoveryDialog, handleRestoreSession, clearSessionState]);
 
   // Confirmation before leaving page
   useEffect(() => {
@@ -349,10 +435,22 @@ export default function InterviewPage() {
 
       // CRITICAL: Reset AI conversation history for new question
       // This prevents context leakage between questions
-      await resetConversation(candidateId, data.question.id);
-
-      // Sync UI: Clear conversation in frontend
-      aiChatRef.current?.resetConversation();
+      // If this fails after retries, we BLOCK progression (security risk)
+      try {
+        await resetConversation(candidateId, data.question.id);
+        // Sync UI: Clear conversation in frontend
+        aiChatRef.current?.resetConversation();
+      } catch (resetError) {
+        // Conversation reset failed after 3 retries - CRITICAL
+        console.error("CRITICAL: Conversation reset failed:", resetError);
+        setIsLoadingNextQuestion(false);
+        alert(
+          "Failed to prepare for next question due to a security issue.\n\n" +
+          "Please refresh the page and try again.\n\n" +
+          "If the problem persists, contact support."
+        );
+        return; // BLOCK question progression
+      }
 
       // Clear previous performance after loading
       setTimeout(() => {
@@ -397,6 +495,9 @@ export default function InterviewPage() {
 
       const result = await response.json();
 
+      // Clear session state - assessment is complete
+      clearSessionState();
+
       // Show success message
       alert(
         `Assessment submitted successfully!\n\n` +
@@ -423,6 +524,29 @@ export default function InterviewPage() {
 
   const handleFileSelect = async (file: FileNode) => {
     if (file.type === "file") {
+      // CRITICAL FIX: Flush pending save before switching files
+      // Without this, debounced changes to current file are lost
+      if (debounceTimerRef.current && sessionData && selectedFile) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+
+        // Save current file immediately
+        try {
+          await fetch(`/api/interview/${candidateId}/files`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              path: selectedFile.path,
+              content: code,
+              language: sessionData.question.language,
+            }),
+          });
+          console.debug('Flushed pending changes before file switch');
+        } catch (err) {
+          console.error("Failed to flush pending save:", err);
+        }
+      }
+
       setSelectedFile(file);
 
       // Load file content from Modal volume

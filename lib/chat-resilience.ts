@@ -77,27 +77,64 @@ export async function fetchWithRetry(
 }
 
 /**
- * Reset conversation history for a new question
+ * Reset conversation history for a new question (with retry logic)
+ *
+ * CRITICAL: This must succeed to prevent context leakage between questions.
+ * If reset fails, AI retains context from previous question, compromising assessment integrity.
  */
 export async function resetConversation(
   candidateId: string,
   questionId: string
 ): Promise<void> {
-  try {
-    const response = await fetch(`/api/interview/${candidateId}/chat/reset`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ questionId }),
-    });
+  const MAX_RETRIES = 3;
+  const INITIAL_DELAY = 1000; // 1s
 
-    if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || "Failed to reset conversation");
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/chat/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to reset conversation");
+      }
+
+      // Success!
+      if (attempt > 0) {
+        console.log(`Conversation reset succeeded on attempt ${attempt + 1}`);
+      }
+      return;
+
+    } catch (error) {
+      lastError = error as Error;
+      console.error(`Conversation reset attempt ${attempt + 1} failed:`, error);
+
+      // Don't retry on final attempt
+      if (attempt === MAX_RETRIES - 1) {
+        break;
+      }
+
+      // Exponential backoff: 1s, 2s, 4s
+      const delay = INITIAL_DELAY * Math.pow(2, attempt);
+      console.log(`Retrying conversation reset in ${delay}ms...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
-  } catch (error) {
-    console.error("Failed to reset conversation:", error);
-    // Don't throw - non-critical operation
   }
+
+  // All retries failed - this is CRITICAL
+  const errorMessage = `Failed to reset conversation after ${MAX_RETRIES} attempts. ` +
+    `This could cause context leakage between questions. ` +
+    `Error: ${lastError?.message || 'Unknown error'}`;
+
+  console.error(errorMessage);
+
+  // THROW to block question progression on reset failure
+  throw new Error(errorMessage);
 }
 
 /**
