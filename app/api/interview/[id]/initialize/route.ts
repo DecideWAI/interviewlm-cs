@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { modal, questions, sessions } from "@/lib/services";
+import type { GeneratedQuestion } from "@prisma/client";
+import { modalService as modal, questionService as questions, sessionService as sessions } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
 
 /**
@@ -124,7 +125,7 @@ module.exports = longestPalindrome;`,
           },
         },
         sessionRecording: true,
-        generatedQuestion: true,
+        generatedQuestions: true,
       },
     });
 
@@ -159,13 +160,12 @@ module.exports = longestPalindrome;`,
         data: {
           candidateId,
           status: "ACTIVE",
-          startedAt: new Date(),
         },
       });
     }
 
     // Get or generate question
-    let question = candidate.generatedQuestion;
+    let question = candidate.generatedQuestions?.[0];
     if (!question) {
       // Generate question based on assessment configuration
       const assessment = candidate.assessment;
@@ -176,27 +176,15 @@ module.exports = longestPalindrome;`,
         );
       }
 
-      // Use questions service to generate appropriate question
-      const generatedQuestionData = await questions.generateQuestion(
-        assessment.role,
-        assessment.seniority,
-        assessment.techStack as string[]
-      );
-
-      // Store generated question in database
-      question = await prisma.generatedQuestion.create({
-        data: {
-          candidateId,
-          title: generatedQuestionData.title,
-          description: generatedQuestionData.description,
-          difficulty: generatedQuestionData.difficulty,
-          language: generatedQuestionData.language,
-          starterCode: generatedQuestionData.starterCode,
-          solution: generatedQuestionData.solution || "",
-          testCases: generatedQuestionData.testCases || [],
-          hints: generatedQuestionData.hints || [],
-        },
+      // Use questions service to generate appropriate question (creates it in DB)
+      const generatedQuestionData = await questions.generateQuestion({
+        candidateId,
+        difficulty: mapSeniorityToDifficulty(assessment.seniority),
+        language: assessment.techStack?.[0]?.toLowerCase() || "typescript",
       });
+
+      // Question is already created in the database by generateQuestion
+      question = generatedQuestionData.question as any;
     }
 
     // Create or get Modal volume for sandbox
@@ -204,13 +192,14 @@ module.exports = longestPalindrome;`,
     if (!volumeId) {
       // Create Modal volume with starter files
       const volume = await modal.createVolume(candidateId);
-      volumeId = volume.volumeId;
+      volumeId = volume.id;
 
       // Write starter files to volume
+      // TODO: starterCode should be parsed as JSON array of {fileName, content}
       const starterFiles = [
         {
           path: `solution.${question.language === "python" ? "py" : "js"}`,
-          content: question.starterCode,
+          content: typeof question.starterCode === 'string' ? question.starterCode : JSON.stringify(question.starterCode || ''),
         },
         {
           path: "README.md",
@@ -235,8 +224,8 @@ module.exports = longestPalindrome;`,
     // Get file structure from Modal volume
     const files = await modal.getFileSystem(candidateId, "/");
 
-    // Calculate time remaining
-    const timeLimit = candidate.assessment?.timeLimit || 3600; // Default 1 hour
+    // Calculate time remaining (convert minutes to seconds)
+    const timeLimit = (candidate.assessment?.duration || 60) * 60; // Default 1 hour
     const startedAt = sessionRecording.startTime || new Date();
 
     // Record session_start event (only if this is a new session)
@@ -271,7 +260,6 @@ module.exports = longestPalindrome;`,
         language: question.language,
         starterCode: question.starterCode,
         testCases: question.testCases,
-        hints: question.hints,
       },
       sandbox: {
         volumeId,
@@ -316,4 +304,22 @@ function getLanguageFromExtension(filename: string): string {
     txt: "text",
   };
   return languageMap[ext || ""] || "text";
+}
+
+/**
+ * Helper to map seniority to difficulty level
+ */
+function mapSeniorityToDifficulty(seniority: string): "EASY" | "MEDIUM" | "HARD" {
+  switch (seniority.toUpperCase()) {
+    case "JUNIOR":
+      return "EASY";
+    case "MID":
+      return "MEDIUM";
+    case "SENIOR":
+    case "LEAD":
+    case "PRINCIPAL":
+      return "HARD";
+    default:
+      return "MEDIUM";
+  }
 }

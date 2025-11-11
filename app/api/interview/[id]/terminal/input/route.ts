@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { queueTerminalOutput } from "@/lib/terminal-state";
 import { getSession } from "@/lib/auth-helpers";
 import prisma from "@/lib/prisma";
-import { modal, sessions } from "@/lib/services";
+import { modalService as modal, sessionService as sessions } from "@/lib/services";
 
 /**
  * Demo terminal command simulator
@@ -145,7 +145,7 @@ export async function POST(
             where: { id },
             select: {
               volumeId: true,
-              generatedQuestion: true,
+              generatedQuestions: true,
               sessionRecording: {
                 select: { id: true }
               }
@@ -164,8 +164,7 @@ export async function POST(
 
           if (!sandbox) {
             // Create sandbox for this session
-            const language = candidate.generatedQuestion?.language || "javascript";
-            sandbox = await modal.createSandbox(id, language, candidate.volumeId);
+            sandbox = await modal.createSandbox(id);
           }
 
           // Record terminal input event

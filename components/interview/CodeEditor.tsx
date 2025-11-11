@@ -21,8 +21,8 @@ interface TestResult {
 }
 
 interface CodeEditorProps {
-  sessionId: string;
-  questionId: string;
+  sessionId?: string;
+  questionId?: string;
   value: string;
   onChange: (value: string) => void;
   language?: "javascript" | "typescript" | "python" | "go";
@@ -70,6 +70,8 @@ export function CodeEditor({
 
   // Record code change event (debounced)
   const recordCodeChange = (newValue: string) => {
+    if (!sessionId) return; // Skip if no sessionId (e.g., in replay mode)
+
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
@@ -92,6 +94,8 @@ export function CodeEditor({
 
   // Create periodic snapshots
   useEffect(() => {
+    if (!sessionId) return; // Skip if no sessionId (e.g., in replay mode)
+
     snapshotIntervalRef.current = setInterval(() => {
       if (value !== lastSnapshotRef.current) {
         fetch(`/api/interview/${sessionId}/events`, {
@@ -126,6 +130,11 @@ export function CodeEditor({
 
   // Run tests
   const runTests = async () => {
+    if (!sessionId || !questionId) {
+      console.error("Cannot run tests: sessionId or questionId is missing");
+      return;
+    }
+
     setIsRunningTests(true);
     setTestResult(null);
 

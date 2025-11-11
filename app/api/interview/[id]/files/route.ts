@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { modal, sessions } from "@/lib/services";
+import { modalService as modal, sessionService as sessions } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
 
 // Request validation for file write
@@ -29,7 +29,7 @@ export async function GET(
     if (candidateId === "demo") {
       // If requesting specific file content
       if (filePath) {
-        const demoContent = {
+        const demoContent: Record<string, string> = {
           "/workspace/solution.js": `function longestPalindrome(s) {
   // Implement your solution here
   return "";
@@ -251,11 +251,14 @@ export async function POST(
       // Create code snapshot for significant changes
       const isSignificantChange = content.length > 50; // Simple heuristic
       if (isSignificantChange) {
-        await sessions.createSnapshot(
+        await sessions.recordCodeSnapshot(
           candidate.sessionRecording.id,
-          path,
-          content,
-          language || getLanguageFromExtension(path)
+          {
+            fileId: path,
+            fileName: path.split("/").pop() || path,
+            language: language || getLanguageFromExtension(path),
+            content,
+          }
         );
       }
     }

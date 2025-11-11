@@ -232,8 +232,8 @@ export async function POST(
         language: generatedProblem.language,
         requirements: generatedProblem.requirements,
         estimatedTime: generatedProblem.estimatedTime,
-        starterCode: generatedProblem.starterCode,
-        testCases: generatedProblem.testCases,
+        starterCode: generatedProblem.starterCode as any,
+        testCases: generatedProblem.testCases as any,
         status: "PENDING",
       },
     });

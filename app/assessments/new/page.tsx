@@ -45,7 +45,7 @@ export default function NewAssessmentPage() {
       const data = await response.json();
 
       // Optionally publish if status is "active"
-      if (config.status === "active" || config.status === "published") {
+      if (config.status === "active") {
         await fetch(`/api/assessments/${data.assessment.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
