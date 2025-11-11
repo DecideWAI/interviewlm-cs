@@ -21,6 +21,13 @@ import type {
   ExecuteBashToolInput,
   SuggestNextQuestionToolInput,
 } from "@/lib/agent-tools";
+import {
+  buildSecureSystemPrompt,
+  sanitizeMessages,
+  sanitizeToolOutput,
+  validateBashCommand,
+  checkRateLimit,
+} from "@/lib/agent-security";
 
 // Initialize Anthropic client
 const anthropic = new Anthropic({
@@ -53,6 +60,18 @@ export async function POST(
       return NextResponse.json(
         { error: "Messages array is required" },
         { status: 400 }
+      );
+    }
+
+    // Security: Sanitize messages to prevent injection
+    const sanitizedMessages = sanitizeMessages(messages);
+
+    // Security: Check rate limits
+    const rateLimitCheck = checkRateLimit(sanitizedMessages);
+    if (rateLimitCheck.exceeded) {
+      return NextResponse.json(
+        { error: rateLimitCheck.reason },
+        { status: 429 }
       );
     }
 
@@ -98,8 +117,8 @@ export async function POST(
       });
     }
 
-    // Build system prompt
-    const systemPrompt = buildInterviewSystemPrompt(candidate);
+    // Build secure system prompt with anti-leakage guardrails
+    const systemPrompt = buildSecureSystemPrompt(candidate);
 
     // Create streaming response
     const encoder = new TextEncoder();
@@ -115,12 +134,12 @@ export async function POST(
           const contentBlocks: any[] = [];
           let currentToolUseBlock: any = null;
 
-          // Stream from Claude API with tool use
+          // Stream from Claude API with tool use (using sanitized messages)
           const messageStream = await anthropic.messages.stream({
             model: "claude-sonnet-4-5-20250929",
             max_tokens: 4096,
             system: systemPrompt,
-            messages: messages as Anthropic.MessageParam[],
+            messages: sanitizedMessages as Anthropic.MessageParam[],
             tools: [
               readFileTool,
               writeFileTool,
@@ -214,8 +233,26 @@ export async function POST(
                   )
                 );
 
+                // Security: Validate bash commands before execution
+                if (toolName === "execute_bash") {
+                  const validation = validateBashCommand(toolInput.command);
+                  if (!validation.safe) {
+                    controller.enqueue(
+                      encoder.encode(
+                        `event: tool_error\ndata: ${JSON.stringify({
+                          toolName,
+                          toolId,
+                          error: `Security violation: ${validation.reason}`,
+                        })}\n\n`
+                      )
+                    );
+                    continue; // Skip to next iteration
+                  }
+                }
+
                 // Execute the tool
                 let toolResult: any;
+                let sanitizedToolResult: any;
                 try {
                   toolResult = await executeTool(
                     toolName,
@@ -225,21 +262,24 @@ export async function POST(
                     sessionRecording.id
                   );
 
-                  // Record tool use event for session replay
+                  // Security: Sanitize tool output before sending to AI
+                  sanitizedToolResult = sanitizeToolOutput(toolName, toolResult);
+
+                  // Record tool use event for session replay (with full output)
                   await recordToolUseEvent(sessionRecording.id, {
                     toolName,
                     input: toolInput,
-                    output: toolResult,
+                    output: toolResult, // Store full output for review
                     success: true,
                   });
 
-                  // Send tool_result event to frontend
+                  // Send sanitized tool_result to frontend (and AI)
                   controller.enqueue(
                     encoder.encode(
                       `event: tool_result\ndata: ${JSON.stringify({
                         toolName,
                         toolId,
-                        output: toolResult,
+                        output: sanitizedToolResult, // Sanitized version
                       })}\n\n`
                     )
                   );
@@ -289,9 +329,9 @@ export async function POST(
 
           const latency = Date.now() - startTime;
 
-          // Record conversation to database
+          // Record conversation to database (use sanitized messages)
           // Store user messages
-          for (const msg of messages) {
+          for (const msg of sanitizedMessages) {
             if (msg.role === "user") {
               await prisma.claudeInteraction.create({
                 data: {
@@ -437,40 +477,4 @@ async function recordToolUseEvent(
   }
 }
 
-/**
- * Build context-aware system prompt for the interview
- */
-function buildInterviewSystemPrompt(candidate: any): string {
-  const question = candidate.generatedQuestions?.[0];
-
-  let prompt = `You are Claude Code, an AI assistant helping a candidate during a technical interview assessment. Your role is to:
-
-1. Act as a pair programming partner - you can read files, write code, run tests, and execute commands
-2. Help debug issues and explain concepts clearly
-3. Suggest best practices and improvements
-4. Be proactive - if you see a problem, offer to fix it
-5. When all tests pass and the solution is complete, use the suggest_next_question tool to recommend advancing to the next challenge
-
-You have access to these tools:
-- read_file: Read any file in the workspace to understand the code
-- write_file: Create or modify files to implement features or fix bugs
-- run_tests: Execute the test suite to validate code changes
-- execute_bash: Run terminal commands (install packages, check structure, etc.)
-- suggest_next_question: Suggest advancing to the next question when the current one is successfully completed
-
-Be concise but thorough. When making code changes, always run tests afterward to verify they work.`;
-
-  if (question) {
-    prompt += `\n\nCurrent Challenge:
-Title: ${question.title}
-Difficulty: ${question.difficulty}
-Language: ${question.language}
-
-Description:
-${question.description}
-
-Help the candidate succeed while encouraging them to learn and understand the solution.`;
-  }
-
-  return prompt;
-}
+// Note: System prompt moved to lib/agent-security.ts (buildSecureSystemPrompt)
