@@ -1,0 +1,323 @@
+╔═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║                          INTERVIEWLM VOLUME DISCOUNT PRICING STRUCTURE                                       ║
+║                              Based on $10/interview base price                                               ║
+║                                  COGS: $1-2 per assessment                                                    ║
+╚═══════════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ MODEL 1: PREPAID CREDIT PACKS (Recommended Primary Model)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 1: PAY-AS-YOU-GO                                                          │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Credits:           1 per purchase                                              │
+      │  • Price:             $10.00 per credit                                           │
+      │  • Discount:          0% (baseline)                                              │
+      │  • Best for:          Testing platform, trial users                               │
+      │  • Monthly equiv:     Variable (use as needed)                                    │
+      │  • Gross margin:      85% ($8.50 profit/unit)                                     │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 2: SMALL PACK                                                              │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Credits:           10 assessments                                              │
+      │  • Price:             $90 total ($9.00 per credit)                               │
+      │  • Discount:          10% vs baseline                                            │
+      │  • Best for:          Startups (5-10 assessments/month)                          │
+      │  • Monthly equiv:     ~$90 if used monthly                                        │
+      │  • Annual cost:       $1,080 (if purchased monthly)                               │
+      │  • Gross margin:      83% ($7.50 profit/unit)                                     │
+      │  • Value prop:        First commitment tier, no expiration                        │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 3: MEDIUM PACK                                    ◀ RECOMMENDED ENTRY TIER │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Credits:           50 assessments                                              │
+      │  • Price:             $375 total ($7.50 per credit)                              │
+      │  • Discount:          25% vs baseline                                            │
+      │  • Best for:          Growing companies (40-60 assessments/month)                 │
+      │  • Monthly equiv:     $375 if used monthly                                        │
+      │  • Annual cost:       $4,500 (baseline, no expiration)                            │
+      │  • Gross margin:      80% ($6.00 profit/unit)                                     │
+      │  • Value prop:        Sweet spot: advanced analytics, custom library, priority     │
+      │  • Upgrade path:      → Large Pack when hitting 60+ tests/month                   │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 4: LARGE PACK                                                              │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Credits:           200 assessments                                             │
+      │  • Price:             $1,200 total ($6.00 per credit)                            │
+      │  • Discount:          40% vs baseline                                            │
+      │  • Best for:          Scale-ups (150-250 assessments/month)                       │
+      │  • Monthly equiv:     $1,200 if used monthly                                      │
+      │  • Annual cost:       $14,400 (baseline)                                          │
+      │  • Gross margin:      75% ($4.50 profit/unit)                                     │
+      │  • Value prop:        Team features, bulk tools, 24/7 support, custom branding    │
+      │  • Upgrade path:      → Enterprise when approaching 500+ tests/year               │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 5: ENTERPRISE PACK                                                         │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Credits:           500+ assessments (custom)                                   │
+      │  • Price:             $2,500+ total ($5.00 per credit)                           │
+      │  • Discount:          50% vs baseline (maximum discount)                         │
+      │  • Best for:          Large enterprises (500+ assessments/month)                  │
+      │  • Monthly equiv:     $2,500+                                                    │
+      │  • Annual cost:       $30,000+ (baseline, negotiable)                             │
+      │  • Gross margin:      70% ($3.50 profit/unit)                                     │
+      │  • Value prop:        Dedicated CSM, SLA, white-glove onboarding, custom integ.   │
+      │  • Upgrade path:      Multi-year contracts, volume rebates available               │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ MODEL 2: MONTHLY SUBSCRIPTIONS (Secondary Option)
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 1: STARTER                                                                 │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Monthly price:      $79                                                        │
+      │  • Annual price:       $789 (17% discount) = $66/month effective                 │
+      │  • Included tests:     10 per month                                               │
+      │  • Cost per incl.:     $7.90                                                     │
+      │  • Overage rate:       $8 per additional test                                     │
+      │  • Best for:           Micro teams, light hiring                                  │
+      │  • Gross margin:       82%                                                        │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 2: PROFESSIONAL                                                            │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Monthly price:      $199                                                       │
+      │  • Annual price:       $1,988 (17% discount) = $166/month effective              │
+      │  • Included tests:     30 per month                                               │
+      │  • Cost per incl.:     $6.63                                                     │
+      │  • Overage rate:       $7 per additional test                                     │
+      │  • Best for:           Small startups, growing teams                              │
+      │  • Gross margin:       80%                                                        │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 3: GROWTH                      ◀ MOST POPULAR TIER                         │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Monthly price:      $499                                                       │
+      │  • Annual price:       $4,989 (17% discount) = $416/month effective              │
+      │  • Included tests:     100 per month                                              │
+      │  • Cost per incl.:     $4.99                                                     │
+      │  • Overage rate:       $5 per additional test                                     │
+      │  • Best for:           Scale-ups, mid-market, high-volume hiring                 │
+      │  • Gross margin:       78%                                                        │
+      │  • Features:           All core features + integrations                           │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+      ┌──────────────────────────────────────────────────────────────────────────────────┐
+      │  TIER 4: SCALE                                                                   │
+      ├──────────────────────────────────────────────────────────────────────────────────┤
+      │  • Monthly price:      $1,299                                                     │
+      │  • Annual price:       $12,989 (17% discount) = $1,083/month effective           │
+      │  • Included tests:     300 per month                                              │
+      │  • Cost per incl.:     $4.33                                                     │
+      │  • Overage rate:       $4 per additional test                                     │
+      │  • Best for:           Large enterprises, dedicated hiring teams                  │
+      │  • Gross margin:       76%                                                        │
+      │  • Features:           Everything + dedicated support, SLA                        │
+      └──────────────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ PRICING COMPARISON MATRIX
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+Expected Monthly Usage Scenarios:
+
+    VOLUME  │  BEST OPTION          │  MONTHLY COST  │  $/TEST  │  ANNUAL COST  │  VS PAYGO SAVINGS
+    ────────┼───────────────────────┼────────────────┼──────────┼───────────────┼─────────────────────
+     1-5    │  PAYGO                │    $10-50      │  $10.00  │   $120-600    │  — (baseline)
+     5-10   │  Small Pack           │    $90         │  $9.00   │   $1,080      │  10% savings
+    10-20   │  Small Pack           │    $90         │  $4.50   │   $1,080      │  55% savings
+    20-40   │  Medium Pack          │   $375         │  $9.38   │   $4,500      │  6% savings vs PAYGO
+    40-60   │  Medium Pack          │   $375         │  $6.25   │   $4,500      │  38% savings
+    60-100  │  Medium/Growth Sub    │   $375-499     │  $3.75   │   $4,500-5,99 │  63% savings
+   100-150  │  Growth Sub           │   $499         │  $3.33   │   $5,988      │  67% savings
+   150-250  │  Large Pack           │  $1,200        │  $4.80   │  $14,400      │  52% savings
+   250-400  │  Large/Scale Sub      │  $1,200-1,299  │  $3.00   │  $14,400-15,5 │  70% savings
+    500+    │  Enterprise (custom)   │  $2,500+       │  $5.00   │  $30,000+     │  50% savings + CSM
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ FINANCIAL IMPACT
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+PROFITABILITY BY TIER:
+
+    Tier              Revenue     COGS      Gross Profit    Margin    Yearly Contrib.
+    ─────────────────────────────────────────────────────────────────────────────────
+    Pay-as-you-go     $10.00     -$1.50        $8.50        85%         $3,000
+    Small Pack         $9.00     -$1.50        $7.50        83%         $1,080
+    Medium Pack        $7.50     -$1.50        $6.00        80%         $4,500
+    Large Pack         $6.00     -$1.50        $4.50        75%        $14,400
+    Enterprise         $5.00     -$1.50        $3.50        70%       $100,000
+    ───────────────────────────────────────────────────────────────────────────────
+    BLENDED AVERAGE    $6.50     -$1.50        $5.00        75%        $23,300 (est.)
+
+
+YEAR 1 REVENUE PROJECTION (Conservative):
+
+    Customer Segment          │ Count │ Annual/Customer │  Total Revenue
+    ──────────────────────────┼───────┼─────────────────┼─────────────────
+    Small companies (10/mo)   │  200  │    $1,080       │   $216,000
+    Growing companies (50/mo) │  100  │    $4,500       │   $450,000
+    Scale-ups (200/mo)        │   30  │   $14,400       │   $432,000
+    Enterprises (500+/mo)     │   10  │  $100,000       │ $1,000,000
+    ──────────────────────────┼───────┼─────────────────┼─────────────────
+    TOTAL                     │  340  │   ~$6,170       │ $2,098,000
+
+
+    Gross Profit (70% margin): $1,468,600
+    Operating Expenses budget: $800,000
+    EBITDA margin: 32%
+
+    Year 2 (50% growth):  $3,147,000 revenue | $2,202,900 profit
+    Year 3 (50% growth):  $4,721,000 revenue | $3,304,700 profit
+    ─────────────────────────────────────────────────────────────
+    3-Year Cumulative:    $9,966,000 revenue | $6,975,950 profit
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ COMPETITIVE POSITIONING
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+For 100 Assessments Per Month (Typical Growing Company):
+
+    Platform          │ Model        │ Cost/Test │ Monthly Cost │ Annual Cost │ vs InterviewLM
+    ──────────────────┼──────────────┼───────────┼──────────────┼─────────────┼──────────────────
+    HackerRank        │ Subscription │  $15-25   │  $1,500-2,50 │ $18,000-30K │ +300% premium
+    Codility          │ Subscription │  $12-20   │  $1,200-2,00 │ $15,000-24K │ +250% premium
+    LeetCode for Work │ Subscription │  $8-15    │   $800-1,500 │ $10,000-18K │ +65% premium
+    ────────────────────────────────────────────────────────────────────────────────────────────
+    InterviewLM       │ Prepaid      │  $7.50    │    $375/mo   │  $4,500     │ — (baseline)
+    InterviewLM       │ Subscription │  $4.99    │    $499/mo   │  $5,988     │ — (baseline)
+
+    ✓ INTERVIEWLM IS 65-75% CHEAPER AT SCALE
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ CUSTOMER JOURNEY & UPGRADE PATH
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    MONTH 0: FREE TRIAL
+    ├─ 14-day free trial with 10 free assessments
+    ├─ No credit card required
+    └─ Goal: Experience value, measure impact
+
+              ↓ (80% conversion target)
+
+    MONTH 1-2: PAYGO ($10/test)
+    ├─ Pay-as-you-go after trial
+    ├─ Typical usage: 5-8 assessments
+    ├─ Revenue per customer: $50-80
+    └─ Goal: Build confidence in platform
+
+              ↓ (30% upgrade target when 8+ tests/month)
+
+    MONTH 3-6: SMALL PACK ($90)
+    ├─ 10 assessments, no expiration
+    ├─ 10% discount, clear value prop
+    ├─ Monthly retention: ~90%
+    └─ Revenue per customer: $90/month
+
+              ↓ (40% upgrade target when 40+ tests/month)
+
+    MONTH 6-12: MEDIUM PACK ($375)
+    ├─ 50 assessments, no expiration
+    ├─ 25% discount, advanced features
+    ├─ Advanced analytics, custom library
+    └─ Revenue per customer: $375/month
+
+              ↓ (25% upgrade target when 200+ tests/month)
+
+    YEAR 2: LARGE PACK ($1,200)
+    ├─ 200 assessments, unlimited tenure
+    ├─ 40% discount, team features
+    ├─ 24/7 support, bulk tools, branding
+    └─ Revenue per customer: $1,200/month
+
+              ↓ (20% upgrade target when 500+ tests/year)
+
+    YEAR 2+: ENTERPRISE (Custom)
+    ├─ 500+ assessments with custom pricing
+    ├─ Typically $5/assessment ($2,500-5,000/month)
+    ├─ Dedicated CSM, SLA, custom integrations
+    └─ LTV: $300,000+ (3-year contract)
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ KEY IMPLEMENTATION METRICS
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    METRIC                      CURRENT    TARGET    RATIONALE
+    ───────────────────────────────────────────────────────────────────────
+    Trial Signup Rate           —          +50/week  Growth baseline
+    Trial-to-Paid Conversion    —          25-30%    Industry standard
+    PAYGO to Pack Conversion    —          40%       Revenue expansion
+    Pack-to-Pack Upgrade        —          30-40%    Land-and-expand
+    Overall CAC Payback Period  —          <3 mo     Cash flow sustainability
+    Customer Churn (Monthly)    —          <5%       Healthy retention
+    Net Revenue Retention (NRR) —          >110%     Expansion > churn
+    Average Revenue Per User    —          $2,000+   Strong unit economics
+    Gross Margin                —          70%+      Profitability floor
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ QUICK DECISION MATRIX FOR SALES
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    PROSPECT PROFILE                    │ RECOMMENDED TIER    │ MESSAGING
+    ─────────────────────────────────────────────────────────────────────────────────────────
+    "Just testing the platform"         │ PAYGO/Free Trial    │ "No commitment, try it first"
+    ─────────────────────────────────────────────────────────────────────────────────────────
+    "Startup, tight budget"             │ Small Pack          │ "Save 10%, get started"
+    ─────────────────────────────────────────────────────────────────────────────────────────
+    "Growing, need consistency"         │ Medium Pack         │ "Best value for growing teams"
+    ─────────────────────────────────────────────────────────────────────────────────────────
+    "Mid-market, scale hiring"          │ Large Pack/Growth   │ "Enterprise features, lower cost"
+    ─────────────────────────────────────────────────────────────────────────────────────────
+    "Enterprise, mission-critical"      │ Enterprise Custom   │ "Dedicated support, SLA, custom"
+    ─────────────────────────────────────────────────────────────────────────────────────────
+    "Budget conscious, high volume"     │ Annual Prepay       │ "17% savings with annual commit"
+    ─────────────────────────────────────────────────────────────────────────────────────────
+    "Evaluating vs competitor"          │ Small/Medium Pack   │ "70% cheaper than HackerRank"
+    ─────────────────────────────────────────────────────────────────────────────────────────
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+█ CORE VALUE PROPOSITIONS BY TIER
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+    PAYGO:      "Try risk-free. No credit card, use when you need."
+
+    SMALL:      "10% savings + no expiration. Flexible commitment."
+
+    MEDIUM:     "25% savings + advanced analytics. Best ROI for growing teams."
+
+    LARGE:      "40% savings + team features. Enterprise-ready at SMB prices."
+
+    ENTERPRISE: "50% savings + dedicated support. Fully customized for you."
+
+
+═══════════════════════════════════════════════════════════════════════════════════════════════════════════════════
+
+END OF PRICING STRUCTURE VISUAL SUMMARY
+
+For detailed analysis, see:
+  • PRICING_EXECUTIVE_SUMMARY.md
+  • pricing-strategy-analysis.md
+  • pricing-implementation-guide.md
+  • PRICING_REFERENCE_TABLES.md
