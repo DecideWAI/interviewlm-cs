@@ -515,6 +515,29 @@ export default function InterviewPage() {
                 <div className="h-full border-l border-border">
                   <AIChat
                     sessionId={sessionData.sessionId}
+                    onFileModified={async (path) => {
+                      // Reload file content when AI modifies it
+                      if (selectedFile && selectedFile.path === path) {
+                        try {
+                          const response = await fetch(
+                            `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
+                          );
+                          if (response.ok) {
+                            const data = await response.json();
+                            setCode(data.content || "");
+                          }
+                        } catch (err) {
+                          console.error("Failed to reload file:", err);
+                        }
+                      }
+                    }}
+                    onTestResultsUpdated={(results) => {
+                      // Update test results display
+                      setTestResults({
+                        passed: results.passed || 0,
+                        total: results.total || 0,
+                      });
+                    }}
                   />
                 </div>
               </Panel>
