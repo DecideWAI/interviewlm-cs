@@ -12,6 +12,7 @@ import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/
 import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
 import { QuestionCompletionCard } from "@/components/interview/QuestionCompletionCard";
 import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
+import { resetConversation } from "@/lib/chat-resilience";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(
@@ -342,6 +343,10 @@ export default function InterviewPage() {
 
       // Reset editor with new starter code
       setCode(data.question.starterCode[0]?.content || "");
+
+      // CRITICAL: Reset AI conversation history for new question
+      // This prevents context leakage between questions
+      await resetConversation(candidateId, data.question.id);
 
       // Clear previous performance after loading
       setTimeout(() => {
