@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
 import { Send, Bot, User, Copy, Check, AlertCircle, Wifi, WifiOff, Wrench, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { fetchWithRetry } from "@/lib/chat-resilience";
 
 export interface Message {
   id: string;
@@ -21,6 +22,10 @@ export interface Message {
   toolOutput?: any;
 }
 
+export interface AIChatHandle {
+  resetConversation: () => void;
+}
+
 interface AIChatProps {
   sessionId: string;
   className?: string;
@@ -32,18 +37,19 @@ interface AIChatProps {
   }) => void;
 }
 
-export function AIChat({
+export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
   sessionId,
   className,
   onFileModified,
   onTestResultsUpdated,
   onSuggestNextQuestion
-}: AIChatProps) {
+}, ref) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentStreamingMessage, setCurrentStreamingMessage] = useState("");
   const [currentToolUse, setCurrentToolUse] = useState<{
@@ -57,6 +63,26 @@ export function AIChat({
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
+
+  // Reset conversation (called when moving to next question)
+  const resetConversation = () => {
+    setMessages([{
+      id: Date.now().toString(),
+      role: "system",
+      content: "🔄 Conversation reset for new question. Previous context cleared.",
+      timestamp: new Date(),
+    }]);
+    conversationHistory.current = [];
+    setError(null);
+    setInput("");
+    setCurrentStreamingMessage("");
+    setCurrentToolUse(null);
+  };
+
+  // Expose resetConversation to parent via ref
+  useImperativeHandle(ref, () => ({
+    resetConversation,
+  }));
 
   useEffect(() => {
     scrollToBottom();
@@ -111,14 +137,28 @@ export function AIChat({
     });
 
     try {
-      // Send conversation history to agent endpoint
-      const response = await fetch(`/api/interview/${sessionId}/chat/agent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: conversationHistory.current,
-        }),
-      });
+      // Send conversation history to agent endpoint with retry logic
+      const response = await fetchWithRetry(
+        `/api/interview/${sessionId}/chat/agent`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: conversationHistory.current,
+          }),
+        },
+        {
+          maxRetries: 3,
+          initialDelay: 2000,
+          maxDelay: 16000,
+          onRetry: (attempt, delay) => {
+            setIsReconnecting(true);
+            setError(`Connection issue. Retrying in ${delay / 1000}s... (attempt ${attempt}/3)`);
+          },
+        }
+      );
+
+      setIsReconnecting(false);
 
       if (!response.ok || !response.body) {
         throw new Error("Failed to connect to AI");
@@ -296,7 +336,12 @@ export function AIChat({
               <Wrench className="h-3 w-3" />
               <span>Tools</span>
             </div>
-            {isConnected ? (
+            {isReconnecting ? (
+              <div className="flex items-center gap-1 text-xs bg-warning/10 text-warning px-2 py-1 rounded">
+                <Wifi className="h-3 w-3 animate-pulse" />
+                <span>Reconnecting...</span>
+              </div>
+            ) : isConnected ? (
               <Wifi className="h-4 w-4 text-success" />
             ) : (
               <WifiOff className="h-4 w-4 text-error" />
@@ -498,7 +543,7 @@ export function AIChat({
       </div>
     </div>
   );
-}
+});
 
 /**
  * Format tool use for display
