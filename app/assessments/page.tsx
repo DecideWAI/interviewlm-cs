@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Container } from "@/components/layout/container";
 import { PageHeader } from "@/components/layout/page-header";
@@ -31,11 +31,73 @@ import {
   Users,
   Clock,
   Calendar,
+  Loader2,
 } from "lucide-react";
+
+interface Assessment {
+  id: string;
+  title: string;
+  status: string;
+  role: string;
+  seniority: string;
+  duration: number;
+  createdAt: string;
+  publishedAt?: string;
+  statistics: {
+    totalCandidates: number;
+    completedCandidates: number;
+    avgScore: number | null;
+    completionRate: number;
+  };
+}
 
 export default function AssessmentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [assessments, setAssessments] = useState<Assessment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchAssessments();
+  }, [statusFilter]);
+
+  const fetchAssessments = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      let url = "/api/assessments";
+      const params = new URLSearchParams();
+
+      if (statusFilter !== "all") {
+        params.append("status", statusFilter.toUpperCase());
+      }
+
+      if (params.toString()) {
+        url += `?${params.toString()}`;
+      }
+
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch assessments");
+      }
+
+      const data = await response.json();
+      setAssessments(data.assessments || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("Error fetching assessments:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredAssessments = assessments.filter((assessment) =>
+    assessment.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    assessment.role.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
     <DashboardLayout
@@ -90,90 +152,123 @@ export default function AssessmentsPage() {
 
           <TabsContent value="all">
             <Card className="border-border-secondary">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Assessment</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Candidates</TableHead>
-                    <TableHead>Duration</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Completion</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {assessments.map((assessment) => (
-                    <TableRow key={assessment.id}>
-                      <TableCell>
-                        <div>
-                          <div className="font-medium text-text-primary">{assessment.title}</div>
-                          <div className="text-sm text-text-secondary">{assessment.problems.length} problems</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={
-                          assessment.status === "active" ? "success" :
-                          assessment.status === "draft" ? "default" :
-                          assessment.status === "completed" ? "primary" :
-                          "default"
-                        }>
-                          {assessment.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 text-text-secondary">
-                          <Users className="h-4 w-4" />
-                          <span>{assessment.candidates.total}</span>
-                          <span className="text-text-tertiary">
-                            ({assessment.candidates.completed} completed)
-                          </span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 text-text-secondary">
-                          <Clock className="h-4 w-4" />
-                          <span>{assessment.duration} min</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2 text-text-secondary">
-                          <Calendar className="h-4 w-4" />
-                          <span>{assessment.created}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="w-24 bg-background-tertiary rounded-full h-2">
-                            <div
-                              className="bg-primary h-2 rounded-full transition-all"
-                              style={{ width: `${assessment.completionRate}%` }}
-                            />
-                          </div>
-                          <span className="text-sm text-text-secondary">{assessment.completionRate}%</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          <Link href={`/assessments/${assessment.id}`}>
-                            <Button variant="ghost" size="icon">
-                              <Eye className="h-4 w-4" />
-                            </Button>
-                          </Link>
-                          <Link href={`/assessments/${assessment.id}/edit`}>
-                            <Button variant="ghost" size="icon">
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                          </Link>
-                          <Button variant="ghost" size="icon">
-                            <MoreVertical className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
+              {loading ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : error ? (
+                <div className="text-center py-12">
+                  <p className="text-error mb-4">{error}</p>
+                  <Button variant="outline" onClick={fetchAssessments}>
+                    Retry
+                  </Button>
+                </div>
+              ) : filteredAssessments.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="h-12 w-12 text-text-muted mx-auto mb-3 opacity-50" />
+                  <p className="text-text-secondary mb-1">No assessments found</p>
+                  <p className="text-sm text-text-tertiary mb-4">
+                    {searchQuery ? "Try adjusting your search" : "Create your first assessment to get started"}
+                  </p>
+                  {!searchQuery && (
+                    <Link href="/assessments/new">
+                      <Button variant="primary">
+                        <Plus className="h-4 w-4 mr-2" />
+                        New Assessment
+                      </Button>
+                    </Link>
+                  )}
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Assessment</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Candidates</TableHead>
+                      <TableHead>Duration</TableHead>
+                      <TableHead>Created</TableHead>
+                      <TableHead>Completion</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredAssessments.map((assessment) => (
+                      <TableRow key={assessment.id}>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium text-text-primary">{assessment.title}</div>
+                            <div className="text-sm text-text-secondary capitalize">
+                              {assessment.role} • {assessment.seniority}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={
+                            assessment.status === "PUBLISHED" ? "success" :
+                            assessment.status === "DRAFT" ? "default" :
+                            assessment.status === "ARCHIVED" ? "default" :
+                            "default"
+                          }>
+                            {assessment.status.toLowerCase()}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-text-secondary">
+                            <Users className="h-4 w-4" />
+                            <span>{assessment.statistics.totalCandidates}</span>
+                            <span className="text-text-tertiary">
+                              ({assessment.statistics.completedCandidates} completed)
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-text-secondary">
+                            <Clock className="h-4 w-4" />
+                            <span>{assessment.duration} min</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2 text-text-secondary">
+                            <Calendar className="h-4 w-4" />
+                            <span>{new Date(assessment.createdAt).toLocaleDateString()}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <div className="w-24 bg-background-tertiary rounded-full h-2">
+                              <div
+                                className="bg-primary h-2 rounded-full transition-all"
+                                style={{ width: `${Math.round(assessment.statistics.completionRate * 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-sm text-text-secondary">
+                              {Math.round(assessment.statistics.completionRate * 100)}%
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Link href={`/assessments/${assessment.id}`}>
+                              <Button variant="ghost" size="icon">
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                            <Link href={`/assessments/${assessment.id}/edit`}>
+                              <Button variant="ghost" size="icon">
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                            <Button variant="ghost" size="icon">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </Card>
           </TabsContent>
 
@@ -223,56 +318,3 @@ export default function AssessmentsPage() {
     </DashboardLayout>
   );
 }
-
-const assessments = [
-  {
-    id: "1",
-    title: "Frontend Engineer - React",
-    status: "active",
-    problems: ["Build Todo App", "Fix React Bugs", "Optimize Performance"],
-    candidates: { total: 8, completed: 5 },
-    duration: 90,
-    created: "Jan 15, 2025",
-    completionRate: 65,
-  },
-  {
-    id: "2",
-    title: "Backend Engineer - Node.js",
-    status: "completed",
-    problems: ["REST API", "Database Design", "Authentication"],
-    candidates: { total: 12, completed: 12 },
-    duration: 60,
-    created: "Jan 10, 2025",
-    completionRate: 100,
-  },
-  {
-    id: "3",
-    title: "Full-Stack Developer",
-    status: "draft",
-    problems: ["E-commerce Cart", "User Dashboard"],
-    candidates: { total: 0, completed: 0 },
-    duration: 120,
-    created: "Jan 18, 2025",
-    completionRate: 0,
-  },
-  {
-    id: "4",
-    title: "DevOps Engineer",
-    status: "active",
-    problems: ["CI/CD Pipeline", "Container Orchestration"],
-    candidates: { total: 6, completed: 2 },
-    duration: 75,
-    created: "Jan 12, 2025",
-    completionRate: 33,
-  },
-  {
-    id: "5",
-    title: "Senior Frontend - Vue.js",
-    status: "active",
-    problems: ["Component Library", "State Management"],
-    candidates: { total: 4, completed: 4 },
-    duration: 90,
-    created: "Jan 8, 2025",
-    completionRate: 100,
-  },
-];

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import { modalService as modal, sessionService as sessions } from "@/lib/services";
 import {
   calculateOverallScore,
   calculateAICollaborationScore,
@@ -80,6 +81,7 @@ export async function POST(
             codeSnapshots: true,
           },
         },
+        generatedQuestions: true,
       },
     });
 
@@ -112,8 +114,58 @@ export async function POST(
 
     const sessionRecording = candidate.sessionRecording;
 
+    // Run final test execution to ensure we have latest results
+    let finalTestResults: any = null;
+    const firstQuestion = candidate.generatedQuestions?.[0];
+    if (candidate.volumeId && firstQuestion) {
+      try {
+        // Read final code from Modal volume
+        const fileName = `solution.${firstQuestion.language === "python" ? "py" : "js"}`;
+        const finalCodeContent = finalCode?.[fileName] || await modal.readFile(candidate.volumeId, fileName);
+
+        // Run final tests
+        const testCases = firstQuestion.testCases as Array<{
+          name: string;
+          input: string;
+          expectedOutput: string;
+          hidden?: boolean;
+        }>;
+
+        if (testCases && testCases.length > 0) {
+          finalTestResults = await modal.executeCode(
+            id,
+            finalCodeContent,
+            testCases.map(tc => ({
+              name: tc.name,
+              input: tc.input,
+              expected: tc.expectedOutput,
+              hidden: tc.hidden || false,
+            }))
+          );
+
+          // Record final test results
+          const testResultPromises = finalTestResults.testResults.map((result: any) =>
+            prisma.testResult.create({
+              data: {
+                sessionId: sessionRecording.id,
+                testName: result.name,
+                passed: result.passed,
+                output: result.output || null,
+                error: result.error || null,
+                duration: result.duration,
+              },
+            })
+          );
+          await Promise.all(testResultPromises);
+        }
+      } catch (error) {
+        console.error("Error running final tests:", error);
+        // Continue with submission even if final test execution fails
+      }
+    }
+
     // Calculate metrics
-    const metrics = calculateSessionMetrics(candidate, sessionRecording);
+    const metrics = calculateSessionMetrics(candidate, sessionRecording, finalTestResults);
 
     // Build candidate profile for scoring
     const candidateProfile: CandidateProfile = {
@@ -219,8 +271,23 @@ export async function POST(
           },
           recommendation,
           percentileRank,
-        },
+        } as any,
       },
+    });
+
+    // Record session_submit event
+    await sessions.recordEvent(sessionRecording.id, {
+      type: "session_submit",
+      data: {
+        finalCode,
+        testsPassed: finalTestResults?.passed || 0,
+        testsFailed: finalTestResults?.failed || 0,
+        overallScore: overallScore.overall,
+        aiCollaborationScore: aiCollaborationScore.overall,
+        duration: metrics.timeUsed,
+        timestamp: new Date().toISOString(),
+      },
+      checkpoint: true, // Mark as checkpoint for replay seeking
     });
 
     // Update session recording
@@ -277,7 +344,8 @@ export async function POST(
  */
 function calculateSessionMetrics(
   candidate: any,
-  sessionRecording: any
+  sessionRecording: any,
+  finalTestResults?: any
 ): Partial<CandidateProfile> {
   const startTime = candidate.startedAt || sessionRecording.startTime;
   const endTime = new Date();
@@ -288,10 +356,19 @@ function calculateSessionMetrics(
   const claudeInteractions = sessionRecording.claudeInteractions.filter(
     (i: any) => i.role === "user"
   );
-  const testResults = sessionRecording.testResults;
 
-  const testsPassed = testResults.filter((t: any) => t.passed).length;
-  const testsFailed = testResults.filter((t: any) => !t.passed).length;
+  // Use final test results if available, otherwise use session recording results
+  let testsPassed = 0;
+  let testsFailed = 0;
+
+  if (finalTestResults) {
+    testsPassed = finalTestResults.passedTests;
+    testsFailed = finalTestResults.failedTests;
+  } else {
+    const testResults = sessionRecording.testResults;
+    testsPassed = testResults.filter((t: any) => t.passed).length;
+    testsFailed = testResults.filter((t: any) => !t.passed).length;
+  }
 
   const avgPromptQuality =
     claudeInteractions.length > 0

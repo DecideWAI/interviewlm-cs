@@ -22,10 +22,11 @@ const anthropic = new Anthropic({
 });
 
 /**
- * POST /api/interview/[id]/chat
+ * GET /api/interview/[id]/chat
  * Claude chat with Server-Sent Events streaming
+ * Query params: message (required), fileName, content, language (optional)
  */
-export async function POST(
+export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -39,18 +40,25 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Parse and validate request body
-    const body = await request.json();
-    const validationResult = chatRequestSchema.safeParse(body);
+    // Parse query parameters
+    const { searchParams } = new URL(request.url);
+    const message = searchParams.get("message");
+    const fileName = searchParams.get("fileName");
+    const content = searchParams.get("content");
+    const language = searchParams.get("language");
 
-    if (!validationResult.success) {
+    if (!message) {
       return NextResponse.json(
-        { error: "Invalid request", details: validationResult.error.errors },
+        { error: "Message is required" },
         { status: 400 }
       );
     }
 
-    const { message, codeContext } = validationResult.data;
+    const codeContext = (fileName || content || language) ? {
+      fileName: fileName || undefined,
+      content: content || undefined,
+      language: language || undefined,
+    } : undefined;
 
     // Verify candidate exists and belongs to authorized organization
     const candidate = await prisma.candidate.findUnique({
@@ -123,9 +131,9 @@ export async function POST(
                 const text = event.delta.text;
                 fullResponse += text;
 
-                // Send SSE formatted chunk
-                const data = JSON.stringify({ type: "chunk", text });
-                controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+                // Send SSE formatted chunk (event: content, data: {delta})
+                const data = JSON.stringify({ delta: text });
+                controller.enqueue(encoder.encode(`event: content\ndata: ${data}\n\n`));
               }
             } else if (event.type === "message_start") {
               inputTokens = event.message.usage.input_tokens;
@@ -169,14 +177,15 @@ export async function POST(
             data: { promptQuality },
           });
 
-          // Send completion event
-          const doneData = JSON.stringify({
-            type: "done",
-            tokens: { input: inputTokens, output: outputTokens },
-            latency,
-            promptQuality,
+          // Send usage event (frontend expects this format)
+          const usageData = JSON.stringify({
+            inputTokens,
+            outputTokens,
           });
-          controller.enqueue(encoder.encode(`data: ${doneData}\n\n`));
+          controller.enqueue(encoder.encode(`event: usage\ndata: ${usageData}\n\n`));
+
+          // Send completion event
+          controller.enqueue(encoder.encode(`event: done\ndata: {}\n\n`));
 
           controller.close();
         } catch (error) {

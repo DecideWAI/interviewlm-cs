@@ -16,17 +16,21 @@ export type SessionStatus = "ACTIVE" | "PAUSED" | "COMPLETED" | "ABANDONED";
 export interface GeneratedQuestion {
   id: string;
   candidateId: string;
-  seed: string | null;
-  difficulty: Difficulty;
-  status: QuestionStatus;
+  questionSeedId: string | null;
+  order: number;
   title: string;
   description: string;
-  starterCode: string | null;
-  testCases: any;
-  languageAllowed: string[];
-  metadata: any;
+  difficulty: Difficulty;
+  language: string;
+  requirements: string[];
+  estimatedTime: number;
+  starterCode: any; // Json
+  testCases: any; // Json
+  status: QuestionStatus;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  score: number | null;
   createdAt: Date;
-  updatedAt: Date;
 }
 
 export interface SessionRecording {
@@ -34,9 +38,11 @@ export interface SessionRecording {
   candidateId: string;
   startTime: Date;
   endTime: Date | null;
+  duration: number | null;
   status: SessionStatus;
-  s3Url: string | null;
-  metadata: any;
+  eventCount: number;
+  storagePath: string | null;
+  storageSize: number | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -70,21 +76,20 @@ export interface CodeSnapshot {
   fileId: string;
   fileName: string;
   language: string;
-  content: string;
+  contentHash: string;
+  fullContent: string | null;
+  diffFromPrevious: any; // Json
   linesAdded: number;
   linesDeleted: number;
-  diffFromPrevious: string | null;
 }
 
 export interface TestResult {
   id: string;
   sessionId: string;
-  questionId: string;
   timestamp: Date;
-  passed: number;
-  failed: number;
-  total: number;
-  executionTime: number | null;
+  testName: string;
+  passed: boolean;
   output: string | null;
   error: string | null;
+  duration: number | null;
 }

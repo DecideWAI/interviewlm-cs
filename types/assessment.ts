@@ -87,6 +87,7 @@ export interface AssessmentConfig {
   role: Role;
   customRoleName?: string; // For custom roles (Large Pack+)
   seniority: SeniorityLevel;
+  techStack?: string[]; // Technologies/languages
 
   /** Timing */
   duration: number; // in minutes
