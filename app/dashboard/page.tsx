@@ -98,7 +98,7 @@ export default function DashboardPage() {
     },
     {
       label: "Average Score",
-      value: stats.avgScore ? Math.round(stats.avgScore) : 0,
+      value: stats.avgScore || 0,
     },
   ];
 

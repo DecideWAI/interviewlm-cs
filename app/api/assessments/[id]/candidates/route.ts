@@ -167,7 +167,8 @@ export async function POST(
         });
 
         // Generate invitation link
-        const invitationLink = `${process.env.NEXT_PUBLIC_URL || "https://interviewlm.com"}/interview/start/${invitationToken}`;
+        const baseUrl = process.env.NEXT_PUBLIC_URL || (process.env.NODE_ENV === 'production' ? 'https://interviewlm.com' : 'http://localhost:3000');
+        const invitationLink = `${baseUrl}/interview/start/${invitationToken}`;
 
         // Send invitation email
         try {

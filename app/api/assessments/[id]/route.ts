@@ -178,8 +178,8 @@ export async function GET(
         inProgressCount,
         completedCount,
         completionRate: totalCandidates > 0 ? completedCount / totalCandidates : 0,
-        avgScore: avgScore ? Math.round(avgScore) : null,
-        passRate: Math.round(passRate * 100),
+        avgScore: avgScore ? parseFloat(avgScore.toFixed(1)) : null,
+        passRate: parseFloat((passRate * 100).toFixed(1)),
         topPerformers,
       },
     });
