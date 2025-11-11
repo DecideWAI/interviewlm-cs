@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { KPICard } from "@/components/analytics/KPICard";
@@ -7,36 +8,149 @@ import { PipelineFunnelChart } from "@/components/analytics/PipelineFunnelChart"
 import { PriorityActionsPanel } from "@/components/analytics/PriorityActionsPanel";
 import { CandidateTable } from "@/components/analytics/CandidateTable";
 import {
-  MOCK_DASHBOARD_KPIS,
   MOCK_PIPELINE_FUNNEL,
   MOCK_PRIORITY_ACTIONS,
-  MOCK_CANDIDATES,
 } from "@/lib/mock-analytics-data";
 import { Button } from "@/components/ui/button";
-import { Plus, TrendingUp, Users, Award } from "lucide-react";
+import { Plus, TrendingUp, Users, Award, Loader2 } from "lucide-react";
 import Link from "next/link";
 
-export default function DashboardPage() {
-  // TODO: Fetch real data from API
-  const kpis = MOCK_DASHBOARD_KPIS;
-  const funnel = MOCK_PIPELINE_FUNNEL;
-  const priorityActions = MOCK_PRIORITY_ACTIONS;
-  const candidates = MOCK_CANDIDATES;
+interface DashboardStats {
+  stats: {
+    activeAssessments: number;
+    totalCandidates: number;
+    pendingReview: number;
+    completedThisMonth: number;
+    completionRate: number;
+    avgScore: number | null;
+  };
+  recentCandidates: any[];
+}
 
-  // Extract key metrics for display
+export default function DashboardPage() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardStats | null>(null);
+
+  useEffect(() => {
+    fetchDashboardStats();
+  }, []);
+
+  const fetchDashboardStats = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/dashboard/stats");
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch dashboard statistics");
+      }
+
+      const data = await response.json();
+      setDashboardData(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("Error fetching dashboard stats:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-[calc(100vh-200px)]">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error || !dashboardData) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center h-[calc(100vh-200px)]">
+          <p className="text-error mb-4">{error || "Failed to load dashboard"}</p>
+          <Button variant="outline" onClick={fetchDashboardStats}>
+            Retry
+          </Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const { stats, recentCandidates } = dashboardData;
+
+  // Map real data to KPI structure
   const primaryKPIs = [
-    kpis.activeAssessments,
-    kpis.pendingReview,
-    kpis.completedThisMonth,
-    kpis.averageScore,
+    {
+      label: "Active Assessments",
+      value: stats.activeAssessments,
+      change: 0,
+      trend: "neutral" as const,
+      icon: "users",
+    },
+    {
+      label: "Pending Review",
+      value: stats.pendingReview,
+      change: 0,
+      trend: "neutral" as const,
+      icon: "clock",
+    },
+    {
+      label: "Completed This Month",
+      value: stats.completedThisMonth,
+      change: 0,
+      trend: "up" as const,
+      icon: "check",
+    },
+    {
+      label: "Average Score",
+      value: stats.avgScore ? Math.round(stats.avgScore) : 0,
+      change: 0,
+      trend: "neutral" as const,
+      icon: "award",
+      suffix: "/100",
+    },
   ];
 
   const secondaryKPIs = [
-    kpis.completionRate,
-    kpis.passRate,
-    kpis.avgAIProficiency,
-    kpis.candidatesUsingAI,
+    {
+      label: "Completion Rate",
+      value: Math.round(stats.completionRate * 100),
+      change: 0,
+      trend: "neutral" as const,
+      icon: "percent",
+      suffix: "%",
+    },
+    {
+      label: "Pass Rate",
+      value: 0, // Not yet calculated in API
+      change: 0,
+      trend: "neutral" as const,
+      icon: "trending-up",
+      suffix: "%",
+    },
+    {
+      label: "Avg AI Proficiency",
+      value: 0, // Not yet calculated in API
+      change: 0,
+      trend: "neutral" as const,
+      icon: "sparkles",
+    },
+    {
+      label: "Candidates Using AI",
+      value: 0, // Not yet calculated in API
+      change: 0,
+      trend: "neutral" as const,
+      icon: "users",
+      suffix: "%",
+    },
   ];
+
+  const funnel = MOCK_PIPELINE_FUNNEL; // TODO: Calculate from real data
+  const priorityActions = MOCK_PRIORITY_ACTIONS; // TODO: Generate from real data
 
   return (
     <DashboardLayout>
@@ -91,7 +205,7 @@ export default function DashboardPage() {
               </div>
               <div className="text-right">
                 <p className="text-2xl font-bold text-text-primary">
-                  {candidates.filter((c) => c.assessmentCompleted).length}
+                  {recentCandidates.filter((c: any) => c.status === "COMPLETED").length}
                 </p>
                 <p className="text-xs text-text-tertiary">Completed</p>
               </div>
@@ -100,7 +214,7 @@ export default function DashboardPage() {
               Active Candidates
             </h4>
             <p className="text-sm text-text-secondary">
-              {candidates.filter((c) => c.status === "assessment_in_progress").length} currently taking assessments
+              {recentCandidates.filter((c: any) => c.status === "IN_PROGRESS").length} currently taking assessments
             </p>
           </div>
 
@@ -111,7 +225,7 @@ export default function DashboardPage() {
               </div>
               <div className="text-right">
                 <p className="text-2xl font-bold text-text-primary">
-                  {candidates.filter((c) => (c.overallScore || 0) >= 80).length}
+                  {recentCandidates.filter((c: any) => (c.overallScore || 0) >= 80).length}
                 </p>
                 <p className="text-xs text-text-tertiary">Top Performers</p>
               </div>
@@ -162,7 +276,7 @@ export default function DashboardPage() {
               </Button>
             </Link>
           </div>
-          <CandidateTable candidates={candidates} />
+          <CandidateTable candidates={recentCandidates} />
         </div>
       </div>
     </DashboardLayout>

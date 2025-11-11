@@ -18,16 +18,46 @@ export default function NewAssessmentPage() {
     setIsSaving(true);
 
     try {
-      // TODO: Save assessment to backend
-      console.log("Saving assessment:", config);
+      // Map AssessmentConfig to API request format
+      const requestBody = {
+        title: config.title || "",
+        description: config.description || undefined,
+        role: config.role || "",
+        seniority: config.seniority || "MID",
+        techStack: config.techStack || [],
+        duration: config.duration || 60,
+        enableCoding: config.aiAssistanceEnabled ?? true,
+        enableTerminal: config.aiMonitoringEnabled ?? true,
+        enableAI: config.aiAssistanceEnabled ?? true,
+      };
 
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const response = await fetch("/api/assessments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
 
-      // Redirect to assessments list
-      router.push("/assessments");
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to create assessment");
+      }
+
+      const data = await response.json();
+
+      // Optionally publish if status is "active"
+      if (config.status === "active" || config.status === "published") {
+        await fetch(`/api/assessments/${data.assessment.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "PUBLISHED" }),
+        });
+      }
+
+      // Redirect to assessment detail page
+      router.push(`/assessments/${data.assessment.id}`);
     } catch (error) {
       console.error("Error saving assessment:", error);
+      alert(error instanceof Error ? error.message : "Failed to create assessment");
       setIsSaving(false);
     }
   };
