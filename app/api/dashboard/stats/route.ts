@@ -198,77 +198,21 @@ export async function GET(request: NextRequest) {
       : 0;
 
     return NextResponse.json({
-      kpis: {
-        activeAssessments: {
-          label: "Active Assessments",
-          value: activeAssessments,
-          change: 0, // TODO: Calculate trend
-          changeType: "neutral" as const,
-        },
-        pendingReview: {
-          label: "Pending Review",
-          value: pendingReviewCandidates,
-          change: 0,
-          changeType: "neutral" as const,
-        },
-        completedThisMonth: {
-          label: "Completed This Month",
-          value: completedThisMonth,
-          change: Math.round(completionTrend),
-          changeType: (completionTrend > 0 ? "positive" : completionTrend < 0 ? "negative" : "neutral") as const,
-        },
-        averageScore: {
-          label: "Average Score",
-          value: Math.round(avgOverallScore),
-          suffix: "/100",
-          change: 0, // TODO: Calculate trend
-          changeType: "neutral" as const,
-        },
-        completionRate: {
-          label: "Completion Rate",
-          value: Math.round(completionRate * 100),
-          suffix: "%",
-          change: 0,
-          changeType: "neutral" as const,
-        },
-        passRate: {
-          label: "Pass Rate",
-          value: Math.round(passRate * 100),
-          suffix: "%",
-          change: 0,
-          changeType: "neutral" as const,
-        },
-        avgAIProficiency: {
-          label: "Avg AI Proficiency",
-          value: Math.round(avgAIProficiency),
-          suffix: "/100",
-          change: 0,
-          changeType: "neutral" as const,
-        },
-        candidatesUsingAI: {
-          label: "Candidates Using AI",
-          value: Math.round(aiUsageRate * 100),
-          suffix: "%",
-          change: 0,
-          changeType: "neutral" as const,
-        },
+      stats: {
+        activeAssessments,
+        totalCandidates,
+        pendingReview: pendingReviewCandidates,
+        completedThisMonth,
+        completionRate,
+        avgScore: Math.round(avgOverallScore),
       },
-      pipeline: {
-        stages: [
-          { name: "Invited", count: invited },
-          { name: "Started", count: started },
-          { name: "Completed", count: completed },
-          { name: "Passed", count: passed },
-        ],
-        overallConversion: invited > 0 ? passed / invited : 0,
-      },
-      candidates: recentCandidates.map((c) => ({
+      recentCandidates: recentCandidates.map((c) => ({
         id: c.id,
         name: c.name,
         email: c.email,
         appliedRole: c.assessment.role,
         targetSeniority: c.assessment.seniority,
-        status: c.status.toLowerCase().replace(/_/g, "_") as any,
+        status: c.status,
         assessmentCompleted: c.status === "COMPLETED" || c.status === "EVALUATED",
         overallScore: c.overallScore,
         codingScore: c.codingScore,
@@ -277,17 +221,7 @@ export async function GET(request: NextRequest) {
         invitedAt: c.invitedAt.toISOString(),
         lastActivityAt: (c.completedAt || c.startedAt || c.invitedAt).toISOString(),
         sessionDuration: c.sessionRecording?.duration,
-        redFlags: [], // TODO: Populate from session data
-        greenFlags: [], // TODO: Populate from session data
       })),
-      summary: {
-        totalCandidates,
-        activeAssessments,
-        pendingReview: pendingReviewCandidates,
-        avgScore: Math.round(avgOverallScore),
-        completionRate: Math.round(completionRate * 100),
-        passRate: Math.round(passRate * 100),
-      },
     });
   } catch (error) {
     console.error("Error fetching dashboard stats:", error);
