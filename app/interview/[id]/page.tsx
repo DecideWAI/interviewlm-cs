@@ -14,6 +14,8 @@ import { QuestionCompletionCard } from "@/components/interview/QuestionCompletio
 import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
 import { resetConversation } from "@/lib/chat-resilience";
 import { useSessionRecovery, useSessionRecoveryDialog, SessionState } from "@/hooks/useSessionRecovery";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { toast } from "sonner";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(
@@ -110,6 +112,9 @@ export default function InterviewPage() {
     },
   });
   const { showRecoveryDialog } = useSessionRecoveryDialog();
+
+  // Offline detection for better error handling
+  const { isOnline, wasOffline, resetWasOffline } = useOnlineStatus();
 
   // Handle session recovery acceptance
   const handleRestoreSession = useCallback(async () => {
@@ -293,6 +298,18 @@ export default function InterviewPage() {
     }
   }, [showRecoveryPrompt, recoveredState, showRecoveryDialog, handleRestoreSession, clearSessionState]);
 
+  // Show reconnection notification
+  useEffect(() => {
+    if (isOnline && wasOffline) {
+      toast.success("Connection restored", {
+        description: "You're back online. All changes will be synchronized.",
+        duration: 3000,
+        icon: "🌐",
+      });
+      resetWasOffline();
+    }
+  }, [isOnline, wasOffline, resetWasOffline]);
+
   // Confirmation before leaving page
   useEffect(() => {
     if (!sessionData || isSubmitting) return;
@@ -314,6 +331,17 @@ export default function InterviewPage() {
   const handleManualSave = useCallback(async () => {
     if (!sessionData || !selectedFile) return;
 
+    // Check online status
+    if (!isOnline) {
+      toast.warning("You're offline", {
+        description: "Changes are saved locally and will sync when reconnected.",
+        duration: 3000,
+      });
+      return;
+    }
+
+    const toastId = toast.loading(`Saving ${selectedFile.name}...`);
+
     try {
       await fetch(`/api/interview/${candidateId}/files`, {
         method: "POST",
@@ -325,14 +353,21 @@ export default function InterviewPage() {
         }),
       });
 
-      // Show brief saved indicator
-      console.log('File saved successfully');
-      // TODO: Add toast notification
+      toast.success("File saved", {
+        id: toastId,
+        description: `${selectedFile.name} saved successfully`,
+        duration: 2000,
+        icon: "💾",
+      });
     } catch (err) {
       console.error("Failed to save file:", err);
-      // TODO: Show error toast
+      toast.error("Save failed", {
+        id: toastId,
+        description: err instanceof Error ? err.message : "Failed to save file",
+        duration: 4000,
+      });
     }
-  }, [sessionData, selectedFile, candidateId, code]);
+  }, [sessionData, selectedFile, candidateId, code, isOnline]);
 
   // Loading state
   if (isInitializing) {
@@ -444,11 +479,15 @@ export default function InterviewPage() {
         // Conversation reset failed after 3 retries - CRITICAL
         console.error("CRITICAL: Conversation reset failed:", resetError);
         setIsLoadingNextQuestion(false);
-        alert(
-          "Failed to prepare for next question due to a security issue.\n\n" +
-          "Please refresh the page and try again.\n\n" +
-          "If the problem persists, contact support."
-        );
+
+        toast.error("Security error", {
+          description: "Failed to prepare for next question. Please refresh the page and try again.",
+          duration: 8000,
+          action: {
+            label: "Refresh",
+            onClick: () => window.location.reload(),
+          },
+        });
         return; // BLOCK question progression
       }
 
@@ -459,8 +498,18 @@ export default function InterviewPage() {
       }, 2000); // Show loading screen for 2 seconds
     } catch (err) {
       console.error("Failed to load next question:", err);
-      alert(`Failed to load next question: ${err instanceof Error ? err.message : "Unknown error"}`);
       setIsLoadingNextQuestion(false);
+
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+
+      toast.error("Failed to load next question", {
+        description: errorMessage,
+        duration: 6000,
+        action: {
+          label: "Try Again",
+          onClick: handleNextQuestion,
+        },
+      });
     }
   };
 
@@ -656,6 +705,21 @@ export default function InterviewPage() {
         estimatedTime={sessionData.question.difficulty === "HARD" ? 45 : sessionData.question.difficulty === "MEDIUM" ? 30 : 20}
         title={sessionData.question.title}
       />
+
+      {/* Offline Warning Banner */}
+      {!isOnline && (
+        <div className="bg-warning/10 border-b border-warning/30 px-6 py-3">
+          <div className="flex items-center gap-3 text-warning">
+            <AlertCircle className="h-5 w-5 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium">You're offline</p>
+              <p className="text-xs text-warning/80">
+                Changes are saved locally and will sync when your connection is restored.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Actions Bar */}
       <div className="border-b border-border bg-background-secondary px-6 py-3">
