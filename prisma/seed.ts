@@ -4,10 +4,17 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 async function main() {
+  // Prevent accidental seeding in production
+  if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_SEED_IN_PRODUCTION) {
+    console.error("❌ Seed script cannot run in production without ALLOW_SEED_IN_PRODUCTION=true");
+    process.exit(1);
+  }
+
   console.log("🌱 Starting database seed...");
 
-  // Create a test user
-  const hashedPassword = await bcrypt.hash("password123", 10);
+  // Use environment variable for seed password or generate a random one
+  const seedPassword = process.env.SEED_PASSWORD || `dev-${Math.random().toString(36).slice(2)}`;
+  const hashedPassword = await bcrypt.hash(seedPassword, 10);
 
   const user = await prisma.user.upsert({
     where: { email: "test@interviewlm.com" },
@@ -93,10 +100,11 @@ async function main() {
   console.log("\n🎉 Seed completed successfully!");
   console.log("\nTest credentials:");
   console.log("  Email: test@interviewlm.com");
-  console.log("  Password: password123");
+  console.log(`  Password: ${seedPassword}`);
   console.log("\nAdmin credentials:");
   console.log("  Email: admin@interviewlm.com");
-  console.log("  Password: password123");
+  console.log(`  Password: ${seedPassword}`);
+  console.log("\n💡 Tip: Set SEED_PASSWORD environment variable for consistent credentials");
 }
 
 main()

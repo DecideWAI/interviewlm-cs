@@ -520,7 +520,7 @@ function AnalyticsTab({ performance }: any) {
         <div className="p-4 bg-background-tertiary rounded-lg">
           <p className="text-sm text-text-tertiary mb-1">Average Score</p>
           <p className="text-2xl font-bold text-text-primary">
-            {performance.avgScore ? Math.round(performance.avgScore) : "—"}
+            {performance.avgScore ? performance.avgScore.toFixed(1) : "—"}
           </p>
         </div>
         <div className="p-4 bg-background-tertiary rounded-lg">

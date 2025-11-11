@@ -287,7 +287,7 @@ describe('GET /api/sessions/[id]', () => {
   })
 
   it('should calculate correct metrics', async () => {
-    const sessionWith Multi Events = {
+    const sessionWithMultiEvents = {
       ...mockSessionData,
       eventCount: 500,
       claudeInteractions: [

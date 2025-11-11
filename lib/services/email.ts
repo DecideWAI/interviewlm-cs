@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import BRANDING from "@/lib/branding";
 
 // Initialize Resend with API key from environment
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -28,7 +29,7 @@ export async function sendInvitationEmail(params: SendInvitationEmailParams) {
     invitationLink,
     expiresAt,
     customMessage,
-    organizationName = "InterviewLM",
+    organizationName = BRANDING.name,
   } = params;
 
   const expiryDate = new Date(expiresAt).toLocaleDateString("en-US", {
@@ -61,7 +62,7 @@ export async function sendInvitationEmail(params: SendInvitationEmailParams) {
 
   try {
     const result = await resend.emails.send({
-      from: process.env.RESEND_FROM_EMAIL || "InterviewLM <noreply@interviewlm.com>",
+      from: process.env.RESEND_FROM_EMAIL || BRANDING.defaultEmailFrom,
       to,
       subject: `You're invited to complete an assessment for ${role}`,
       html: emailHtml,
@@ -217,8 +218,8 @@ function generateInvitationEmailHtml(params: {
 <body>
   <div class="container">
     <div class="header">
-      <div class="logo">InterviewLM</div>
-      <p style="color: #6B7280; font-size: 14px;">AI-Native Technical Assessments</p>
+      <div class="logo">${BRANDING.emailLogoText}</div>
+      <p style="color: #6B7280; font-size: 14px;">${BRANDING.tagline}</p>
     </div>
 
     <div class="card">
@@ -270,8 +271,8 @@ function generateInvitationEmailHtml(params: {
     <div class="footer">
       <p>If you have any questions, please contact ${organizationName}.</p>
       <p style="margin-top: 16px;">
-        Powered by <strong style="color: #5E6AD2;">InterviewLM</strong><br>
-        The AI-native technical assessment platform
+        Powered by <strong style="color: #5E6AD2;">${BRANDING.name}</strong><br>
+        ${BRANDING.emailFooterText}
       </p>
     </div>
   </div>
@@ -325,8 +326,8 @@ ${invitationLink}
 If you have any questions, please contact ${organizationName}.
 
 ---
-Powered by InterviewLM
-The AI-native technical assessment platform
+Powered by ${BRANDING.name}
+${BRANDING.emailFooterText}
   `.trim();
 }
 

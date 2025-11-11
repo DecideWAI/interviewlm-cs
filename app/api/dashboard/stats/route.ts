@@ -146,7 +146,7 @@ export async function GET() {
         pendingReview: pendingReviewCandidates,
         completedThisMonth,
         completionRate,
-        avgScore: Math.round(avgOverallScore),
+        avgScore: avgOverallScore > 0 ? parseFloat(avgOverallScore.toFixed(1)) : null,
       },
       recentCandidates: recentCandidates.map((c) => ({
         id: c.id,
