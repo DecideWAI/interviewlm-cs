@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import { sendInvitationEmail } from "@/lib/services/email";
 import crypto from "crypto";
 
 // Validation schema for inviting a candidate
@@ -165,14 +166,26 @@ export async function POST(
           },
         });
 
-        // TODO: Send invitation email
-        // await sendInvitationEmail({
-        //   candidate,
-        //   assessment,
-        //   organization: assessment.organization,
-        //   token: invitationToken,
-        //   message: commonMessage || candidateInfo.message,
-        // });
+        // Generate invitation link
+        const invitationLink = `${process.env.NEXT_PUBLIC_URL || "https://interviewlm.com"}/interview/start/${invitationToken}`;
+
+        // Send invitation email
+        try {
+          await sendInvitationEmail({
+            to: candidate.email,
+            candidateName: candidate.name,
+            assessmentTitle: assessment.title,
+            role: assessment.role,
+            duration: assessment.duration,
+            invitationLink,
+            expiresAt,
+            customMessage: commonMessage || candidateInfo.message,
+            organizationName: assessment.organization.name,
+          });
+        } catch (emailError) {
+          console.error(`Failed to send email to ${candidate.email}:`, emailError);
+          // Continue even if email fails - candidate is still created
+        }
 
         createdCandidates.push({
           id: candidate.id,
@@ -180,7 +193,7 @@ export async function POST(
           email: candidate.email,
           status: candidate.status,
           invitedAt: candidate.invitedAt,
-          invitationLink: `${process.env.NEXT_PUBLIC_URL}/interview/start/${invitationToken}`,
+          invitationLink,
         });
       } catch (error) {
         console.error(`Error inviting candidate ${candidateInfo.email}:`, error);

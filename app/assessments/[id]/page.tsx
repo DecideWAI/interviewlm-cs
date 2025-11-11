@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { CandidateTable } from "@/components/analytics/CandidateTable";
+import { InviteCandidateDialog } from "@/components/assessment/InviteCandidateDialog";
 import {
   ArrowLeft,
   Eye,
@@ -39,6 +40,7 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [assessment, setAssessment] = useState<any>(null);
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
 
   useEffect(() => {
     fetchAssessmentDetail();
@@ -144,7 +146,11 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setInviteDialogOpen(true)}
+            >
               <Mail className="h-4 w-4 mr-2" />
               Invite Candidates
             </Button>
@@ -221,7 +227,12 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
               {/* Tab Content */}
               <div className="p-6">
                 {activeTab === "overview" && <OverviewTab assessment={assessment} problemSeeds={problemSeeds} />}
-                {activeTab === "candidates" && <CandidatesTab candidates={assessmentCandidates} />}
+                {activeTab === "candidates" && (
+                  <CandidatesTab
+                    candidates={assessmentCandidates}
+                    onInvite={() => setInviteDialogOpen(true)}
+                  />
+                )}
                 {activeTab === "analytics" && <AnalyticsTab performance={perf} />}
                 {activeTab === "settings" && <SettingsTab assessment={assessment} />}
               </div>
@@ -234,7 +245,12 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
             <Card className="bg-background-secondary border-border p-6">
               <h3 className="text-sm font-semibold text-text-primary mb-4">Quick Actions</h3>
               <div className="space-y-2">
-                <Button variant="primary" className="w-full justify-start" size="sm">
+                <Button
+                  variant="primary"
+                  className="w-full justify-start"
+                  size="sm"
+                  onClick={() => setInviteDialogOpen(true)}
+                >
                   <Mail className="h-4 w-4 mr-2" />
                   Invite Candidates
                 </Button>
@@ -321,6 +337,15 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
           </div>
         </div>
       </div>
+
+      {/* Invitation Dialog */}
+      <InviteCandidateDialog
+        open={inviteDialogOpen}
+        onOpenChange={setInviteDialogOpen}
+        assessmentId={assessment.id}
+        assessmentTitle={assessment.title}
+        onSuccess={fetchAssessmentDetail}
+      />
     </DashboardLayout>
   );
 }
@@ -464,7 +489,7 @@ function OverviewTab({ assessment, problemSeeds }: any) {
   );
 }
 
-function CandidatesTab({ candidates }: any) {
+function CandidatesTab({ candidates, onInvite }: any) {
   if (candidates.length === 0) {
     return (
       <div className="py-12 text-center">
@@ -473,7 +498,7 @@ function CandidatesTab({ candidates }: any) {
         <p className="text-sm text-text-tertiary mb-4">
           Send invitations to start assessing candidates
         </p>
-        <Button variant="primary" size="sm">
+        <Button variant="primary" size="sm" onClick={onInvite}>
           <Mail className="h-4 w-4 mr-2" />
           Invite Candidates
         </Button>
