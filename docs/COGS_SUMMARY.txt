@@ -1,0 +1,308 @@
+================================================================================
+                    INTERVIEWLM: COMPLETE COGS ANALYSIS
+                           Assessment Duration: 90 mins
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ COGS BREAKDOWN - PER ASSESSMENT                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+1. MODAL AI SANDBOX (Containerized Environment)
+   ├─ Duration: 90 minutes
+   ├─ Unit cost: $0.19
+   └─ Per assessment: $0.19
+
+2. CLAUDE API TOKENS (AI Feedback & Evaluation)
+   ├─ Interactions per assessment: 75
+   │  ├─ Pre-assessment: 2-3 interactions
+   │  ├─ During assessment: 60-70 (code feedback/submissions)
+   │  └─ Post-assessment: 5-10 interactions
+   │
+   ├─ Per interaction:
+   │  ├─ Input: 1,000 tokens × ($3/1M tokens) = $0.003
+   │  └─ Output: 2,000 tokens × ($15/1M tokens) = $0.030
+   │  └─ Subtotal: $0.033/interaction
+   │
+   ├─ Per assessment (75 interactions):
+   │  ├─ Input tokens: 75,000 tokens = $0.225
+   │  ├─ Output tokens: 150,000 tokens = $2.250
+   │  └─ TOTAL CLAUDE COST: $2.475
+   │
+   └─ Per assessment: $2.48 (rounded)
+
+3. POST-ASSESSMENT ANALYSIS (AI-Generated Reports & Scoring)
+   ├─ Operations: 4 AI interactions
+   │  ├─ Summary generation
+   │  ├─ Skill matching
+   │  ├─ Performance comparison
+   │  └─ Report generation
+   │
+   ├─ Token cost:
+   │  ├─ Input: 4,000 tokens = $0.012
+   │  └─ Output: 8,000 tokens = $0.120
+   │
+   └─ Per assessment: $0.13
+
+4. STORAGE COSTS (S3 + Database)
+   │
+   ├─ Video Recording Storage (S3):
+   │  ├─ Size: 500MB (90 min @ ~92kbps)
+   │  ├─ Rate: $0.023/GB/month
+   │  ├─ Avg retention: 6 months
+   │  └─ Cost: $0.10
+   │
+   ├─ Database Storage (Code artifacts, metadata, logs):
+   │  ├─ Size: 650KB per assessment
+   │  ├─ Amortized: $200/month for 2,000 assessments
+   │  └─ Cost: $0.10
+   │
+   └─ Per assessment: $0.20
+
+5. NETWORK & BANDWIDTH (Data Transfer)
+   ├─ Video download: 70MB @ $0.0875/GB = $0.006
+   ├─ Report download: 5MB @ $0.0875/GB = $0.0004
+   ├─ API responses: 20MB @ $0.0875/GB = $0.0018
+   └─ Per assessment: $0.01
+
+6. INFRASTRUCTURE (Compute, Monitoring, Security)
+   ├─ Load balancing & compute: $0.05
+   ├─ Monitoring/logging: $0.02
+   ├─ Anti-cheating detection: $0.02
+   ├─ Security scanning: $0.01
+   └─ Per assessment: $0.10
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ TOTAL COGS: $3.08 per assessment                                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+COST BREAKDOWN:
+├─ Modal Sandbox: 6.2% ($0.19)
+├─ Claude API: 80.5% ($2.48)
+├─ Post-Analysis: 4.2% ($0.13)
+├─ Storage: 6.5% ($0.20)
+├─ Bandwidth: 0.3% ($0.01)
+└─ Infrastructure: 3.3% ($0.10)
+
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ GROSS MARGIN ANALYSIS AT DIFFERENT PRICE POINTS                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Price Point    Revenue    COGS     Gross Profit   Gross Margin
+─────────────────────────────────────────────────────────────
+$3.99          $3.99      $3.08    $0.91          22.8%
+$5.96          $5.96      $3.08    $2.88          48.3%
+$7.87          $7.87      $3.08    $4.79          60.9%
+$10.00         $10.00     $3.08    $6.92          69.2%
+$10.27         $10.27     $3.08    $7.19          70.0%  ← 70% MARGIN TARGET
+$12.32         $12.32     $3.08    $9.24          75.0%  ← 75% MARGIN TARGET
+$15.40         $15.40     $3.08    $12.32         80.0%  ← 80% MARGIN TARGET
+$30.80         $30.80     $3.08    $27.72         90.0%  ← 90% MARGIN TARGET
+
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ BREAK-EVEN ANALYSIS (Assuming $50,000/month fixed costs)                    │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+CONTRIBUTION MARGIN CALCULATION:
+─────────────────────────────────
+
+Price Point    Contribution    Break-even      Required
+               Margin/Unit     Volume/Month    Customers
+────────────────────────────────────────────────────────
+$3.99          $0.91           54,945          549 accounts
+$5.96          $2.88           17,361          173 accounts
+$7.87          $4.79           10,438          104 accounts
+$10.00         $6.92           7,225           72 accounts
+$12.32         $9.24           5,409           54 accounts
+$15.40         $12.32          4,061           41 accounts
+
+INTERPRETATION:
+- Current pricing ($3.99-$5.96) requires massive volume
+- At $3.99, need ~550 companies paying for 100 assessments/month
+- At $10.00, need only ~70 companies paying for 100 assessments/month
+- At $12.32, need only ~54 companies (highly achievable)
+
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CURRENT PRICING UNDERVALUATION                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Tier                Current Price    70% Margin     80% Margin    Upside
+────────────────────────────────────────────────────────────────────────────
+Professional        $5.96/each       $10.27         $15.40        +72% to +158%
+Growth              $3.99/each       $10.27         $15.40        +158% to +286%
+Enterprise          ~$4.00/each      $10.27         $15.40        +157% to +285%
+
+KEY INSIGHT: InterviewLM is underpriced by 70-150% vs optimal margins
+
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RECOMMENDED PRICING (75% Gross Margin Target)                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Current Tier            Current Price    Recommended    Margin    Notes
+─────────────────────────────────────────────────────────────────────────────
+Free Trial             Free (14 days)    Free           —         Keep as-is
+Professional           $149/month        $199/month     61%       Entry market
+Growth                 $399/month        $549/month*    64%       Per 100 assess
+Premium (NEW)          —                 $999/month     69%       High volume
+Enterprise             $1,999/month      $2,000+        69-75%    Custom deals
+
+*Alternative: $399/month for 50 assessments (keep price, reduce volume)
+
+ANNUAL PRICING:
+- Apply 17% discount for annual commitment
+- Example: $12/month = $144/year (save $20/year)
+
+OVERAGE PRICING:
+- Professional: $8/assessment (beyond 25)
+- Growth: $5/assessment (beyond 100)
+- Premium: $3/assessment (beyond 150)
+- Enterprise: Custom negotiated rates
+
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ FINANCIAL IMPACT PROJECTIONS                                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+SCENARIO A: CONSERVATIVE PRICING (Current Market)
+──────────────────────────────────────────────────────
+Customer Distribution:
+  200 companies × $149/month (Professional)
+  100 companies × $399/month (Growth)
+  10 companies × $1,999/month (Enterprise)
+
+Monthly Revenue:     $89,690
+Monthly Assessments: 11,500
+COGS (11,500 × $3.08): $35,420
+Gross Profit:        $54,270
+Gross Margin:        60.4%
+
+SCENARIO B: OPTIMIZED PRICING (Recommended)
+──────────────────────────────────────────────────────
+Customer Distribution:
+  200 companies × $199/month (Professional)
+  100 companies × $549/month (Growth)
+  30 companies × $999/month (Premium - NEW)
+  10 companies × $2,500/month (Enterprise)
+
+Monthly Revenue:     $149,670
+Monthly Assessments: 13,500
+COGS (13,500 × $3.08): $41,580
+Gross Profit:        $108,090
+Gross Margin:        72.2%
+
+MONTHLY IMPROVEMENT:  +$53,820 (+99% increase in gross profit)
+ANNUAL IMPROVEMENT:  +$645,840
+
+SCENARIO C: PREMIUM POSITIONING (80% Margin Target)
+──────────────────────────────────────────────────────
+Customer Distribution (35% lower due to higher price):
+  130 companies × $249/month (Professional)
+  65 companies × $749/month (Growth)
+  15 companies × $1,299/month (Premium)
+  8 companies × $3,000/month (Enterprise)
+
+Monthly Revenue:     $124,540
+Monthly Assessments: 10,200
+COGS (10,200 × $3.08): $31,416
+Gross Profit:        $93,124
+Gross Margin:        74.8%
+
+ANALYSIS:
+- Lower total profit than Scenario B
+- Higher per-customer LTV
+- Better sustainability for growth/R&D investment
+- More resilient to pricing wars
+
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ KEY LEVERS FOR COGS REDUCTION                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Opportunity              Current Cost    Target Cost    Savings/Assessment
+──────────────────────────────────────────────────────────────────────────
+1. Claude Token Efficiency
+   (prompt optimization, caching, 50% reduction)
+   $2.48 → $1.24                                       -$1.24 (40% reduction)
+
+2. Internal Evaluation Model
+   (replace Claude for 70% of analysis tasks)
+   $2.48 + $0.13 → $1.00                             -$1.61 (52% reduction)
+
+3. Storage Optimization
+   (compress videos, reduce retention from 6 to 3 mo)
+   $0.20 → $0.10                                      -$0.10 (50% reduction)
+
+4. Infrastructure Consolidation
+   (scale load balancing, monitoring)
+   $0.10 → $0.05                                      -$0.05 (50% reduction)
+
+TOTAL POTENTIAL REDUCTION:  $3.08 → $1.30 (58% reduction possible)
+Improved margin at $10 price: 69.2% → 87.0%
+
+RECOMMENDED PHASED APPROACH:
+  Phase 1 (6 months):  Token optimization → $2.48 to $1.90
+  Phase 2 (12 months): Internal model dev → $1.90 to $1.30
+  Phase 3 (18 months): Infrastructure scale → $1.30 to $1.10
+
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ EXECUTIVE SUMMARY & RECOMMENDATIONS                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+CURRENT STATE:
+✗ At $3.99-$5.96/assessment, you need 173-549 paying accounts to break even
+✗ Gross margins of 22-48% leave little room for sales, marketing, R&D
+✗ Claude API costs dominate (80.5% of COGS)
+✗ Significantly underpriced vs. market demand and margins
+
+IMMEDIATE ACTIONS (0-3 months):
+1. Increase pricing 25-35% across all tiers
+   - Professional: $149 → $199 (+34%)
+   - Growth: $399 → $549 (+38%)
+   - Create Premium at $999/month
+
+2. Implement annual billing discount (17%)
+
+3. Grandfather existing customers at current pricing for 12 months
+
+4. Set minimum price at $10/assessment equivalent
+
+EXPECTED RESULTS:
+- Gross margin: 60% → 72% (+2,000 bps)
+- Monthly gross profit: +$54K on same customer base
+- Break-even customers: 173 → 72 (58% reduction)
+- ARR improvement potential: +$645K annually
+
+MEDIUM-TERM (3-12 months):
+1. Optimize Claude token usage (target: 50% reduction)
+   - Implement prompt caching
+   - Use batch operations for post-assessment analysis
+   - Reduce context window size
+
+2. Develop internal evaluation models
+   - Fine-tune smaller models for specific assessment tasks
+   - Reduce Claude reliance to 30% of current usage
+   - Target COGS reduction: $2.48 → $1.30
+
+3. Expand analysis features to capture more value
+   - Skill gap analysis ($2-5 premium)
+   - Team benchmarking ($3-5 premium)
+   - Learning path recommendations ($2-3 premium)
+
+LONG-TERM (12+ months):
+1. Target 80%+ gross margins through product optimization
+2. Explore usage-based pricing (pay-per-minute or pay-per-interaction)
+3. Develop premium certification tracks (higher margins)
+4. Expand into adjacent markets (bootcamp assessments, skill certifications)
+
+================================================================================

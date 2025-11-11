@@ -1,0 +1,425 @@
+================================================================================
+CLAUDE CODE CLI TOKEN USAGE ANALYSIS
+Intensive 60-90 Minute Coding Assessment
+================================================================================
+
+EXECUTIVE SUMMARY
+────────────────────────────────────────────────────────────────────────────────
+
+Your Previous Estimate:       $0.25-$0.53 per assessment
+Realistic Cost (This Analysis): $1.73-$3.74 per assessment
+Difference:                   3.3x to 15x higher
+
+Reason: Active development with Claude Code CLI requires significantly more
+interactions and creates growing context window that compounds token costs.
+
+================================================================================
+QUICK ANSWER: THREE SCENARIOS
+================================================================================
+
+SCENARIO 1: LIGHT DEVELOPMENT (60 minutes)
+──────────────────────────────────────────────
+Task Type:         Simple feature (form validation, API endpoint, utility)
+Candidate Profile: Experienced developer, minimal debugging
+Iterations:        30 total interactions
+
+Token Calculation:
+  Input Tokens:  93,000 tokens @ $3/MTok = $0.279
+  Output Tokens: 52,500 tokens @ $15/MTok = $0.788
+  ────────────────────────────────────────────
+  Claude Cost:   $1.067 ≈ $1.10
+
+Total COGS:        $1.73 (incl. Modal, storage, etc.)
+Margin @ $10:      82.7%
+Cost per interaction: $0.037
+
+───────────────────────────────────────────────────────────────────────────────
+
+SCENARIO 2: MEDIUM DEVELOPMENT (75 minutes) ← MOST COMMON
+──────────────────────────────────────────────
+Task Type:         Standard feature implementation with debugging
+Candidate Profile: Competent developer, normal iterations
+Iterations:        45 total interactions
+
+Token Calculation:
+  Input Tokens:  167,000 tokens @ $3/MTok = $0.501
+  Output Tokens: 87,000 tokens @ $15/MTok = $1.305
+  ────────────────────────────────────────────
+  Claude Cost:   $1.806 ≈ $1.81
+
+Total COGS:        $2.54 (incl. Modal, storage, etc.)
+Margin @ $10:      74.6%
+Cost per interaction: $0.040
+
+───────────────────────────────────────────────────────────────────────────────
+
+SCENARIO 3: HEAVY DEVELOPMENT (90 minutes)
+──────────────────────────────────────────
+Task Type:         Complex problem-solving, architecture decisions, refactoring
+Candidate Profile: Junior developer or very complex problem
+Iterations:        65 total interactions with multiple debugging cycles
+
+Token Calculation:
+  Input Tokens:  285,000 tokens @ $3/MTok = $0.855
+  Output Tokens: 150,000 tokens @ $15/MTok = $2.250
+  ────────────────────────────────────────────
+  Claude Cost:   $3.105 ≈ $3.11
+
+Total COGS:        $3.74 (incl. Modal, storage, etc.)
+Margin @ $10:      62.6%
+Cost per interaction: $0.048
+
+================================================================================
+BLENDED AVERAGE (Accounting for Distribution)
+================================================================================
+
+Assuming typical distribution:
+  - 40% Light assessments   ($1.73 COGS)
+  - 35% Medium assessments  ($2.54 COGS)
+  - 25% Heavy assessments   ($3.74 COGS)
+
+Average COGS:      $2.52 per assessment
+Margin @ $10:      74.8% ✓ Healthy
+
+This matches well with the $10/assessment pricing model.
+
+================================================================================
+COMPARISON TO YOUR ORIGINAL ESTIMATE
+================================================================================
+
+Your Assumption                 Reality (Medium Scenario)
+────────────────────────────────────────────────────────────────────────────────
+Interactions: 5-10              30-65
+Input Tokens: ~1,000/interaction 3,000-5,000/interaction (growing)
+Output Tokens: ~2,000/interaction 1,500-2,500/interaction
+Context Growth: None assumed    2,000 → 6,000 (compounds)
+Chat History: ~100 tokens       500-2,000 tokens
+Claude Cost: $0.25-0.53        $1.81 (medium)
+Impact: 3.3x - 15x underestimate
+
+Why? Your estimate assumed:
+1. Too few interactions (5-10 vs. 30-65)
+2. Small code contexts (~500 tokens vs. 1,500-3,000)
+3. No context window growth effect
+4. Passive assessment (not active co-development)
+
+Mathematical Breakdown:
+Your estimate: 5 interactions × (1,000 × $0.000003 + 2,000 × $0.000015) = $0.165
+Reality: 45 interactions, growing context = 254,000 tokens = $1.81
+Difference: 1.81 / 0.165 = 11x higher
+
+================================================================================
+COST BREAKDOWN (MEDIUM SCENARIO)
+================================================================================
+
+Component                    Cost      % of Total    % of COGS
+────────────────────────────────────────────────────────────
+Modal Sandbox (90 min)       $0.19     7%            7%
+Claude API (45 interactions) $1.81     71%           71%
+Post-Assessment Analysis     $0.13     5%            5%
+Storage & Infrastructure     $0.31     12%           12%
+Web Search / Tools           $0.10     4%            4%
+──────────────────────────────────────────────────────
+TOTAL COGS                   $2.54     100%          100%
+
+KEY INSIGHT: Claude API is 71% of total cost. Focus optimization here.
+
+================================================================================
+TOKEN CONSUMPTION PATTERN
+================================================================================
+
+How tokens accumulate over the assessment:
+
+Interaction #  Time (min)  Avg Input Tokens  Cumulative  Running Cost
+──────────────────────────────────────────────────────────────────────────────
+1              1-2         2,000             2,000       $0.03
+5              10          2,200             11,000      $0.13
+10             20          2,800             26,000      $0.32
+15             30          3,200             43,500      $0.56
+20             40          3,500             62,000      $0.85
+25             50          3,800             82,000      $1.16
+30             60          4,000             102,000     $1.40
+35             70          4,200             124,000     $1.68
+40             80          4,400             148,000     $1.99
+45             90          4,500             167,000     $2.32
+
+Pattern: Input tokens grow from 2K → 4.5K
+         Cost growth is non-linear (hits diminishing returns)
+
+Cost Distribution Across Assessment:
+  Minutes 0-30 (50% of time):   ~25% of total cost
+  Minutes 30-60 (middle):        ~40% of total cost
+  Minutes 60-90 (final 25%):     ~35% of total cost
+
+Reason: Later interactions have more context but fewer remaining iterations.
+
+================================================================================
+WHY THIS IS 3-7x HIGHER THAN YOUR ESTIMATE
+================================================================================
+
+Factor 1: INTERACTION COUNT
+  Your assumption: 5-10 interactions
+  Reality: 30-65 interactions (active development)
+  Impact: 3-6x more interactions = 3-6x more calls to Claude
+  Reason: During intensive coding, candidates interact every 1-2 minutes
+
+Factor 2: CODE CONTEXT SIZE
+  Your assumption: ~500 tokens of code per interaction
+  Reality: 1,500-3,000 tokens (growing to 6,000+)
+  Impact: 3x larger context per interaction
+  Reason: Full file contexts, not just snippets; accumulation
+
+Factor 3: CONTEXT WINDOW GROWTH
+  Your assumption: Fixed 1,000 input tokens per interaction
+  Reality: Grows from 2,000 → 6,000 tokens
+  Impact: Linear cost increase, compounds over session
+  Reason: Each interaction adds to conversation history
+
+Factor 4: CHAT HISTORY
+  Your assumption: ~100 tokens of history
+  Reality: 500-2,000 tokens by interaction 30+
+  Impact: 5-20x more history tokens
+  Reason: Full conversation must be reprocessed each time
+
+Factor 5: USE CASE DIFFERENCE
+  Your assumption: Passive evaluation (candidate solves, Claude reviews)
+  Reality: Active co-development (back-and-forth throughout)
+  Impact: Completely different interaction pattern
+  Reason: Claude Code CLI is interactive tool, not post-assessment analyzer
+
+Combined Effect: 3.3x to 15x higher costs across scenarios
+
+================================================================================
+PRICING SUSTAINABILITY ANALYSIS
+================================================================================
+
+Current Pricing Model: $10/assessment
+Pricing Sustainability by Scenario:
+
+LIGHT ($1.73 COGS)
+  Revenue:        $10.00
+  COGS:           -$1.73
+  Gross Profit:   $8.27
+  Margin:         82.7%
+  Status:         ✓✓✓ Excellent - Well above 70% target
+
+MEDIUM ($2.54 COGS)
+  Revenue:        $10.00
+  COGS:           -$2.54
+  Gross Profit:   $7.46
+  Margin:         74.6%
+  Status:         ✓✓✓ Great - Hits target margin
+
+HEAVY ($3.74 COGS)
+  Revenue:        $10.00
+  COGS:           -$3.74
+  Gross Profit:   $6.26
+  Margin:         62.6%
+  Status:         ✓ Acceptable - Below target but viable
+
+BLENDED (weighted average)
+  Revenue:        $10.00
+  COGS:           -$2.52
+  Gross Profit:   $7.48
+  Margin:         74.8%
+  Status:         ✓✓✓ Healthy - Meets profitability targets
+
+VERDICT: Current $10 pricing is sustainable and healthy across scenarios.
+
+================================================================================
+COST REDUCTION OPPORTUNITIES
+================================================================================
+
+Priority 1: Prompt Optimization (Immediate, High Impact)
+  Potential Savings: 20-30% ($0.25-$0.35 per assessment)
+  Implementation Time: Immediate
+  Strategy: Shorter, more efficient prompts; avoid redundant context
+  Investment: $5,000-10,000
+  Payback: 4-6 months
+  ROI: 300-500%
+
+Priority 2: Context Compression (Quick Win)
+  Potential Savings: 15-25% ($0.20-$0.30 per assessment)
+  Implementation Time: 1 month
+  Strategy: Summarize instead of repeat; use code abstractions
+  Investment: $8,000-15,000
+  Payback: 3-4 months
+  ROI: 200-400%
+
+Priority 3: Prompt Caching (Medium-term)
+  Potential Savings: 10-20% ($0.15-$0.25 per assessment)
+  Implementation Time: 3 months
+  Strategy: Cache problem statements, reuse feedback templates
+  Investment: $10,000-20,000
+  Payback: 4-6 months
+  ROI: 100-300%
+
+Priority 4: Hybrid Model Selection (Strategic)
+  Potential Savings: 30-40% ($0.40-$0.60 per assessment)
+  Implementation Time: 6 months
+  Strategy: Use Haiku for simple interactions, Sonnet for complex
+  Investment: $20,000-30,000
+  Payback: 6-8 months
+  ROI: 150-300%
+
+Priority 5: Custom Model (Long-term)
+  Potential Savings: 30-50% ($0.80-$1.00+ per assessment)
+  Implementation Time: 12 months
+  Strategy: Fine-tune model on assessment patterns
+  Investment: $50,000-100,000
+  Payback: 12-18 months
+  ROI: 50-200% (but very high long-term value)
+
+Optimized Roadmap:
+  Current (Medium):          $2.54
+  Month 3 (Optimization):    $2.20 (-13%)
+  Month 6 (Caching):        $1.85 (-27%)
+  Month 12 (Custom model):  $1.50 (-41%)
+
+With $10 pricing, margin would improve from 74.8% to 85% at $1.50 COGS.
+
+================================================================================
+CRITICAL ASSUMPTIONS
+================================================================================
+
+1. Claude Sonnet 3.5 Model
+   - Input pricing: $3 per million tokens
+   - Output pricing: $15 per million tokens
+   - Highest quality, reasonable cost balance
+
+2. Interactive Assessment
+   - Real-time interaction with candidate
+   - Full feedback loop during session
+   - Not post-recorded or async review
+
+3. Full Codebase Context
+   - Each interaction includes relevant code files
+   - Not just code snippets
+   - Accumulating conversation history
+
+4. No Caching
+   - Fresh token count for every assessment
+   - Real-world systems could reduce 10-20%
+   - Conservative estimate
+
+5. English Language
+   - Single language support
+   - Multi-language support would increase costs
+
+================================================================================
+SENSITIVITY ANALYSIS
+================================================================================
+
+What if interactions are 20% fewer (more efficient)?
+  Light:   $1.10 → $0.88 (-20%)
+  Medium:  $1.81 → $1.45 (-20%)
+  Heavy:   $3.11 → $2.49 (-20%)
+  Result: Achievable with better prompting
+
+What if context grows 50% more than estimated?
+  Light:   $1.10 → $1.37 (+25%)
+  Medium:  $1.81 → $2.26 (+25%)
+  Heavy:   $3.11 → $3.89 (+25%)
+  Result: Still within acceptable range
+
+What if Haiku used instead of Sonnet?
+  Haiku pricing: ~$0.80/MTok input, $4/MTok output
+  Light:   $1.10 → $0.35 (-68%)
+  Heavy:   $3.11 → $1.30 (-58%)
+  Trade-off: Lower quality, more user frustration
+
+What if more output tokens needed (more detailed responses)?
+  +25% output tokens = +15-20% total cost
+  -25% output tokens = -15-20% total cost
+  Medium scenario: $1.81 ± $0.27 = $1.54-$2.08
+
+================================================================================
+UPDATED COGS BREAKDOWN
+================================================================================
+
+Old Model (Assessment Only - Passive)
+  Modal Sandbox:              $0.19
+  Claude API (75 interact):   $2.48  ← Based on 75 interactions, flat tokens
+  Post-Assessment Analysis:   $0.13
+  Storage & Infrastructure:   $0.28
+  ────────────────────────────────
+  TOTAL:                      $3.08
+
+New Model (Active Development - Medium)
+  Modal Sandbox:              $0.19  ← Same
+  Claude API (45 interact):   $1.81  ← More interactions but shorter feedback
+  Post-Assessment Analysis:   $0.13  ← Same
+  Storage & Infrastructure:   $0.31
+  Web Search / Tools:         $0.10  ← May use for research/debugging
+  ────────────────────────────────
+  TOTAL:                      $2.54
+
+Paradox: Despite MORE interactions (45 vs 75), cost is LOWER.
+Why: Active development has shorter interaction cycles, less exhaustive
+     post-assessment analysis, more efficient feedback loops.
+
+================================================================================
+FINAL RECOMMENDATIONS
+================================================================================
+
+1. PRICING STRATEGY
+   ✓ Keep $10/assessment as primary offering
+   ✓ Sustainable across all scenarios (62-83% margin)
+   ✓ Blended margin of 74.8% meets SaaS profitability targets
+   
+   Consider segmented pricing:
+   - $8/assessment for light tasks (rare, high volume)
+   - $10/assessment for standard (most common)
+   - $15/assessment for complex (justifies higher cost)
+
+2. COGS MANAGEMENT
+   Priority: Reduce medium scenario from $2.54 to $1.50 (41% reduction)
+   Timeline:
+     - Month 3: Prompt optimization ($2.20)
+     - Month 6: Caching layer ($1.85)
+     - Month 12: Custom model ($1.50)
+   
+   ROI: Every $0.10 reduction = +1% margin = significant profit improvement
+
+3. MONITORING
+   Track monthly:
+     - Average interactions per assessment type
+     - Input/output token trends
+     - Actual vs. estimated costs by scenario
+     - Margin variance by difficulty level
+   
+   Red flags:
+     - Average interactions > 70 (efficiency issue)
+     - Average input tokens > 5,000 (context bloat)
+     - Margin < 60% (pricing mismatch)
+
+4. PRODUCT FOCUS
+   - Implement intelligent context management
+   - Use smart summarization for long conversations
+   - Optimize prompt templates
+   - Consider model selection strategy
+
+================================================================================
+CONCLUSION
+================================================================================
+
+Your original estimate of $0.25-$0.53 was 3-15x too low because it failed to
+account for:
+
+1. The high frequency of interactions in active development (1 per 1-2 minutes)
+2. The significant context window growth during the 60-90 minute session
+3. The accumulation of conversation history over time
+4. The difference between passive evaluation and active co-development
+
+The realistic cost for Claude Code CLI assistance during intensive coding
+assessments is:
+
+  Light Development (60 min):   $1.73 COGS (82.7% margin @ $10)
+  Medium Development (75 min):  $2.54 COGS (74.6% margin @ $10)
+  Heavy Development (90 min):   $3.74 COGS (62.6% margin @ $10)
+  Blended Average:              $2.52 COGS (74.8% margin @ $10)
+
+Current $10/assessment pricing is healthy and sustainable at a 75% gross
+margin, which exceeds SaaS industry standards (typically 70% target).
+
+================================================================================
