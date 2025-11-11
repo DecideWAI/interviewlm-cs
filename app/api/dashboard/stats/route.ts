@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import {
+  calculatePipelineFunnel,
+  generatePriorityActions,
+} from "@/lib/dashboard-utils";
 
 /**
  * GET /api/dashboard/stats
@@ -139,6 +143,29 @@ export async function GET() {
       ? completedCandidates.length / startedCandidates.length
       : 0;
 
+    // Calculate pipeline funnel from all candidates
+    const pipelineFunnel = calculatePipelineFunnel(
+      allCandidates.map((c) => ({
+        id: c.id,
+        status: c.status,
+        invitedAt: c.invitedAt,
+        startedAt: c.startedAt,
+        completedAt: c.completedAt,
+        createdAt: c.invitedAt, // Using invitedAt as createdAt proxy
+      }))
+    );
+
+    // Generate priority actions from all candidates
+    const priorityActions = generatePriorityActions(
+      allCandidates.map((c) => ({
+        id: c.id,
+        status: c.status,
+        completedAt: c.completedAt,
+        startedAt: c.startedAt,
+        invitedAt: c.invitedAt,
+      }))
+    );
+
     return NextResponse.json({
       stats: {
         activeAssessments,
@@ -148,6 +175,8 @@ export async function GET() {
         completionRate,
         avgScore: avgOverallScore > 0 ? parseFloat(avgOverallScore.toFixed(1)) : null,
       },
+      pipelineFunnel,
+      priorityActions,
       recentCandidates: recentCandidates.map((c) => ({
         id: c.id,
         name: c.name,
