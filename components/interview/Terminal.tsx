@@ -27,6 +27,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const connectionStatusRef = useRef<"connected" | "disconnected" | "connecting">("connecting");
     const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting">("connecting");
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const reconnectAttemptsRef = useRef<number>(0);
+    const MAX_RECONNECT_ATTEMPTS = 5;
 
     // Helper to update connection status in both ref and state
     const updateConnectionStatus = (status: "connected" | "disconnected" | "connecting") => {
@@ -112,6 +114,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
         eventSource.onopen = () => {
           updateConnectionStatus("connected");
+          // Reset reconnect attempts on successful connection
+          reconnectAttemptsRef.current = 0;
           terminal.writeln("\x1b[32m✓ Terminal connected to backend\x1b[0m");
           terminal.write("\x1b[1;32m$\x1b[0m ");
         };
@@ -134,12 +138,27 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           updateConnectionStatus("disconnected");
           eventSource.close();
 
-          terminal.writeln("\r\n\x1b[31m✗ Terminal disconnected. Reconnecting...\x1b[0m");
+          reconnectAttemptsRef.current++;
 
-          // Auto-reconnect after 3 seconds
-          reconnectTimeoutRef.current = setTimeout(() => {
-            connectSSE();
-          }, 3000);
+          if (reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+            const delay = Math.min(3000 * reconnectAttemptsRef.current, 15000); // Exponential backoff up to 15s
+            terminal.writeln(
+              `\r\n\x1b[31m✗ Connection lost. Retrying (${reconnectAttemptsRef.current}/${MAX_RECONNECT_ATTEMPTS}) in ${delay / 1000}s...\x1b[0m`
+            );
+
+            // Auto-reconnect with exponential backoff
+            reconnectTimeoutRef.current = setTimeout(() => {
+              connectSSE();
+            }, delay);
+          } else {
+            // Max attempts reached - stop reconnecting
+            terminal.writeln(
+              `\r\n\x1b[31m✗ Connection failed after ${MAX_RECONNECT_ATTEMPTS} attempts.\x1b[0m`
+            );
+            terminal.writeln(
+              `\x1b[33mPlease refresh the page to reconnect.\x1b[0m`
+            );
+          }
         };
       } catch (error) {
         console.error("Failed to connect SSE:", error);
