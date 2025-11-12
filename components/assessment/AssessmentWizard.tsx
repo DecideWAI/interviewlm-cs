@@ -9,6 +9,7 @@ import { ChevronLeft, ChevronRight, Check } from "lucide-react";
 
 import { BasicsStep } from "./wizard-steps/BasicsStep";
 import { RoleAndSeniorityStep } from "./wizard-steps/RoleAndSeniorityStep";
+import { TechStackStep } from "./wizard-steps/TechStackStep";
 import { QuestionConfigStep } from "./wizard-steps/QuestionConfigStep";
 import { ReviewAndPreviewStep } from "./wizard-steps/ReviewAndPreviewStep";
 
@@ -24,8 +25,9 @@ interface AssessmentWizardProps {
 const STEPS = [
   { id: 1, title: "Basics", description: "Assessment details" },
   { id: 2, title: "Role & Seniority", description: "Configure target role" },
-  { id: 3, title: "Questions", description: "Customize assessment" },
-  { id: 4, title: "Review", description: "Preview and publish" },
+  { id: 3, title: "Tech Stack", description: "Technology requirements" },
+  { id: 4, title: "Questions", description: "Customize assessment" },
+  { id: 5, title: "Review", description: "Preview and publish" },
 ];
 
 export function AssessmentWizard({
@@ -79,6 +81,18 @@ export function AssessmentWizard({
         break;
 
       case 3:
+        // Tech stack validation (optional but recommended)
+        if (
+          config.techStackRequirements &&
+          config.techStackRequirements.critical.length === 0 &&
+          config.techStackRequirements.required.length === 0
+        ) {
+          // Just a warning, not blocking
+          console.warn("No critical or required technologies specified");
+        }
+        break;
+
+      case 4:
         if (config.useTemplate && !config.templateId) {
           newErrors.template = "Please select a template or switch to custom questions";
         }
@@ -137,6 +151,14 @@ export function AssessmentWizard({
         );
       case 3:
         return (
+          <TechStackStep
+            config={config}
+            onUpdate={updateConfig}
+            errors={errors}
+          />
+        );
+      case 4:
+        return (
           <QuestionConfigStep
             config={config}
             onUpdate={updateConfig}
@@ -144,7 +166,7 @@ export function AssessmentWizard({
             userTier={userTier}
           />
         );
-      case 4:
+      case 5:
         return (
           <ReviewAndPreviewStep
             config={config}
