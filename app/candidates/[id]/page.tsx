@@ -1,12 +1,13 @@
 "use client";
 
-import { use } from "react";
+import { use, useState, useEffect } from "react";
 import Link from "next/link";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { MOCK_CANDIDATES } from "@/lib/mock-analytics-data";
+import { Spinner } from "@/components/ui/spinner";
+import { CandidateProfile } from "@/types/analytics";
 import {
   ArrowLeft,
   Mail,
@@ -34,18 +35,72 @@ interface CandidateDetailPageProps {
 
 export default function CandidateDetailPage({ params }: CandidateDetailPageProps) {
   const { id } = use(params);
+  const [candidate, setCandidate] = useState<CandidateProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // TODO: Fetch from API
-  const candidate = MOCK_CANDIDATES.find((c) => c.id === id);
+  // Fetch candidate details from API
+  useEffect(() => {
+    async function fetchCandidate() {
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await fetch(`/api/candidates/${id}`);
 
-  if (!candidate) {
+        if (!response.ok) {
+          if (response.status === 404) {
+            setError("Candidate not found");
+          } else {
+            throw new Error(`Failed to fetch candidate: ${response.statusText}`);
+          }
+          return;
+        }
+
+        const data = await response.json();
+        setCandidate(data.candidate);
+      } catch (err) {
+        console.error("Error fetching candidate:", err);
+        setError(err instanceof Error ? err.message : "Failed to load candidate");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchCandidate();
+  }, [id]);
+
+  // Loading state
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-center space-y-4">
+            <Spinner size="lg" />
+            <p className="text-text-secondary">Loading candidate details...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // Error or not found state
+  if (error || !candidate) {
     return (
       <DashboardLayout>
         <div className="p-8">
-          <div className="text-center py-12">
-            <p className="text-text-secondary">Candidate not found</p>
+          <div className="text-center py-12 space-y-4">
+            <AlertTriangle className="h-12 w-12 text-error mx-auto" />
+            <h2 className="text-xl font-semibold text-text-primary">
+              {error || "Candidate not found"}
+            </h2>
+            <p className="text-text-secondary">
+              {error === "Candidate not found"
+                ? "The candidate you're looking for doesn't exist or you don't have access to it."
+                : "There was an error loading the candidate details."}
+            </p>
             <Link href="/candidates">
               <Button variant="outline" className="mt-4">
+                <ArrowLeft className="h-4 w-4 mr-2" />
                 Back to Candidates
               </Button>
             </Link>
