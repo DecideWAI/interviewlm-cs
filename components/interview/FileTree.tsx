@@ -56,16 +56,45 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect }: Fi
     }
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    switch (e.key) {
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        handleClick();
+        break;
+      case "ArrowRight":
+        if (isFolder && !isExpanded) {
+          e.preventDefault();
+          setIsExpanded(true);
+        }
+        break;
+      case "ArrowLeft":
+        if (isFolder && isExpanded) {
+          e.preventDefault();
+          setIsExpanded(false);
+        }
+        break;
+    }
+  };
+
   return (
     <div>
       <div
+        role="treeitem"
+        aria-selected={isSelected}
+        aria-expanded={isFolder ? isExpanded : undefined}
+        aria-level={level + 1}
+        aria-label={`${isFolder ? 'Folder' : 'File'}: ${node.name}`}
+        tabIndex={isSelected ? 0 : -1}
         className={cn(
-          "flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-background-hover transition-colors text-sm",
+          "flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-background-hover transition-colors text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
           isSelected && "bg-background-tertiary text-primary",
           !isSelected && "text-text-secondary"
         )}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={handleClick}
+        onKeyDown={handleKeyDown}
       >
         {isFolder ? (
           <>
@@ -161,14 +190,15 @@ export function FileTree({
                 handleFileCreate(fileName, "file");
               }
             }}
-            className="text-text-tertiary hover:text-primary transition-colors"
+            className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
             title="Create new file"
+            aria-label="Create new file"
           >
             <Plus className="h-4 w-4" />
           </button>
         )}
       </div>
-      <div className="py-2">
+      <div role="tree" aria-label="Project files" className="py-2">
         {files.map((node) => (
           <FileTreeNode
             key={node.id}

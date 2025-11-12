@@ -194,7 +194,7 @@ export function CodeEditor({
       {showTestButton && (
         <div className="border-b border-border p-2 flex items-center justify-between bg-background">
           <div className="text-xs text-text-tertiary">
-            {fileName && <span className="font-mono">{fileName}</span>}
+            {fileName && <span className="font-mono" aria-label={`Editing file: ${fileName}`}>{fileName}</span>}
           </div>
           <Button
             onClick={runTests}
@@ -202,6 +202,8 @@ export function CodeEditor({
             size="sm"
             variant="primary"
             className="gap-2"
+            aria-label={isRunningTests ? "Running tests..." : "Run tests for current code"}
+            aria-busy={isRunningTests}
           >
             {isRunningTests ? (
               <>
@@ -227,16 +229,19 @@ export function CodeEditor({
               ? "bg-error/10 border-error/20"
               : "bg-success/10 border-success/20"
           )}
+          role="status"
+          aria-live="polite"
+          aria-label={`Test results: ${testResult.passed} of ${testResult.total} tests passed`}
         >
           <div className="flex items-center gap-2 mb-2">
             {testResult.error || testResult.failed > 0 ? (
               <>
-                <XCircle className="h-4 w-4 text-error" />
+                <XCircle className="h-4 w-4 text-error" aria-hidden="true" />
                 <span className="font-semibold text-error">Tests Failed</span>
               </>
             ) : (
               <>
-                <CheckCircle2 className="h-4 w-4 text-success" />
+                <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
                 <span className="font-semibold text-success">All Tests Passed</span>
               </>
             )}
