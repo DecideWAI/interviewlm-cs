@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import type { GeneratedQuestion } from "@prisma/client";
 import { modalService as modal, questionService as questions, sessionService as sessions } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
 
@@ -20,6 +19,7 @@ export async function POST(
       return NextResponse.json({
         sessionId: "demo",
         candidateId: "demo",
+        totalQuestions: 3, // Include total questions for progress tracking
         question: {
           id: "demo-question",
           title: "Longest Palindromic Substring",
@@ -248,10 +248,15 @@ module.exports = longestPalindrome;`,
     );
     const timeRemaining = Math.max(0, timeLimit - elapsedSeconds);
 
+    // Determine total questions for this assessment
+    // Default to 3 questions for adaptive assessments
+    const totalQuestions = 3;
+
     // Return initialization data
     return NextResponse.json({
       sessionId: sessionRecording.id,
       candidateId,
+      totalQuestions, // Include total questions for progress tracking
       question: {
         id: question.id,
         title: question.title,

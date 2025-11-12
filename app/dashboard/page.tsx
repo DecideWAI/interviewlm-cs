@@ -7,10 +7,7 @@ import { KPICard } from "@/components/analytics/KPICard";
 import { PipelineFunnelChart } from "@/components/analytics/PipelineFunnelChart";
 import { PriorityActionsPanel } from "@/components/analytics/PriorityActionsPanel";
 import { CandidateTable } from "@/components/analytics/CandidateTable";
-import {
-  MOCK_PIPELINE_FUNNEL,
-  MOCK_PRIORITY_ACTIONS,
-} from "@/lib/mock-analytics-data";
+import { PipelineFunnel, PriorityAction } from "@/types/analytics";
 import { Button } from "@/components/ui/button";
 import { Plus, TrendingUp, Users, Award, Loader2 } from "lucide-react";
 import Link from "next/link";
@@ -24,6 +21,8 @@ interface DashboardStats {
     completionRate: number;
     avgScore: number | null;
   };
+  pipelineFunnel: PipelineFunnel;
+  priorityActions: PriorityAction[];
   recentCandidates: any[];
 }
 
@@ -80,7 +79,7 @@ export default function DashboardPage() {
     );
   }
 
-  const { stats, recentCandidates } = dashboardData;
+  const { stats, pipelineFunnel, priorityActions, recentCandidates } = dashboardData;
 
   // Map real data to KPI structure
   const primaryKPIs = [
@@ -121,9 +120,6 @@ export default function DashboardPage() {
     },
   ];
 
-  const funnel = MOCK_PIPELINE_FUNNEL; // TODO: Calculate from real data
-  const priorityActions = MOCK_PRIORITY_ACTIONS; // TODO: Generate from real data
-
   return (
     <DashboardLayout>
       <div className="p-8 space-y-8">
@@ -157,7 +153,7 @@ export default function DashboardPage() {
               </div>
               <div className="text-right">
                 <p className="text-2xl font-bold text-text-primary">
-                  {(funnel.overallConversion * 100).toFixed(1)}%
+                  {(pipelineFunnel.overallConversion * 100).toFixed(1)}%
                 </p>
                 <p className="text-xs text-text-tertiary">Overall Conversion</p>
               </div>
@@ -166,7 +162,7 @@ export default function DashboardPage() {
               Pipeline Health
             </h4>
             <p className="text-sm text-text-secondary">
-              8 out of 100 invited candidates are hired
+              {pipelineFunnel.stages[4].count} out of {pipelineFunnel.stages[0].count} invited candidates are hired
             </p>
           </div>
 
@@ -215,7 +211,7 @@ export default function DashboardPage() {
         <div className="grid lg:grid-cols-3 gap-6">
           {/* Pipeline Funnel - 2 columns */}
           <div className="lg:col-span-2 bg-background-secondary border border-border rounded-lg p-6">
-            <PipelineFunnelChart data={funnel} />
+            <PipelineFunnelChart data={pipelineFunnel} />
           </div>
 
           {/* Priority Actions - 1 column */}

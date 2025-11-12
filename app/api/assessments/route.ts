@@ -222,16 +222,16 @@ export async function GET(request: NextRequest) {
     });
 
     // Calculate stats for each assessment
-    const assessmentsWithStats = assessments.map((assessment) => {
+    const assessmentsWithStats = assessments.map((assessment: any) => {
       const candidateCount = assessment._count.candidates;
       const completedCount = assessment.candidates.filter(
-        (c) => c.status === "COMPLETED" || c.status === "EVALUATED"
+        (c: any) => c.status === "COMPLETED" || c.status === "EVALUATED"
       ).length;
       const avgScore = assessment.candidates.length > 0
         ? assessment.candidates
-            .filter((c) => c.overallScore !== null)
-            .reduce((sum, c) => sum + (c.overallScore || 0), 0) /
-          assessment.candidates.filter((c) => c.overallScore !== null).length
+            .filter((c: any) => c.overallScore !== null)
+            .reduce((sum: number, c: any) => sum + (c.overallScore || 0), 0) /
+          assessment.candidates.filter((c: any) => c.overallScore !== null).length
         : null;
 
       return {

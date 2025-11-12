@@ -99,34 +99,34 @@ export async function GET(
 
     // Calculate comprehensive statistics
     const totalCandidates = assessment.candidates.length;
-    const invitedCount = assessment.candidates.filter((c) => c.status === "INVITED").length;
-    const inProgressCount = assessment.candidates.filter((c) => c.status === "IN_PROGRESS").length;
+    const invitedCount = assessment.candidates.filter((c: any) => c.status === "INVITED").length;
+    const inProgressCount = assessment.candidates.filter((c: any) => c.status === "IN_PROGRESS").length;
     const completedCount = assessment.candidates.filter(
-      (c) => c.status === "COMPLETED" || c.status === "EVALUATED"
+      (c: any) => c.status === "COMPLETED" || c.status === "EVALUATED"
     ).length;
 
     const candidatesWithScores = assessment.candidates.filter(
-      (c) => c.overallScore !== null
+      (c: any) => c.overallScore !== null
     );
 
     const avgScore = candidatesWithScores.length > 0
-      ? candidatesWithScores.reduce((sum, c) => sum + (c.overallScore || 0), 0) /
+      ? candidatesWithScores.reduce((sum: number, c: any) => sum + (c.overallScore || 0), 0) /
         candidatesWithScores.length
       : null;
 
     const passThreshold = 70;
     const passedCount = candidatesWithScores.filter(
-      (c) => (c.overallScore || 0) >= passThreshold
+      (c: any) => (c.overallScore || 0) >= passThreshold
     ).length;
     const passRate = candidatesWithScores.length > 0
       ? passedCount / candidatesWithScores.length
       : 0;
 
     const topPerformers = assessment.candidates
-      .filter((c) => c.overallScore !== null)
-      .sort((a, b) => (b.overallScore || 0) - (a.overallScore || 0))
+      .filter((c: any) => c.overallScore !== null)
+      .sort((a: any, b: any) => (b.overallScore || 0) - (a.overallScore || 0))
       .slice(0, 5)
-      .map((c) => ({
+      .map((c: any) => ({
         id: c.id,
         name: c.name,
         email: c.email,
@@ -157,7 +157,7 @@ export async function GET(
         publishedAt: assessment.publishedAt,
         updatedAt: assessment.updatedAt,
       },
-      candidates: assessment.candidates.map((c) => ({
+      candidates: assessment.candidates.map((c: any) => ({
         id: c.id,
         name: c.name,
         email: c.email,

@@ -141,6 +141,7 @@ export interface KPI {
 export interface PipelineFunnel {
   stages: FunnelStage[];
   overallConversion: number; // 0-1
+  avgTimeToHire?: number; // Average days from invite to hire
 }
 
 export interface FunnelStage {
@@ -321,7 +322,7 @@ export interface HiringRecommendation {
  */
 export interface PriorityAction {
   id: string;
-  type: "review_needed" | "stuck_in_stage" | "offer_response" | "schedule_interview";
+  type: "review_needed" | "stuck_in_stage" | "offer_response" | "schedule_interview" | "follow_up";
   severity: "high" | "medium" | "low";
   title: string;
   description: string;

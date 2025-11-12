@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import {
+  calculatePipelineFunnel,
+  generatePriorityActions,
+} from "@/lib/dashboard-utils";
 
 /**
  * GET /api/dashboard/stats
@@ -126,18 +130,41 @@ export async function GET() {
 
     // Calculate average scores
     const avgOverallScore = allCandidates.length > 0
-      ? allCandidates.reduce((sum, c) => sum + (c.overallScore || 0), 0) /
+      ? allCandidates.reduce((sum: number, c: any) => sum + (c.overallScore || 0), 0) /
         allCandidates.length
       : 0;
 
     // Calculate completion rate
-    const startedCandidates = allCandidates.filter((c) => c.startedAt !== null);
+    const startedCandidates = allCandidates.filter((c: any) => c.startedAt !== null);
     const completedCandidates = allCandidates.filter(
-      (c) => c.status === "COMPLETED" || c.status === "EVALUATED"
+      (c: any) => c.status === "COMPLETED" || c.status === "EVALUATED"
     );
     const completionRate = startedCandidates.length > 0
       ? completedCandidates.length / startedCandidates.length
       : 0;
+
+    // Calculate pipeline funnel from all candidates
+    const pipelineFunnel = calculatePipelineFunnel(
+      allCandidates.map((c: any) => ({
+        id: c.id,
+        status: c.status,
+        invitedAt: c.invitedAt,
+        startedAt: c.startedAt,
+        completedAt: c.completedAt,
+        createdAt: c.invitedAt, // Using invitedAt as createdAt proxy
+      }))
+    );
+
+    // Generate priority actions from all candidates
+    const priorityActions = generatePriorityActions(
+      allCandidates.map((c: any) => ({
+        id: c.id,
+        status: c.status,
+        completedAt: c.completedAt,
+        startedAt: c.startedAt,
+        invitedAt: c.invitedAt,
+      }))
+    );
 
     return NextResponse.json({
       stats: {
@@ -148,7 +175,9 @@ export async function GET() {
         completionRate,
         avgScore: avgOverallScore > 0 ? parseFloat(avgOverallScore.toFixed(1)) : null,
       },
-      recentCandidates: recentCandidates.map((c) => ({
+      pipelineFunnel,
+      priorityActions,
+      recentCandidates: recentCandidates.map((c: any) => ({
         id: c.id,
         name: c.name,
         email: c.email,
