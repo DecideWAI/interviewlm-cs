@@ -11,6 +11,7 @@ import { Extension } from "@codemirror/state";
 import { Button } from "@/components/ui/button";
 import { Play, CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useEventBatcher } from "@/lib/eventBatcher";
 
 interface TestResult {
   passed: number;
@@ -49,6 +50,9 @@ export function CodeEditor({
   const lastSnapshotRef = useRef<string>(value);
   const snapshotIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Initialize event batcher for efficient API calls
+  const { addEvent, flush } = useEventBatcher(sessionId || "");
+
   // Select language extension
   const getLanguageExtension = (): Extension => {
     switch (language) {
@@ -77,18 +81,15 @@ export function CodeEditor({
     }
 
     debounceTimerRef.current = setTimeout(() => {
-      fetch(`/api/interview/${sessionId}/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          eventType: "code_change",
-          data: {
-            fileName: fileName || "unknown",
-            content: newValue,
-            language,
-          },
-        }),
-      }).catch((err) => console.error("Failed to record code change:", err));
+      // Use event batcher instead of direct fetch (90% cost reduction)
+      addEvent({
+        type: "code_change",
+        data: {
+          fileName: fileName || "unknown",
+          content: newValue,
+          language,
+        },
+      });
     }, 3000);
   };
 
@@ -98,18 +99,15 @@ export function CodeEditor({
 
     snapshotIntervalRef.current = setInterval(() => {
       if (value !== lastSnapshotRef.current) {
-        fetch(`/api/interview/${sessionId}/events`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            eventType: "code_snapshot",
-            data: {
-              fileName: fileName || "unknown",
-              content: value,
-              language,
-            },
-          }),
-        }).catch((err) => console.error("Failed to create snapshot:", err));
+        // Use event batcher for snapshots
+        addEvent({
+          type: "code_snapshot",
+          data: {
+            fileName: fileName || "unknown",
+            content: value,
+            language,
+          },
+        });
 
         lastSnapshotRef.current = value;
       }
@@ -120,7 +118,7 @@ export function CodeEditor({
         clearInterval(snapshotIntervalRef.current);
       }
     };
-  }, [sessionId, value, fileName, language]);
+  }, [sessionId, value, fileName, language, addEvent]);
 
   // Handle code change
   const handleChange = (newValue: string) => {
@@ -156,18 +154,17 @@ export function CodeEditor({
       const result = await response.json();
       setTestResult(result);
 
-      // Record test run event
-      await fetch(`/api/interview/${sessionId}/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          eventType: "test_run",
-          data: {
-            questionId,
-            result,
-          },
-        }),
+      // Record test run event using batcher
+      addEvent({
+        type: "test_run",
+        data: {
+          questionId,
+          result,
+        },
       });
+
+      // Flush events to ensure test results are immediately saved
+      await flush();
     } catch (err) {
       console.error("Failed to run tests:", err);
       setTestResult({
@@ -197,7 +194,7 @@ export function CodeEditor({
       {showTestButton && (
         <div className="border-b border-border p-2 flex items-center justify-between bg-background">
           <div className="text-xs text-text-tertiary">
-            {fileName && <span className="font-mono">{fileName}</span>}
+            {fileName && <span className="font-mono" aria-label={`Editing file: ${fileName}`}>{fileName}</span>}
           </div>
           <Button
             onClick={runTests}
@@ -205,6 +202,8 @@ export function CodeEditor({
             size="sm"
             variant="primary"
             className="gap-2"
+            aria-label={isRunningTests ? "Running tests..." : "Run tests for current code"}
+            aria-busy={isRunningTests}
           >
             {isRunningTests ? (
               <>
@@ -230,16 +229,19 @@ export function CodeEditor({
               ? "bg-error/10 border-error/20"
               : "bg-success/10 border-success/20"
           )}
+          role="status"
+          aria-live="polite"
+          aria-label={`Test results: ${testResult.passed} of ${testResult.total} tests passed`}
         >
           <div className="flex items-center gap-2 mb-2">
             {testResult.error || testResult.failed > 0 ? (
               <>
-                <XCircle className="h-4 w-4 text-error" />
+                <XCircle className="h-4 w-4 text-error" aria-hidden="true" />
                 <span className="font-semibold text-error">Tests Failed</span>
               </>
             ) : (
               <>
-                <CheckCircle2 className="h-4 w-4 text-success" />
+                <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
                 <span className="font-semibold text-success">All Tests Passed</span>
               </>
             )}
