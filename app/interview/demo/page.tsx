@@ -6,6 +6,9 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, Message } from "@/components/interview/AIChat";
+import { TechStackDisplay } from "@/components/interview/TechStackDisplay";
+import { TechStackRequirements } from "@/types/assessment";
+import { LANGUAGES, FRAMEWORKS, DATABASES, TESTING, TOOLS } from "@/lib/tech-catalog";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(
@@ -77,6 +80,14 @@ console.log(longestPalindrome("babad")); // Expected: "bab" or "aba"
 console.log(longestPalindrome("cbbd"));  // Expected: "bb"
 `;
 
+// Demo tech stack requirements
+const demoTechRequirements: TechStackRequirements = {
+  critical: [LANGUAGES.typescript],
+  required: [],
+  recommended: [TESTING.jest],
+  optional: [],
+};
+
 export default function DemoInterviewPage() {
   const [selectedFile, setSelectedFile] = useState<FileNode>(demoFiles[0]);
   const [code, setCode] = useState(demoCode);
@@ -142,6 +153,11 @@ export default function DemoInterviewPage() {
             </Link>
           </div>
         </div>
+      </div>
+
+      {/* Tech Stack Requirements */}
+      <div className="px-4 py-3 border-b border-border">
+        <TechStackDisplay requirements={demoTechRequirements} />
       </div>
 
       {/* Main Content */}
