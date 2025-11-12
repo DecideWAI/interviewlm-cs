@@ -360,7 +360,12 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div
+        className="flex-1 overflow-y-auto p-4 space-y-4"
+        role="log"
+        aria-live="polite"
+        aria-label="AI conversation messages"
+      >
         {messages.length === 0 ? (
           <div className="h-full flex items-center justify-center">
             <div className="text-center max-w-sm">
@@ -428,6 +433,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                           <button
                             onClick={() => copyToClipboard(message.content, message.id)}
                             className="text-xs text-text-tertiary hover:text-text-primary transition-colors flex items-center gap-1"
+                            aria-label={copiedId === message.id ? "Message copied" : "Copy message to clipboard"}
                           >
                             {copiedId === message.id ? (
                               <>
@@ -442,7 +448,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                             )}
                           </button>
                           {message.tokenUsage && (
-                            <div className="text-xs text-text-muted">
+                            <div className="text-xs text-text-muted" aria-label={`Token usage: ${message.tokenUsage.inputTokens + message.tokenUsage.outputTokens} tokens`}>
                               {message.tokenUsage.inputTokens + message.tokenUsage.outputTokens} tokens
                             </div>
                           )}
@@ -528,16 +534,20 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
             className="resize-none"
             rows={3}
             disabled={isLoading}
+            aria-label="Message input for AI assistant"
+            aria-describedby="input-help-text"
           />
           <Button
             onClick={handleSend}
             disabled={!input.trim() || isLoading}
             className="self-end"
+            aria-label="Send message to AI assistant"
+            aria-busy={isLoading}
           >
             <Send className="h-4 w-4" />
           </Button>
         </div>
-        <p className="text-xs text-text-tertiary mt-2">
+        <p id="input-help-text" className="text-xs text-text-tertiary mt-2">
           Press Enter to send, Shift+Enter for new line
         </p>
       </div>

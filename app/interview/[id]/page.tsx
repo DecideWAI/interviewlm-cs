@@ -752,19 +752,27 @@ export default function InterviewPage() {
           <div className="flex items-center gap-4">
             {/* Test Status */}
             {testResults.total > 0 && (
-              <Badge variant={testResults.passed === testResults.total ? "success" : "default"} className="gap-1">
+              <Badge
+                variant={testResults.passed === testResults.total ? "success" : "default"}
+                className="gap-1"
+                aria-label={`Test results: ${testResults.passed} of ${testResults.total} tests passing`}
+              >
                 {testResults.passed === testResults.total ? (
-                  <CheckCircle2 className="h-3 w-3" />
+                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
                 ) : (
-                  <AlertCircle className="h-3 w-3" />
+                  <AlertCircle className="h-3 w-3" aria-hidden="true" />
                 )}
                 {testResults.passed}/{testResults.total} tests passing
               </Badge>
             )}
 
             {/* Overall Time Remaining */}
-            <div className="flex items-center gap-2 text-sm text-text-tertiary">
-              <Clock className="h-4 w-4" />
+            <div
+              className="flex items-center gap-2 text-sm text-text-tertiary"
+              role="timer"
+              aria-label={`Overall time remaining: ${formatTime(timeRemaining)}`}
+            >
+              <Clock className="h-4 w-4" aria-hidden="true" />
               <span className="font-mono">
                 Overall: {formatTime(timeRemaining)}
               </span>
@@ -773,7 +781,12 @@ export default function InterviewPage() {
 
           <div className="flex items-center gap-3">
             {/* Actions */}
-            <Button size="sm" variant="outline" onClick={handleRunTests}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRunTests}
+              aria-label="Run tests for current code"
+            >
               <Play className="h-4 w-4 mr-2" />
               Run Tests
             </Button>
@@ -784,6 +797,8 @@ export default function InterviewPage() {
               onClick={handleSubmit}
               disabled={isSubmitting || timeRemaining === 0}
               loading={isSubmitting}
+              aria-label={isSubmitting ? "Submitting assessment..." : "Submit assessment and proceed"}
+              aria-busy={isSubmitting}
             >
               {isSubmitting ? "Submitting..." : "Submit Assessment"}
             </Button>
