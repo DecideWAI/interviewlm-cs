@@ -15,6 +15,8 @@ import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading"
 import { resetConversation } from "@/lib/chat-resilience";
 import { useSessionRecovery, useSessionRecoveryDialog, SessionState } from "@/hooks/useSessionRecovery";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useIsMobile } from "@/lib/device-detection";
+import { MobileBlocker } from "@/components/interview/MobileBlocker";
 import { toast } from "sonner";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
@@ -40,6 +42,7 @@ import {
 interface SessionData {
   sessionId: string;
   candidateId: string;
+  totalQuestions?: number; // Total number of questions in assessment
   question: {
     id: string;
     title: string;
@@ -69,6 +72,9 @@ export default function InterviewPage() {
   const params = useParams();
   const router = useRouter();
   const candidateId = params.id as string;
+
+  // Mobile device detection - block mobile devices
+  const { isMobile, isChecking } = useIsMobile();
 
   // Session state
   const [sessionData, setSessionData] = useState<SessionData | null>(null);
@@ -167,6 +173,11 @@ export default function InterviewPage() {
         const data: SessionData = await response.json();
         setSessionData(data);
         setTimeRemaining(data.timeRemaining);
+
+        // Update total questions from API response
+        if (data.totalQuestions) {
+          setTotalQuestions(data.totalQuestions);
+        }
 
         // Set default selected file and load its content
         if (data.files.length > 0) {
@@ -368,6 +379,20 @@ export default function InterviewPage() {
       });
     }
   }, [sessionData, selectedFile, candidateId, code, isOnline]);
+
+  // Mobile check loading
+  if (isChecking) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <Spinner className="mx-auto mb-4" />
+      </div>
+    );
+  }
+
+  // Block mobile devices
+  if (isMobile) {
+    return <MobileBlocker />;
+  }
 
   // Loading state
   if (isInitializing) {
