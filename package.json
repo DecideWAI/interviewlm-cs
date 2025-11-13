@@ -32,7 +32,10 @@
     "docker:test:watch": "./scripts/docker-test.sh interactive",
     "docker:build": "docker build -t interviewlm-app .",
     "docker:up": "docker compose up -d",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "workers": "ts-node workers/index.ts",
+    "workers:interview": "ts-node workers/interview-agent.ts",
+    "workers:evaluation": "ts-node workers/evaluation-agent.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
