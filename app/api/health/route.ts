@@ -1,37 +1,181 @@
-import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma'
+import { NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
+import { getQueuesHealth } from '@/lib/queues';
+import { getIdempotencyManager } from '@/lib/utils/idempotency';
+import { getCircuitBreakerManager } from '@/lib/utils/circuit-breaker';
+
+export const dynamic = 'force-dynamic';
 
 /**
  * Health Check Endpoint
  *
- * Used by Docker health checks and monitoring systems
- * to verify the application is running and can connect to the database.
+ * Comprehensive health monitoring including:
+ * - Database connectivity
+ * - Redis connectivity
+ * - Queue health
+ * - Circuit breaker status
+ *
+ * Used by Docker, Kubernetes, load balancers, and monitoring systems.
  */
 export async function GET() {
+  const startTime = Date.now();
+
   try {
-    // Check database connection
-    await prisma.$queryRaw`SELECT 1`
+    // Perform health checks in parallel
+    const [dbHealth, redisHealth, queueHealth, cbHealth] = await Promise.all([
+      checkDatabase(),
+      checkRedis(),
+      checkQueues(),
+      checkCircuitBreakers(),
+    ]);
+
+    // Determine overall status
+    const allHealthy =
+      dbHealth.healthy &&
+      redisHealth.healthy &&
+      queueHealth.healthy &&
+      cbHealth.healthy;
+
+    const anyDegraded =
+      dbHealth.degraded ||
+      redisHealth.degraded ||
+      queueHealth.degraded ||
+      cbHealth.degraded;
+
+    const overallStatus = allHealthy
+      ? 'healthy'
+      : anyDegraded
+      ? 'degraded'
+      : 'unhealthy';
 
     return NextResponse.json(
       {
-        status: 'healthy',
+        status: overallStatus,
         timestamp: new Date().toISOString(),
-        database: 'connected',
         version: process.env.npm_package_version || '0.1.0',
+        uptime: process.uptime(),
+        latency: Date.now() - startTime,
+        checks: {
+          database: dbHealth,
+          redis: redisHealth,
+          queues: queueHealth,
+          circuitBreakers: cbHealth,
+        },
       },
-      { status: 200 }
-    )
+      { status: overallStatus === 'unhealthy' ? 503 : 200 }
+    );
   } catch (error) {
-    console.error('Health check failed:', error)
+    console.error('Health check failed:', error);
 
     return NextResponse.json(
       {
         status: 'unhealthy',
         timestamp: new Date().toISOString(),
-        database: 'disconnected',
         error: error instanceof Error ? error.message : 'Unknown error',
       },
       { status: 503 }
-    )
+    );
+  }
+}
+
+async function checkDatabase() {
+  const start = Date.now();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    const latency = Date.now() - start;
+
+    return {
+      healthy: latency < 1000,
+      degraded: latency >= 1000,
+      status: latency < 1000 ? 'connected' : 'slow',
+      latency,
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      degraded: false,
+      status: 'disconnected',
+      error: (error as Error).message,
+    };
+  }
+}
+
+async function checkRedis() {
+  const start = Date.now();
+  try {
+    const manager = getIdempotencyManager();
+    await manager.checkIdempotency('health:test');
+    const latency = Date.now() - start;
+
+    return {
+      healthy: latency < 500,
+      degraded: latency >= 500,
+      status: latency < 500 ? 'connected' : 'slow',
+      latency,
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      degraded: false,
+      status: 'disconnected',
+      error: (error as Error).message,
+    };
+  }
+}
+
+async function checkQueues() {
+  try {
+    const health = await getQueuesHealth();
+    const totalFailed = Object.values(health).reduce((sum, q) => sum + q.failed, 0);
+    const paused = Object.entries(health)
+      .filter(([_, q]) => q.isPaused)
+      .map(([name]) => name);
+
+    return {
+      healthy: totalFailed < 100 && paused.length === 0,
+      degraded: totalFailed >= 100 || paused.length > 0,
+      status: paused.length > 0 ? 'paused' : totalFailed >= 100 ? 'degraded' : 'operational',
+      queues: health,
+      failedJobs: totalFailed,
+      pausedQueues: paused,
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      degraded: false,
+      status: 'error',
+      error: (error as Error).message,
+    };
+  }
+}
+
+async function checkCircuitBreakers() {
+  try {
+    const manager = getCircuitBreakerManager();
+    const metrics = manager.getAllMetrics();
+
+    const open = Object.entries(metrics)
+      .filter(([_, m]) => m.state === 'OPEN')
+      .map(([name]) => name);
+
+    const halfOpen = Object.entries(metrics)
+      .filter(([_, m]) => m.state === 'HALF_OPEN')
+      .map(([name]) => name);
+
+    return {
+      healthy: open.length === 0,
+      degraded: halfOpen.length > 0,
+      status: open.length > 0 ? 'open' : halfOpen.length > 0 ? 'half-open' : 'closed',
+      breakers: metrics,
+      openCircuits: open,
+      halfOpenCircuits: halfOpen,
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      degraded: false,
+      status: 'error',
+      error: (error as Error).message,
+    };
   }
 }
