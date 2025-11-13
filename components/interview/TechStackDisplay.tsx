@@ -40,7 +40,7 @@ export function TechStackDisplay({ requirements, className = "" }: TechStackDisp
         </button>
 
         {isExpanded && (
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 space-y-3 max-h-[300px] overflow-y-auto">
             {hasCritical && (
               <div>
                 <div className="flex items-center gap-2 mb-2">

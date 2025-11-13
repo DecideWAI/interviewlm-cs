@@ -7,6 +7,7 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, AIChatHandle, Message } from "@/components/interview/AIChat";
+import { ProblemPanel } from "@/components/interview/ProblemPanel";
 import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
 import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
@@ -36,6 +37,8 @@ import {
   MessageSquare,
   Code2,
   Terminal as TerminalIcon,
+  BookOpen,
+  FileCode,
 } from "lucide-react";
 
 // Session initialization data interface
@@ -88,6 +91,14 @@ export default function InterviewPage() {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [leftSidebarTab, setLeftSidebarTab] = useState<"problem" | "files">("problem");
+  const [panelSizes, setPanelSizes] = useState<{
+    horizontal: number[];
+    vertical: number[];
+  }>({
+    horizontal: [25, 48, 27], // Default: Sidebar, Editor+Terminal, Chat
+    vertical: [60, 40], // Default: Editor, Terminal
+  });
 
   // Question progression state
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -121,6 +132,43 @@ export default function InterviewPage() {
 
   // Offline detection for better error handling
   const { isOnline, wasOffline, resetWasOffline } = useOnlineStatus();
+
+  // Load UI preferences from localStorage
+  useEffect(() => {
+    const savedTab = localStorage.getItem(`interview-sidebar-tab-${candidateId}`);
+    if (savedTab === "problem" || savedTab === "files") {
+      setLeftSidebarTab(savedTab);
+    }
+
+    const savedPanelSizes = localStorage.getItem(`interview-panel-sizes-${candidateId}-v2`);
+    if (savedPanelSizes) {
+      try {
+        const parsed = JSON.parse(savedPanelSizes);
+        setPanelSizes(parsed);
+      } catch (e) {
+        console.error("Failed to parse panel sizes:", e);
+      }
+    }
+  }, [candidateId]);
+
+  // Save sidebar tab preference
+  const handleTabChange = (tab: "problem" | "files") => {
+    setLeftSidebarTab(tab);
+    localStorage.setItem(`interview-sidebar-tab-${candidateId}`, tab);
+  };
+
+  // Save panel sizes to localStorage
+  const handleHorizontalLayout = (sizes: number[]) => {
+    const newSizes = { ...panelSizes, horizontal: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+  };
+
+  const handleVerticalLayout = (sizes: number[]) => {
+    const newSizes = { ...panelSizes, vertical: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+  };
 
   // Handle session recovery acceptance
   const handleRestoreSession = useCallback(async () => {
@@ -721,15 +769,67 @@ export default function InterviewPage() {
         />
       )}
 
-      {/* Question Progress Header */}
-      <QuestionProgressHeader
-        currentQuestion={currentQuestionIndex + 1}
-        totalQuestions={totalQuestions}
-        difficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
-        timeElapsed={questionTimeElapsed}
-        estimatedTime={sessionData.question.difficulty === "HARD" ? 45 : sessionData.question.difficulty === "MEDIUM" ? 30 : 20}
-        title={sessionData.question.title}
-      />
+      {/* Compact Header */}
+      <div className="border-b border-border bg-background-secondary px-4 py-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-sm font-semibold text-text-primary">
+              Question {currentQuestionIndex + 1}/{totalQuestions}: {sessionData.question.title}
+            </h1>
+
+            <Badge
+              variant={
+                sessionData.question.difficulty === "EASY"
+                  ? "success"
+                  : sessionData.question.difficulty === "MEDIUM"
+                  ? "warning"
+                  : "error"
+              }
+            >
+              {sessionData.question.difficulty}
+            </Badge>
+
+            {/* Test Status */}
+            {testResults.total > 0 && (
+              <Badge
+                variant={testResults.passed === testResults.total ? "success" : "default"}
+                className="gap-1"
+              >
+                {testResults.passed === testResults.total ? (
+                  <CheckCircle2 className="h-3 w-3" />
+                ) : (
+                  <AlertCircle className="h-3 w-3" />
+                )}
+                {testResults.passed}/{testResults.total}
+              </Badge>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Time Elapsed / Time Remaining */}
+            <div className="flex items-center gap-2 text-sm text-text-tertiary">
+              <Clock className="h-4 w-4" />
+              <span className="font-mono">{formatTime(timeRemaining)}</span>
+            </div>
+
+            {/* Actions */}
+            <Button size="sm" variant="outline" onClick={handleRunTests}>
+              <Play className="h-4 w-4 mr-2" />
+              Run Tests
+            </Button>
+
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={handleSubmit}
+              disabled={isSubmitting || timeRemaining === 0}
+              loading={isSubmitting}
+            >
+              {isSubmitting ? "Submitting..." : "Submit Assessment"}
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Offline Warning Banner */}
       {!isOnline && (
@@ -746,94 +846,71 @@ export default function InterviewPage() {
         </div>
       )}
 
-      {/* Actions Bar */}
-      <div className="border-b border-border bg-background-secondary px-6 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {/* Test Status */}
-            {testResults.total > 0 && (
-              <Badge
-                variant={testResults.passed === testResults.total ? "success" : "default"}
-                className="gap-1"
-                aria-label={`Test results: ${testResults.passed} of ${testResults.total} tests passing`}
-              >
-                {testResults.passed === testResults.total ? (
-                  <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                ) : (
-                  <AlertCircle className="h-3 w-3" aria-hidden="true" />
-                )}
-                {testResults.passed}/{testResults.total} tests passing
-              </Badge>
-            )}
-
-            {/* Overall Time Remaining */}
-            <div
-              className="flex items-center gap-2 text-sm text-text-tertiary"
-              role="timer"
-              aria-label={`Overall time remaining: ${formatTime(timeRemaining)}`}
-            >
-              <Clock className="h-4 w-4" aria-hidden="true" />
-              <span className="font-mono">
-                Overall: {formatTime(timeRemaining)}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Actions */}
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handleRunTests}
-              aria-label="Run tests for current code"
-            >
-              <Play className="h-4 w-4 mr-2" />
-              Run Tests
-            </Button>
-
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={handleSubmit}
-              disabled={isSubmitting || timeRemaining === 0}
-              loading={isSubmitting}
-              aria-label={isSubmitting ? "Submitting assessment..." : "Submit assessment and proceed"}
-              aria-busy={isSubmitting}
-            >
-              {isSubmitting ? "Submitting..." : "Submit Assessment"}
-            </Button>
-          </div>
-        </div>
-      </div>
-
       {/* Main Content */}
       <div className="flex-1 overflow-hidden">
-        <PanelGroup direction="horizontal">
-          {/* Left Sidebar - File Tree */}
-          <Panel defaultSize={15} minSize={10} maxSize={30}>
-            <div className="h-full border-r border-border flex flex-col">
-              <div className="border-b border-border px-3 py-2 bg-background-secondary">
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                  Explorer
-                </p>
+        <PanelGroup direction="horizontal" onLayout={handleHorizontalLayout}>
+          {/* Left Sidebar - Problem/Files Tabs */}
+          <Panel defaultSize={panelSizes.horizontal[0]} minSize={20} maxSize={35}>
+            <div className="h-full border-r border-border flex flex-col bg-background">
+              {/* Tabs */}
+              <div className="border-b border-border bg-background-secondary flex">
+                <button
+                  onClick={() => handleTabChange("problem")}
+                  className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                    leftSidebarTab === "problem"
+                      ? "text-primary border-b-2 border-primary bg-background"
+                      : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <BookOpen className="h-4 w-4" />
+                    <span>Problem</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleTabChange("files")}
+                  className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                    leftSidebarTab === "files"
+                      ? "text-primary border-b-2 border-primary bg-background"
+                      : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <FileCode className="h-4 w-4" />
+                    <span>Files</span>
+                  </div>
+                </button>
               </div>
-              <FileTree
-                sessionId={sessionData.sessionId}
-                files={sessionData.files}
-                selectedFile={selectedFile?.path}
-                onFileSelect={handleFileSelect}
-                className="flex-1"
-              />
+
+              {/* Tab Content */}
+              <div className="flex-1 overflow-hidden">
+                {leftSidebarTab === "problem" ? (
+                  <ProblemPanel
+                    title={sessionData.question.title}
+                    description={sessionData.question.description}
+                    difficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
+                    testCases={sessionData.question.testCases}
+                  />
+                ) : (
+                  <FileTree
+                    sessionId={sessionData.sessionId}
+                    files={sessionData.files}
+                    selectedFile={selectedFile?.path}
+                    onFileSelect={handleFileSelect}
+                    className="flex-1"
+                  />
+                )}
+              </div>
             </div>
           </Panel>
 
           <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors" />
 
           {/* Center - Editor and Terminal */}
-          <Panel defaultSize={isAIChatOpen ? 55 : 85} minSize={40}>
-            <PanelGroup direction="vertical">
+          <Panel defaultSize={isAIChatOpen ? panelSizes.horizontal[1] : 73} minSize={40}>
+            <PanelGroup direction="vertical" onLayout={handleVerticalLayout}>
               {/* Editor */}
-              <Panel defaultSize={60} minSize={30}>
+              <Panel defaultSize={panelSizes.vertical[0]} minSize={30}>
                 <div className="h-full flex flex-col border-b border-border">
                   {/* Editor Tabs */}
                   <div className="border-b border-border bg-background-secondary flex items-center px-2">
@@ -846,7 +923,7 @@ export default function InterviewPage() {
                   </div>
 
                   {/* Editor */}
-                  <div className="flex-1">
+                  <div className="flex-1 min-h-0">
                     <CodeEditor
                       sessionId={sessionData.sessionId}
                       questionId={sessionData.question.id}
@@ -862,7 +939,7 @@ export default function InterviewPage() {
               <PanelResizeHandle className="h-1 bg-border hover:bg-primary transition-colors" />
 
               {/* Terminal */}
-              <Panel defaultSize={40} minSize={20}>
+              <Panel defaultSize={panelSizes.vertical[1]} minSize={20}>
                 <div className="h-full flex flex-col">
                   <div className="border-b border-border bg-background-secondary px-3 py-2 flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -877,7 +954,7 @@ export default function InterviewPage() {
                       </Badge>
                     )}
                   </div>
-                  <div className="flex-1 relative">
+                  <div className="flex-1 min-h-0 relative">
                     <Terminal sessionId={sessionData.sessionId} />
 
                     {/* Completion Card Overlay */}
@@ -904,7 +981,7 @@ export default function InterviewPage() {
           {isAIChatOpen && (
             <>
               <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors" />
-              <Panel defaultSize={30} minSize={20} maxSize={50}>
+              <Panel defaultSize={panelSizes.horizontal[2]} minSize={20} maxSize={50}>
                 <div className="h-full border-l border-border">
                   <AIChat
                     ref={aiChatRef}
