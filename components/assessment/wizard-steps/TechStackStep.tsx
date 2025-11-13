@@ -19,7 +19,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import * as Icons from "lucide-react";
 import { LucideIcon } from "lucide-react";
 
@@ -94,19 +94,6 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
 
     setSelectedTech(newTechStack);
     onUpdate({ techStackRequirements: newTechStack });
-  };
-
-  const getPriorityColor = (priority: TechPriority) => {
-    switch (priority) {
-      case "critical":
-        return "text-error";
-      case "required":
-        return "text-warning";
-      case "recommended":
-        return "text-info";
-      case "optional":
-        return "text-success";
-    }
   };
 
   const getPriorityBadge = (priority: TechPriority) => {

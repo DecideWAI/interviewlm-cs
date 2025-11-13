@@ -8,7 +8,7 @@ import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, Message } from "@/components/interview/AIChat";
 import { TechStackDisplay } from "@/components/interview/TechStackDisplay";
 import { TechStackRequirements } from "@/types/assessment";
-import { LANGUAGES, FRAMEWORKS, DATABASES, TESTING, TOOLS } from "@/lib/tech-catalog";
+import { LANGUAGES, TESTING } from "@/lib/tech-catalog";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(

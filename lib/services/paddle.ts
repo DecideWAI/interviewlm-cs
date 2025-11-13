@@ -31,16 +31,6 @@ const createCheckoutSchema = z.object({
   quantity: z.number().int().positive().default(1),
 });
 
-const webhookEventSchema = z.object({
-  event_type: z.string(),
-  event_id: z.string(),
-  event_time: z.string(),
-  alert_id: z.string(),
-  alert_name: z.string(),
-  p_signature: z.string(),
-  // Dynamic fields based on event type
-});
-
 /**
  * Product configuration for credit packages
  */
