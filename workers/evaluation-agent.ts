@@ -27,6 +27,12 @@ import type {
 } from '../lib/types';
 import { DEFAULT_SCORING_WEIGHTS } from '../lib/types';
 import prisma from '../lib/prisma';
+import {
+  getIdempotencyManager,
+  generateEvaluationKey,
+} from '../lib/utils/idempotency';
+import { circuitBreakers } from '../lib/utils/circuit-breaker';
+import { retry, isRetryableError } from '../lib/utils/resilience';
 
 /**
  * Evaluation score for a single dimension
@@ -144,13 +150,42 @@ class EvaluationAgentWorker {
   /**
    * Handle analyze event
    * Performs complete evaluation of an interview session
+   * Uses idempotency to prevent duplicate evaluations
    */
   private async handleAnalyze(data: EvaluationAnalyzeEventData): Promise<void> {
     const { sessionId, candidateId } = data;
 
     console.log(`[Evaluation Agent] Analyzing session ${sessionId} for candidate ${candidateId}`);
 
-    // Fetch full session recording
+    // Idempotency check - prevent duplicate evaluations
+    const idempotencyKey = generateEvaluationKey(sessionId, candidateId);
+    const idempotencyManager = getIdempotencyManager();
+
+    // Check if evaluation already exists
+    const existingEvaluation = await idempotencyManager.getIdempotentResult<EvaluationResult>(
+      idempotencyKey
+    );
+
+    if (existingEvaluation) {
+      console.log(
+        `[Evaluation Agent] Evaluation already exists for session ${sessionId}, skipping`
+      );
+      return;
+    }
+
+    // Acquire lock to prevent concurrent evaluations
+    const lockKey = `eval:${sessionId}`;
+    const lockAcquired = await idempotencyManager.acquireLockWithRetry(lockKey, 600); // 10 min lock
+
+    if (!lockAcquired) {
+      console.warn(
+        `[Evaluation Agent] Failed to acquire lock for session ${sessionId}, evaluation in progress`
+      );
+      return;
+    }
+
+    try {
+      // Fetch full session recording
     const recording = await this.getSessionRecording(sessionId);
 
     if (!recording) {
@@ -204,14 +239,21 @@ class EvaluationAgentWorker {
       biasFlags,
     };
 
-    // Save evaluation to database
-    await this.saveEvaluation(result);
+      // Save evaluation to database
+      await this.saveEvaluation(result);
 
-    console.log(`[Evaluation Agent] Completed evaluation for session ${sessionId}:`, {
-      overallScore: result.overallScore,
-      confidence: result.overallConfidence,
-      biasFlags: result.biasFlags,
-    });
+      // Cache result for idempotency (24 hour TTL)
+      await idempotencyManager.setIdempotentResult(idempotencyKey, result, 86400);
+
+      console.log(`[Evaluation Agent] Completed evaluation for session ${sessionId}:`, {
+        overallScore: result.overallScore,
+        confidence: result.overallConfidence,
+        biasFlags: result.biasFlags,
+      });
+    } finally {
+      // Always release lock
+      await idempotencyManager.releaseLock(lockKey, lockAcquired);
+    }
   }
 
   /**
@@ -437,7 +479,7 @@ class EvaluationAgentWorker {
 
   /**
    * LLM-based code review
-   * Uses Claude to evaluate code quality
+   * Uses Claude to evaluate code quality with circuit breaker and retry
    */
   private async llmCodeReview(recording: SessionRecording): Promise<number> {
     const snapshots = recording.codeSnapshots || [];
@@ -449,26 +491,41 @@ class EvaluationAgentWorker {
       .join('\n\n');
 
     try {
-      const response = await this.client.messages.create({
-        model: AGENT_MODEL_RECOMMENDATIONS.evaluationAgent,
-        max_tokens: 1024,
-        system: `You are a code quality evaluator. Rate the code quality on a scale of 0-100.
+      // Use circuit breaker and retry for Claude API
+      return await retry(
+        async () => {
+          return await circuitBreakers.claude.execute(async () => {
+            const response = await this.client.messages.create({
+              model: AGENT_MODEL_RECOMMENDATIONS.evaluationAgent,
+              max_tokens: 1024,
+              system: `You are a code quality evaluator. Rate the code quality on a scale of 0-100.
 Consider: readability, maintainability, efficiency, best practices, error handling.
 Respond with ONLY a number between 0-100.`,
-        messages: [
-          {
-            role: 'user',
-            content: `Rate this code:\n\n${codeFiles.substring(0, 4000)}`,
-          },
-        ],
-      });
+              messages: [
+                {
+                  role: 'user',
+                  content: `Rate this code:\n\n${codeFiles.substring(0, 4000)}`,
+                },
+              ],
+            });
 
-      const text = response.content[0].type === 'text' ? response.content[0].text : '0';
-      const score = parseInt(text.trim(), 10);
-      return isNaN(score) ? 0 : Math.max(0, Math.min(100, score));
+            const text = response.content[0].type === 'text' ? response.content[0].text : '0';
+            const score = parseInt(text.trim(), 10);
+            return isNaN(score) ? 0 : Math.max(0, Math.min(100, score));
+          });
+        },
+        {
+          maxRetries: 2,
+          initialDelay: 2000,
+          shouldRetry: isRetryableError,
+          onRetry: (error, attempt) => {
+            console.warn(`[Evaluation Agent] LLM review retry ${attempt}:`, error.message);
+          },
+        }
+      );
     } catch (error) {
-      console.error('[Evaluation Agent] LLM code review failed:', error);
-      return 0;
+      console.error('[Evaluation Agent] LLM code review failed after retries:', error);
+      return 0; // Fallback to 0 if all retries fail
     }
   }
 
