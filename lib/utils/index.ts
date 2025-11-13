@@ -40,3 +40,12 @@ export {
   healthCheck,
   type RetryOptions,
 } from './resilience';
+
+// Code Analysis
+export {
+  performStaticAnalysis,
+  analyzeDocumentation,
+  calculateComplexity,
+  type CodeFile,
+  type StaticAnalysisResult,
+} from './code-analysis';
