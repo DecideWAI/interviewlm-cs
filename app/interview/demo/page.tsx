@@ -6,6 +6,9 @@ import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, Message } from "@/components/interview/AIChat";
+import { ProblemPanel } from "@/components/interview/ProblemPanel";
+import { TechStackRequirements } from "@/types/assessment";
+import { LANGUAGES, TESTING } from "@/lib/tech-catalog";
 
 // Dynamic import for Terminal (xterm.js requires client-side only)
 const Terminal = dynamic(
@@ -22,6 +25,8 @@ import {
   Code2,
   Terminal as TerminalIcon,
   Info,
+  FileCode,
+  BookOpen,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -77,9 +82,62 @@ console.log(longestPalindrome("babad")); // Expected: "bab" or "aba"
 console.log(longestPalindrome("cbbd"));  // Expected: "bb"
 `;
 
+// Demo tech stack requirements
+const demoTechRequirements: TechStackRequirements = {
+  critical: [LANGUAGES.typescript],
+  required: [],
+  recommended: [TESTING.jest],
+  optional: [],
+};
+
 export default function DemoInterviewPage() {
   const [selectedFile, setSelectedFile] = useState<FileNode>(demoFiles[0]);
   const [code, setCode] = useState(demoCode);
+  const [leftSidebarTab, setLeftSidebarTab] = useState<"problem" | "files">("problem");
+  const [panelSizes, setPanelSizes] = useState<{
+    horizontal: number[];
+    vertical: number[];
+  }>({
+    horizontal: [25, 48, 27], // Default: Sidebar, Editor+Terminal, Chat
+    vertical: [60, 40], // Default: Editor, Terminal
+  });
+
+  // Load sidebar tab preference and panel sizes from localStorage
+  React.useEffect(() => {
+    const savedTab = localStorage.getItem("demo-sidebar-tab");
+    if (savedTab === "problem" || savedTab === "files") {
+      setLeftSidebarTab(savedTab);
+    }
+
+    const savedPanelSizes = localStorage.getItem("demo-panel-sizes-v2");
+    if (savedPanelSizes) {
+      try {
+        const parsed = JSON.parse(savedPanelSizes);
+        setPanelSizes(parsed);
+      } catch (e) {
+        console.error("Failed to parse panel sizes:", e);
+      }
+    }
+  }, []);
+
+  // Save panel sizes to localStorage
+  const handleHorizontalLayout = (sizes: number[]) => {
+    const newSizes = { ...panelSizes, horizontal: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem("demo-panel-sizes-v2", JSON.stringify(newSizes));
+  };
+
+  const handleVerticalLayout = (sizes: number[]) => {
+    const newSizes = { ...panelSizes, vertical: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem("demo-panel-sizes-v2", JSON.stringify(newSizes));
+  };
+
+  // Save sidebar tab preference
+  const handleTabChange = (tab: "problem" | "files") => {
+    setLeftSidebarTab(tab);
+    localStorage.setItem("demo-sidebar-tab", tab);
+  };
 
   const handleFileSelect = (file: FileNode) => {
     if (file.type === "file") {
@@ -94,10 +152,10 @@ export default function DemoInterviewPage() {
 
   return (
     <div className="h-screen flex flex-col bg-background">
-      {/* Header */}
-      <div className="border-b border-border bg-background-secondary">
-        <div className="px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
+      {/* Compact Header */}
+      <div className="border-b border-border bg-background-secondary px-4 py-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
             <Link href="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft className="h-4 w-4 mr-2" />
@@ -105,29 +163,22 @@ export default function DemoInterviewPage() {
               </Button>
             </Link>
 
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-semibold text-text-primary">
-                  Demo Assessment: Longest Palindrome
-                </h1>
-                <Badge variant="primary" className="gap-1">
-                  <Info className="h-3 w-3" />
-                  Demo Mode
-                </Badge>
-              </div>
-              <p className="text-sm text-text-secondary">
-                Try out the InterviewLM platform
-              </p>
-            </div>
+            <div className="h-4 w-px bg-border" />
+
+            <h1 className="text-sm font-semibold text-text-primary">
+              Demo: Longest Palindrome
+            </h1>
+            <Badge variant="primary" className="gap-1">
+              <Info className="h-3 w-3" />
+              Demo Mode
+            </Badge>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {/* Time (Demo) */}
-            <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-text-tertiary" />
-              <span className="text-sm font-mono text-text-secondary">
-                No time limit
-              </span>
+            <div className="flex items-center gap-2 text-sm text-text-tertiary">
+              <Clock className="h-4 w-4" />
+              <span className="font-mono">No time limit</span>
             </div>
 
             <Button size="sm" variant="outline">
@@ -146,32 +197,85 @@ export default function DemoInterviewPage() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-hidden">
-        <PanelGroup direction="horizontal">
-          {/* Left Sidebar - File Tree */}
-          <Panel defaultSize={15} minSize={10} maxSize={25}>
-            <div className="h-full border-r border-border flex flex-col">
-              <div className="border-b border-border px-3 py-2 bg-background-secondary">
-                <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                  Files
-                </p>
+        <PanelGroup direction="horizontal" onLayout={handleHorizontalLayout}>
+          {/* Left Sidebar - Problem/Files Tabs */}
+          <Panel defaultSize={panelSizes.horizontal[0]} minSize={20} maxSize={35}>
+            <div className="h-full border-r border-border flex flex-col bg-background">
+              {/* Tabs */}
+              <div className="border-b border-border bg-background-secondary flex">
+                <button
+                  onClick={() => handleTabChange("problem")}
+                  className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                    leftSidebarTab === "problem"
+                      ? "text-primary border-b-2 border-primary bg-background"
+                      : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <BookOpen className="h-4 w-4" />
+                    <span>Problem</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleTabChange("files")}
+                  className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                    leftSidebarTab === "files"
+                      ? "text-primary border-b-2 border-primary bg-background"
+                      : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <FileCode className="h-4 w-4" />
+                    <span>Files</span>
+                  </div>
+                </button>
               </div>
-              <FileTree
-                sessionId="demo"
-                files={demoFiles}
-                selectedFile={selectedFile?.path}
-                onFileSelect={handleFileSelect}
-                className="flex-1"
-              />
+
+              {/* Tab Content */}
+              <div className="flex-1 overflow-hidden">
+                {leftSidebarTab === "problem" ? (
+                  <ProblemPanel
+                    title="Longest Palindromic Substring"
+                    description="Given a string s, return the longest palindromic substring in s."
+                    difficulty="medium"
+                    constraints={[
+                      "1 <= s.length <= 1000",
+                      "s consist of only digits and English letters",
+                    ]}
+                    examples={[
+                      {
+                        input: 's = "babad"',
+                        output: '"bab" or "aba"',
+                        explanation:
+                          "Both 'bab' and 'aba' are valid answers.",
+                      },
+                      {
+                        input: 's = "cbbd"',
+                        output: '"bb"',
+                      },
+                    ]}
+                    techStack={demoTechRequirements}
+                  />
+                ) : (
+                  <FileTree
+                    sessionId="demo"
+                    files={demoFiles}
+                    selectedFile={selectedFile?.path}
+                    onFileSelect={handleFileSelect}
+                    className="flex-1"
+                  />
+                )}
+              </div>
             </div>
           </Panel>
 
           <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors" />
 
           {/* Center - Editor and Terminal */}
-          <Panel defaultSize={55} minSize={40}>
-            <PanelGroup direction="vertical">
+          <Panel defaultSize={panelSizes.horizontal[1]} minSize={40}>
+            <PanelGroup direction="vertical" onLayout={handleVerticalLayout}>
               {/* Editor */}
-              <Panel defaultSize={60} minSize={30}>
+              <Panel defaultSize={panelSizes.vertical[0]} minSize={30}>
                 <div className="h-full flex flex-col">
                   {/* Editor Tabs */}
                   <div className="border-b border-border bg-background-secondary flex items-center px-2">
@@ -184,7 +288,7 @@ export default function DemoInterviewPage() {
                   </div>
 
                   {/* Editor */}
-                  <div className="flex-1">
+                  <div className="flex-1 min-h-0">
                     <CodeEditor
                       sessionId="demo"
                       questionId="demo-question"
@@ -200,7 +304,7 @@ export default function DemoInterviewPage() {
               <PanelResizeHandle className="h-1 bg-border hover:bg-primary transition-colors" />
 
               {/* Terminal */}
-              <Panel defaultSize={40} minSize={20}>
+              <Panel defaultSize={panelSizes.vertical[1]} minSize={20}>
                 <div className="h-full flex flex-col">
                   <div className="border-b border-border bg-background-secondary px-3 py-2 flex items-center gap-2">
                     <TerminalIcon className="h-4 w-4 text-success" />
@@ -211,7 +315,7 @@ export default function DemoInterviewPage() {
                       Demo
                     </Badge>
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 min-h-0">
                     <Terminal sessionId="demo" onCommand={handleTerminalCommand} />
                   </div>
                 </div>
@@ -222,7 +326,7 @@ export default function DemoInterviewPage() {
           <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors" />
 
           {/* Right Sidebar - AI Chat */}
-          <Panel defaultSize={30} minSize={25} maxSize={45}>
+          <Panel defaultSize={panelSizes.horizontal[2]} minSize={25} maxSize={45}>
             <div className="h-full border-l border-border">
               <AIChat
                 sessionId="demo"
