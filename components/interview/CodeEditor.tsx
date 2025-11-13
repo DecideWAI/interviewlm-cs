@@ -189,7 +189,7 @@ export function CodeEditor({
   }, []);
 
   return (
-    <div className="h-full w-full flex flex-col bg-[#1e1e1e]">
+    <div className="h-full w-full flex flex-col bg-[#1e1e1e] overflow-hidden">
       {/* Test Button Header */}
       {showTestButton && (
         <div className="border-b border-border p-2 flex items-center justify-between bg-background">
@@ -268,11 +268,12 @@ export function CodeEditor({
       )}
 
       {/* Editor */}
-      <div className="flex-1 overflow-auto">
-        <CodeMirror
-          value={value}
-          height={height}
-          theme={vscodeDark}
+      <div className="flex-1 min-h-0 relative">
+        <div className="absolute inset-0 overflow-auto">
+          <CodeMirror
+            value={value}
+            height="auto"
+            theme={vscodeDark}
           extensions={extensions}
           onChange={handleChange}
           readOnly={readOnly}
@@ -302,6 +303,7 @@ export function CodeEditor({
           }}
           className="text-sm"
         />
+        </div>
       </div>
     </div>
   );
