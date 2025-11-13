@@ -107,11 +107,15 @@ async function checkRedis() {
     await manager.checkIdempotency('health:test');
     const latency = Date.now() - start;
 
+    // Also check Modal file storage (Redis-backed)
+    const modalConnectionOk = await testModalFileStorage();
+
     return {
-      healthy: latency < 500,
-      degraded: latency >= 500,
-      status: latency < 500 ? 'connected' : 'slow',
+      healthy: latency < 500 && modalConnectionOk,
+      degraded: latency >= 500 || !modalConnectionOk,
+      status: latency < 500 && modalConnectionOk ? 'connected' : 'slow',
       latency,
+      modalFileStorage: modalConnectionOk ? 'operational' : 'unavailable',
     };
   } catch (error) {
     return {
@@ -120,6 +124,15 @@ async function checkRedis() {
       status: 'disconnected',
       error: (error as Error).message,
     };
+  }
+}
+
+async function testModalFileStorage(): Promise<boolean> {
+  try {
+    const { testConnection } = await import('@/lib/services/modal-redis');
+    return await testConnection();
+  } catch {
+    return false;
   }
 }
 

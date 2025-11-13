@@ -14,13 +14,15 @@ export type {
 } from "./claude";
 
 // Modal AI Sandbox Service
-// Using simplified version for MVP (modal-simple.ts)
-// Switch back to ./modal when full volume/terminal support is needed
-export * as modalService from "./modal-simple";
+// Using Redis-backed implementation with real file operations
+// Full volume management and file persistence via Redis
+export * as modalService from "./modal-redis";
 export type {
   TestResult,
   ExecutionResult,
-} from "./modal-simple";
+  FileNode,
+  SandboxInstance,
+} from "./modal-redis";
 
 // S3 Storage Service
 export * as s3Service from "./s3";
@@ -48,7 +50,14 @@ export {
 export {
   executeCode,
   testConnection as testModalConnection,
-} from "./modal-simple";
+  writeFile,
+  readFile,
+  getFileSystem,
+  createVolume,
+  createSandbox,
+  listActiveSandboxes,
+  runCommand,
+} from "./modal-redis";
 
 export {
   uploadSessionRecording,
