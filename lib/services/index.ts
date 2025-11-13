@@ -14,12 +14,13 @@ export type {
 } from "./claude";
 
 // Modal AI Sandbox Service
-export * as modalService from "./modal";
+// Using simplified version for MVP (modal-simple.ts)
+// Switch back to ./modal when full volume/terminal support is needed
+export * as modalService from "./modal-simple";
 export type {
   TestResult,
   ExecutionResult,
-  SandboxInstance,
-} from "./modal";
+} from "./modal-simple";
 
 // S3 Storage Service
 export * as s3Service from "./s3";
@@ -46,10 +47,8 @@ export {
 
 export {
   executeCode,
-  createSandbox,
-  destroySandbox,
-  getTerminalConnectionUrl,
-} from "./modal";
+  testConnection as testModalConnection,
+} from "./modal-simple";
 
 export {
   uploadSessionRecording,

@@ -285,8 +285,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     }));
 
     return (
-      <div className={`h-full w-full bg-background ${className}`}>
-        <div ref={terminalRef} className="h-full w-full p-2" />
+      <div className={`h-full w-full bg-background relative ${className}`}>
+        <div className="absolute inset-0 p-2">
+          <div ref={terminalRef} className="h-full w-full" />
+        </div>
       </div>
     );
   }

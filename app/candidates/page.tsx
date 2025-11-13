@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 import { CandidateTable } from "@/components/analytics/CandidateTable";
-import { MOCK_CANDIDATES } from "@/lib/mock-analytics-data";
 import {
   Plus,
   Search,
@@ -29,9 +29,34 @@ export default function CandidatesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"table" | "cards">("table");
   const [showFilters, setShowFilters] = useState(false);
+  const [candidates, setCandidates] = useState<CandidateProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // TODO: Fetch from API
-  const candidates = MOCK_CANDIDATES;
+  // Fetch candidates from API
+  useEffect(() => {
+    async function fetchCandidates() {
+      try {
+        setLoading(true);
+        setError(null);
+        const response = await fetch("/api/candidates");
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch candidates: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        setCandidates(data.candidates || []);
+      } catch (err) {
+        console.error("Error fetching candidates:", err);
+        setError(err instanceof Error ? err.message : "Failed to load candidates");
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchCandidates();
+  }, []);
 
   // Smart filters
   const needsAttentionCount = candidates.filter(
@@ -45,6 +70,41 @@ export default function CandidatesPage() {
   const stuckCandidatesCount = candidates.filter(
     (c) => c.status === "assessment_in_progress"
   ).length;
+
+  // Loading state
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-center space-y-4">
+            <Spinner size="lg" />
+            <p className="text-text-secondary">Loading candidates...</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center min-h-[60vh]">
+          <div className="text-center space-y-4 max-w-md">
+            <AlertTriangle className="h-12 w-12 text-error mx-auto" />
+            <h2 className="text-xl font-semibold text-text-primary">Failed to Load Candidates</h2>
+            <p className="text-text-secondary">{error}</p>
+            <Button
+              variant="primary"
+              onClick={() => window.location.reload()}
+            >
+              Retry
+            </Button>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

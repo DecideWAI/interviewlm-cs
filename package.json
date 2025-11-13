@@ -23,6 +23,7 @@
     "test:integration": "jest __tests__/integration",
     "test:integration:docker": "jest __tests__/integration/database --runInBand --forceExit",
     "test:integration:watch": "jest __tests__/integration/database --watch --runInBand",
+    "test:integrations": "ts-node scripts/test-integrations.ts",
     "db:seed": "npx prisma db seed",
     "docker:dev": "./scripts/docker-dev.sh start",
     "docker:dev:stop": "./scripts/docker-dev.sh stop",
