@@ -4,9 +4,6 @@
  * Verifies all external service integrations are working
  */
 
-import { paddleService } from "../lib/services/paddle";
-import { emailService } from "../lib/services/email";
-
 // ANSI color codes
 const colors = {
   reset: "\x1b[0m",

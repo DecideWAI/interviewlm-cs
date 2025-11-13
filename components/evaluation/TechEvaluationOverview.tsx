@@ -15,22 +15,6 @@ export function TechEvaluationOverview({
   evaluation,
   className = "",
 }: TechEvaluationOverviewProps) {
-  const getGradeColor = (grade: string) => {
-    switch (grade) {
-      case "A":
-        return "text-success";
-      case "B":
-        return "text-info";
-      case "C":
-        return "text-warning";
-      case "D":
-      case "F":
-        return "text-error";
-      default:
-        return "text-text-secondary";
-    }
-  };
-
   // Group tech scores by priority
   const criticalTech = evaluation.technologyScores.filter((t) => t.priority === "critical");
   const requiredTech = evaluation.technologyScores.filter((t) => t.priority === "required");
