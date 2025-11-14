@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -42,9 +42,33 @@ export default function SettingsPage() {
   const [activeSection, setActiveSection] = useState<SettingsSection>("account");
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [settingsData, setSettingsData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Mock current user tier
-  const currentTier = "medium";
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const fetchSettings = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch("/api/user/settings");
+      if (!response.ok) {
+        throw new Error("Failed to fetch settings");
+      }
+      const data = await response.json();
+      setSettingsData(data);
+      setError(null);
+    } catch (err) {
+      console.error("Error fetching settings:", err);
+      setError(err instanceof Error ? err.message : "Failed to load settings");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const currentTier = settingsData?.organization?.tier || "small";
   const tierLimits = TIER_LIMITS[currentTier];
   const tierInfo = TIER_INFO[currentTier];
 
@@ -111,14 +135,36 @@ export default function SettingsPage() {
 
           {/* Main Content */}
           <div className="lg:col-span-3 space-y-6">
-            {activeSection === "account" && <AccountSection />}
-            {activeSection === "billing" && <BillingSection currentTier={currentTier} tierLimits={tierLimits} tierInfo={tierInfo} />}
-            {activeSection === "assessment" && <AssessmentDefaultsSection />}
-            {activeSection === "scoring" && <ScoringSection />}
-            {activeSection === "notifications" && <NotificationsSection />}
-            {activeSection === "team" && <TeamSection tierLimits={tierLimits} />}
-            {activeSection === "integrations" && <IntegrationsSection />}
-            {activeSection === "security" && <SecuritySection />}
+            {loading && (
+              <div className="flex items-center justify-center py-12">
+                <div className="text-center">
+                  <div className="h-8 w-8 mx-auto mb-2 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  <p className="text-sm text-text-tertiary">Loading settings...</p>
+                </div>
+              </div>
+            )}
+
+            {error && !loading && (
+              <Card className="bg-error/10 border-error/30 p-6">
+                <div className="flex items-center gap-2 text-error">
+                  <AlertCircle className="h-5 w-5" />
+                  <p className="text-sm font-medium">{error}</p>
+                </div>
+              </Card>
+            )}
+
+            {!loading && !error && settingsData && (
+              <>
+                {activeSection === "account" && <AccountSection user={settingsData.user} organization={settingsData.organization} />}
+                {activeSection === "billing" && <BillingSection currentTier={currentTier} tierLimits={tierLimits} tierInfo={tierInfo} />}
+                {activeSection === "assessment" && <AssessmentDefaultsSection settings={settingsData.settings} />}
+                {activeSection === "scoring" && <ScoringSection settings={settingsData.settings} />}
+                {activeSection === "notifications" && <NotificationsSection settings={settingsData.settings} />}
+                {activeSection === "team" && <TeamSection tierLimits={tierLimits} teamMembers={settingsData.teamMembers} />}
+                {activeSection === "integrations" && <IntegrationsSection />}
+                {activeSection === "security" && <SecuritySection />}
+              </>
+            )}
 
             {/* Save Bar */}
             <div className="sticky bottom-4 bg-background-secondary border border-border rounded-lg p-4 flex items-center justify-between shadow-lg">
@@ -150,7 +196,7 @@ export default function SettingsPage() {
 }
 
 // Account Section
-function AccountSection() {
+function AccountSection({ user, organization }: { user: any; organization: any }) {
   return (
     <div className="space-y-6">
       <Card className="bg-background-secondary border-border p-6">
@@ -160,27 +206,27 @@ function AccountSection() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="text-sm text-text-secondary mb-2 block">First Name</label>
-              <Input defaultValue="Alex" />
+              <Input defaultValue={user?.firstName || ""} />
             </div>
             <div>
               <label className="text-sm text-text-secondary mb-2 block">Last Name</label>
-              <Input defaultValue="Johnson" />
+              <Input defaultValue={user?.lastName || ""} />
             </div>
           </div>
 
           <div>
             <label className="text-sm text-text-secondary mb-2 block">Email</label>
-            <Input type="email" defaultValue="alex.johnson@company.com" />
+            <Input type="email" defaultValue={user?.email || ""} />
           </div>
 
           <div>
             <label className="text-sm text-text-secondary mb-2 block">Company Name</label>
-            <Input defaultValue="TechCorp Inc" />
+            <Input defaultValue={organization?.name || ""} />
           </div>
 
           <div>
             <label className="text-sm text-text-secondary mb-2 block">Job Title</label>
-            <Input defaultValue="Head of Engineering" />
+            <Input defaultValue={user?.role || ""} />
           </div>
         </div>
       </Card>
@@ -319,7 +365,8 @@ function BillingSection({ currentTier, tierLimits, tierInfo }: any) {
 }
 
 // Assessment Defaults Section
-function AssessmentDefaultsSection() {
+function AssessmentDefaultsSection({ settings }: { settings: any }) {
+  const defaults = settings?.defaults || {};
   return (
     <div className="space-y-6">
       <Card className="bg-background-secondary border-border p-6">
@@ -331,14 +378,14 @@ function AssessmentDefaultsSection() {
               <label className="text-sm text-text-secondary mb-2 block">
                 Default Duration (Junior)
               </label>
-              <Input type="number" defaultValue="40" />
+              <Input type="number" defaultValue={defaults.durationJunior || 40} />
               <p className="text-xs text-text-muted mt-1">minutes</p>
             </div>
             <div>
               <label className="text-sm text-text-secondary mb-2 block">
                 Default Duration (Mid)
               </label>
-              <Input type="number" defaultValue="60" />
+              <Input type="number" defaultValue={defaults.durationMid || 60} />
               <p className="text-xs text-text-muted mt-1">minutes</p>
             </div>
           </div>
@@ -348,21 +395,21 @@ function AssessmentDefaultsSection() {
               <label className="text-sm text-text-secondary mb-2 block">
                 Default Duration (Senior)
               </label>
-              <Input type="number" defaultValue="75" />
+              <Input type="number" defaultValue={defaults.durationSenior || 75} />
               <p className="text-xs text-text-muted mt-1">minutes</p>
             </div>
             <div>
               <label className="text-sm text-text-secondary mb-2 block">
                 Default Duration (Staff+)
               </label>
-              <Input type="number" defaultValue="90" />
+              <Input type="number" defaultValue={defaults.durationStaff || 90} />
               <p className="text-xs text-text-muted mt-1">minutes</p>
             </div>
           </div>
 
           <div className="pt-4 border-t border-border">
             <label className="flex items-center gap-2">
-              <input type="checkbox" defaultChecked className="rounded" />
+              <input type="checkbox" defaultChecked={defaults.enableAI !== false} className="rounded" />
               <span className="text-sm text-text-primary">Enable AI assistance by default</span>
             </label>
             <p className="text-xs text-text-muted ml-6">Candidates can use Claude Code during assessments</p>
@@ -370,7 +417,7 @@ function AssessmentDefaultsSection() {
 
           <div>
             <label className="flex items-center gap-2">
-              <input type="checkbox" defaultChecked className="rounded" />
+              <input type="checkbox" defaultChecked={defaults.enableAIMonitoring !== false} className="rounded" />
               <span className="text-sm text-text-primary">Enable AI monitoring by default</span>
             </label>
             <p className="text-xs text-text-muted ml-6">Track AI usage patterns and collaboration quality</p>
@@ -378,7 +425,7 @@ function AssessmentDefaultsSection() {
 
           <div>
             <label className="flex items-center gap-2">
-              <input type="checkbox" defaultChecked className="rounded" />
+              <input type="checkbox" defaultChecked={defaults.autoSave !== false} className="rounded" />
               <span className="text-sm text-text-primary">Auto-save assessment drafts</span>
             </label>
             <p className="text-xs text-text-muted ml-6">Automatically save assessment progress every 30 seconds</p>
@@ -431,7 +478,8 @@ function AssessmentDefaultsSection() {
 }
 
 // Scoring Section
-function ScoringSection() {
+function ScoringSection({ settings }: { settings: any }) {
+  const scoring = settings?.scoring || {};
   return (
     <div className="space-y-6">
       <Card className="bg-background-secondary border-border p-6">
@@ -444,13 +492,13 @@ function ScoringSection() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm text-text-secondary">Technical Score</label>
-              <span className="text-sm font-medium text-text-primary">40%</span>
+              <span className="text-sm font-medium text-text-primary">{scoring.technicalWeight || 40}%</span>
             </div>
             <input
               type="range"
               min="0"
               max="100"
-              defaultValue="40"
+              defaultValue={scoring.technicalWeight || 40}
               className="w-full"
             />
           </div>
@@ -458,13 +506,13 @@ function ScoringSection() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm text-text-secondary">AI Collaboration</label>
-              <span className="text-sm font-medium text-text-primary">20%</span>
+              <span className="text-sm font-medium text-text-primary">{scoring.aiCollaborationWeight || 20}%</span>
             </div>
             <input
               type="range"
               min="0"
               max="100"
-              defaultValue="20"
+              defaultValue={scoring.aiCollaborationWeight || 20}
               className="w-full"
             />
           </div>
@@ -472,13 +520,13 @@ function ScoringSection() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm text-text-secondary">Code Quality</label>
-              <span className="text-sm font-medium text-text-primary">25%</span>
+              <span className="text-sm font-medium text-text-primary">{scoring.codeQualityWeight || 25}%</span>
             </div>
             <input
               type="range"
               min="0"
               max="100"
-              defaultValue="25"
+              defaultValue={scoring.codeQualityWeight || 25}
               className="w-full"
             />
           </div>
@@ -486,13 +534,13 @@ function ScoringSection() {
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm text-text-secondary">Problem Solving</label>
-              <span className="text-sm font-medium text-text-primary">15%</span>
+              <span className="text-sm font-medium text-text-primary">{scoring.problemSolvingWeight || 15}%</span>
             </div>
             <input
               type="range"
               min="0"
               max="100"
-              defaultValue="15"
+              defaultValue={scoring.problemSolvingWeight || 15}
               className="w-full"
             />
           </div>
@@ -514,7 +562,7 @@ function ScoringSection() {
             <label className="text-sm text-text-secondary mb-2 block">
               Minimum Passing Score
             </label>
-            <Input type="number" defaultValue="70" />
+            <Input type="number" defaultValue={scoring.passingScore || 70} />
             <p className="text-xs text-text-muted mt-1">Candidates must score at least this to pass (0-100)</p>
           </div>
 
@@ -570,7 +618,8 @@ function ScoringSection() {
 }
 
 // Notifications Section
-function NotificationsSection() {
+function NotificationsSection({ settings }: { settings: any }) {
+  const notifications = settings?.notifications || {};
   return (
     <div className="space-y-6">
       <Card className="bg-background-secondary border-border p-6">
@@ -582,7 +631,7 @@ function NotificationsSection() {
               <p className="text-sm text-text-primary">Candidate completed assessment</p>
               <p className="text-xs text-text-muted">Instant notification when a candidate finishes</p>
             </div>
-            <input type="checkbox" defaultChecked className="rounded" />
+            <input type="checkbox" defaultChecked={notifications.assessmentCompleted !== false} className="rounded" />
           </label>
 
           <label className="flex items-center justify-between">
@@ -590,7 +639,7 @@ function NotificationsSection() {
               <p className="text-sm text-text-primary">Strong candidate detected</p>
               <p className="text-xs text-text-muted">Alert when predicted score is &gt;85</p>
             </div>
-            <input type="checkbox" defaultChecked className="rounded" />
+            <input type="checkbox" defaultChecked={notifications.strongCandidate !== false} className="rounded" />
           </label>
 
           <label className="flex items-center justify-between">
@@ -598,7 +647,7 @@ function NotificationsSection() {
               <p className="text-sm text-text-primary">Assessment pending review (&gt;48 hours)</p>
               <p className="text-xs text-text-muted">Reminder for unreviewed assessments</p>
             </div>
-            <input type="checkbox" defaultChecked className="rounded" />
+            <input type="checkbox" defaultChecked={notifications.pendingReview !== false} className="rounded" />
           </label>
 
           <label className="flex items-center justify-between">
@@ -606,7 +655,7 @@ function NotificationsSection() {
               <p className="text-sm text-text-primary">Credits running low</p>
               <p className="text-xs text-text-muted">Alert when fewer than 10 credits remain</p>
             </div>
-            <input type="checkbox" defaultChecked className="rounded" />
+            <input type="checkbox" defaultChecked={notifications.creditsLow !== false} className="rounded" />
           </label>
 
           <label className="flex items-center justify-between">
@@ -614,7 +663,7 @@ function NotificationsSection() {
               <p className="text-sm text-text-primary">Weekly analytics digest</p>
               <p className="text-xs text-text-muted">Summary of key metrics every Monday</p>
             </div>
-            <input type="checkbox" defaultChecked className="rounded" />
+            <input type="checkbox" defaultChecked={notifications.weeklyDigest !== false} className="rounded" />
           </label>
         </div>
       </Card>
@@ -682,14 +731,8 @@ function NotificationsSection() {
 }
 
 // Team Section
-function TeamSection({ tierLimits }: any) {
-  const mockTeamMembers = [
-    { id: "1", name: "Alex Johnson", email: "alex@company.com", role: "Admin", status: "Active" },
-    { id: "2", name: "Sarah Chen", email: "sarah@company.com", role: "Hiring Manager", status: "Active" },
-    { id: "3", name: "Mike Williams", email: "mike@company.com", role: "HR", status: "Active" },
-  ];
-
-  const currentMembers = mockTeamMembers.length;
+function TeamSection({ tierLimits, teamMembers }: any) {
+  const currentMembers = teamMembers?.length || 0;
   const maxMembers = tierLimits.maxTeamMembers;
   const canAddMore = typeof maxMembers === "string" || currentMembers < maxMembers;
 
@@ -704,7 +747,7 @@ function TeamSection({ tierLimits }: any) {
         </div>
 
         <div className="space-y-3 mb-4">
-          {mockTeamMembers.map((member) => (
+          {teamMembers && teamMembers.length > 0 ? teamMembers.map((member: any) => (
             <div key={member.id} className="flex items-center justify-between p-3 bg-background-tertiary rounded-lg">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
@@ -722,7 +765,11 @@ function TeamSection({ tierLimits }: any) {
                 <Button variant="ghost" size="sm">Edit</Button>
               </div>
             </div>
-          ))}
+          )) : (
+            <div className="text-center py-8 text-text-tertiary">
+              <p className="text-sm">No team members yet</p>
+            </div>
+          )}
         </div>
 
         {canAddMore ? (

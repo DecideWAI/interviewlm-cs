@@ -1,29 +1,27 @@
 /**
- * Modal Service with Volume-Based File Storage
+ * Modal Service with Redis-Backed File Storage
  *
- * Production-ready implementation using Modal Volumes API:
- * - Modal Volumes for persistent file storage
- * - Redis for operation tracking and metadata caching
- * - HTTP endpoint for code execution
- * - Full terminal and sandbox management
+ * This is a production-ready implementation that bridges modal-simple.ts and modal.ts:
+ * - Uses HTTP endpoint for code execution (like modal-simple.ts)
+ * - Implements real file operations using Redis (preparation for modal.ts)
+ * - Maintains full API compatibility
+ * - Easy migration to real Modal volumes when ready
  *
  * Architecture:
- * - Files: Stored in Modal Volumes (persistent across sessions)
- * - Operation tracking: Redis (who changed what, when)
- * - Sandbox metadata: Redis (quick lookups)
- * - Code execution: Modal HTTP endpoint
+ * - Files stored in Redis hash: `modal:volume:{volumeId}:file:{filePath}` -> content
+ * - File metadata in Redis hash: `modal:volume:{volumeId}:meta:{filePath}` -> {size, mtime, type}
+ * - File tree in Redis sorted set: `modal:volume:{volumeId}:tree` -> [filePaths]
+ * - Volume info in Redis hash: `modal:volumes` -> {volumeId: metadata}
  */
 
 import { z } from "zod";
 import { Redis } from "ioredis";
 
 // Configuration
-const MODAL_API_URL = process.env.MODAL_API_URL || "https://api.modal.com/v1";
 const MODAL_EXECUTE_URL = process.env.MODAL_EXECUTE_URL;
-const MODAL_VOLUME_NAMESPACE = process.env.MODAL_VOLUME_NAMESPACE || "interviewlm";
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
-// Redis client singleton (for metadata only)
+// Redis client singleton
 let redisClient: Redis | null = null;
 
 function getRedisClient(): Redis {
@@ -41,23 +39,6 @@ function getRedisClient(): Redis {
     });
   }
   return redisClient;
-}
-
-/**
- * Get Modal authentication headers
- */
-function getAuthHeaders(): Record<string, string> {
-  const tokenId = process.env.MODAL_TOKEN_ID;
-  const tokenSecret = process.env.MODAL_TOKEN_SECRET;
-
-  if (!tokenId || !tokenSecret) {
-    throw new Error("MODAL_TOKEN_ID and MODAL_TOKEN_SECRET must be set");
-  }
-
-  return {
-    "Authorization": `Bearer ${tokenId}:${tokenSecret}`,
-    "Content-Type": "application/json",
-  };
 }
 
 // Validation schemas
@@ -110,16 +91,12 @@ export interface FileNode {
 }
 
 /**
- * Sandbox instance metadata
+ * File metadata
  */
-export interface SandboxInstance {
-  id: string;
-  sessionId: string;
-  volumeId: string;
-  status: "initializing" | "ready" | "running" | "stopped";
-  createdAt: Date;
-  language: string;
-  wsUrl?: string;
+interface FileMetadata {
+  size: number;
+  mtime: string; // ISO timestamp
+  type: "file" | "directory";
 }
 
 // ============================================================================
@@ -127,80 +104,38 @@ export interface SandboxInstance {
 // ============================================================================
 
 /**
- * Generate volume name for a session
- */
-function getVolumeName(sessionId: string): string {
-  return `interview-${sessionId}`;
-}
-
-/**
- * Create a new Modal volume for an interview session
+ * Create a new volume for an interview session
  *
- * @param sessionId - Unique session identifier
+ * @param sessionId - Session identifier
  * @returns Volume metadata
  */
 export async function createVolume(sessionId: string): Promise<{ id: string }> {
-  try {
-    const volumeName = getVolumeName(sessionId);
+  const redis = getRedisClient();
+  const volumeId = `vol-${sessionId}`;
 
-    const response = await fetch(`${MODAL_API_URL}/volumes`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        name: volumeName,
-        namespace: MODAL_VOLUME_NAMESPACE,
-      }),
-    });
+  // Store volume metadata
+  await redis.hset("modal:volumes", volumeId, JSON.stringify({
+    id: volumeId,
+    sessionId,
+    createdAt: new Date().toISOString(),
+    size: 0,
+  }));
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to create volume (${response.status}): ${errorText}`);
-    }
-
-    const data = await response.json();
-
-    // Track volume creation in Redis for quick lookups
-    const redis = getRedisClient();
-    await redis.hset("modal:volumes", data.id, JSON.stringify({
-      id: data.id,
-      sessionId,
-      volumeName,
-      createdAt: new Date().toISOString(),
-    }));
-
-    console.log(`[Modal] Created volume: ${volumeName} (${data.id})`);
-    return { id: data.id };
-
-  } catch (error) {
-    console.error("Error creating Modal volume:", error);
-    throw new Error(
-      `Volume creation failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
+  console.log(`[Modal Redis] Created volume: ${volumeId}`);
+  return { id: volumeId };
 }
 
 /**
- * List all volumes in the namespace
+ * List all volumes
  *
  * @returns Array of volume metadata
  */
 export async function listVolumes(): Promise<any[]> {
+  const redis = getRedisClient();
+
   try {
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes?namespace=${MODAL_VOLUME_NAMESPACE}`,
-      {
-        method: "GET",
-        headers: getAuthHeaders(),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to list volumes (${response.status})`);
-    }
-
-    const data = await response.json();
-    return data.volumes || [];
-
+    const volumes = await redis.hgetall("modal:volumes");
+    return Object.values(volumes).map(v => JSON.parse(v));
   } catch (error) {
     console.error("Error listing volumes:", error);
     return [];
@@ -208,35 +143,36 @@ export async function listVolumes(): Promise<any[]> {
 }
 
 /**
- * Test Modal API connection
+ * Test Modal connection (tests both Redis and Modal HTTP endpoint)
  */
 export async function testConnection(): Promise<boolean> {
   try {
-    const response = await fetch(`${MODAL_API_URL}/health`, {
-      method: "GET",
-      headers: getAuthHeaders(),
-    });
-
-    // Also test Redis connection
     const redis = getRedisClient();
     await redis.ping();
+    console.log("[Modal Redis] Redis connection OK");
 
-    console.log(`[Modal] Connection test: ${response.ok ? "OK" : "FAILED"}`);
-    return response.ok;
+    // Also test Modal HTTP endpoint if configured
+    if (MODAL_EXECUTE_URL) {
+      const healthUrl = MODAL_EXECUTE_URL.replace('-execute', '-health');
+      const response = await fetch(healthUrl, { method: "GET" });
+      console.log(`[Modal Redis] Modal HTTP endpoint: ${response.ok ? "OK" : "UNAVAILABLE"}`);
+    }
+
+    return true;
   } catch (error) {
-    console.error("Modal API connection test failed:", error);
+    console.error("Modal connection test failed:", error);
     return false;
   }
 }
 
 // ============================================================================
-// FILE SYSTEM OPERATIONS (Modal Volumes API)
+// FILE SYSTEM OPERATIONS
 // ============================================================================
 
 /**
- * Write a file to the Modal volume
+ * Write a file to the volume
  *
- * @param volumeId - Volume identifier (format: "vol-{sessionId}")
+ * @param volumeId - Volume identifier
  * @param filePath - Path to file within workspace
  * @param content - File content
  */
@@ -245,47 +181,33 @@ export async function writeFile(
   filePath: string,
   content: string
 ): Promise<void> {
-  try {
-    // Extract session ID from volumeId
-    const sessionId = volumeId.replace("vol-", "");
-    const volumeName = getVolumeName(sessionId);
+  const redis = getRedisClient();
 
-    // Normalize path (remove leading slashes)
+  try {
+    // Normalize path (remove leading slashes, ensure consistency)
     const normalizedPath = filePath.replace(/^\/+/, "");
 
-    // Write to Modal Volume
-    const encodedPath = encodeURIComponent(normalizedPath);
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes/${MODAL_VOLUME_NAMESPACE}/${volumeName}/files/${encodedPath}`,
-      {
-        method: "PUT",
-        headers: {
-          ...getAuthHeaders(),
-          "Content-Type": "text/plain",
-        },
-        body: content,
-      }
-    );
+    // Store file content
+    const contentKey = `modal:volume:${volumeId}:file:${normalizedPath}`;
+    await redis.set(contentKey, content);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to write file (${response.status}): ${errorText}`);
-    }
+    // Store file metadata
+    const metaKey = `modal:volume:${volumeId}:meta:${normalizedPath}`;
+    const metadata: FileMetadata = {
+      size: Buffer.byteLength(content, "utf8"),
+      mtime: new Date().toISOString(),
+      type: "file",
+    };
+    await redis.set(metaKey, JSON.stringify(metadata));
 
-    // Track operation in Redis
-    const redis = getRedisClient();
-    await redis.lpush(
-      `modal:ops:${volumeId}`,
-      JSON.stringify({
-        type: "write",
-        path: normalizedPath,
-        size: Buffer.byteLength(content, "utf8"),
-        timestamp: new Date().toISOString(),
-      })
-    );
-    await redis.ltrim(`modal:ops:${volumeId}`, 0, 99); // Keep last 100 operations
+    // Add to file tree (sorted set by path)
+    const treeKey = `modal:volume:${volumeId}:tree`;
+    await redis.zadd(treeKey, Date.now(), normalizedPath);
 
-    console.log(`[Modal] Wrote file: ${normalizedPath} (${Buffer.byteLength(content, "utf8")} bytes)`);
+    // Update directory entries
+    await updateDirectoryTree(volumeId, normalizedPath);
+
+    console.log(`[Modal Redis] Wrote file: ${normalizedPath} (${metadata.size} bytes)`);
   } catch (error) {
     console.error(`Error writing file ${filePath}:`, error);
     throw new Error(
@@ -295,9 +217,9 @@ export async function writeFile(
 }
 
 /**
- * Read a file from the Modal volume
+ * Read a file from the volume
  *
- * @param volumeId - Volume identifier (format: "vol-{sessionId}")
+ * @param volumeId - Volume identifier
  * @param filePath - Path to file within workspace
  * @returns File content
  */
@@ -305,46 +227,21 @@ export async function readFile(
   volumeId: string,
   filePath: string
 ): Promise<string> {
-  try {
-    // Extract session ID from volumeId
-    const sessionId = volumeId.replace("vol-", "");
-    const volumeName = getVolumeName(sessionId);
+  const redis = getRedisClient();
 
+  try {
     // Normalize path
     const normalizedPath = filePath.replace(/^\/+/, "");
 
-    // Read from Modal Volume
-    const encodedPath = encodeURIComponent(normalizedPath);
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes/${MODAL_VOLUME_NAMESPACE}/${volumeName}/files/${encodedPath}`,
-      {
-        method: "GET",
-        headers: getAuthHeaders(),
-      }
-    );
+    const contentKey = `modal:volume:${volumeId}:file:${normalizedPath}`;
+    const content = await redis.get(contentKey);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to read file (${response.status}): ${errorText}`);
+    if (content === null) {
+      throw new Error(`File not found: ${filePath}`);
     }
 
-    const content = await response.text();
-
-    // Track operation in Redis
-    const redis = getRedisClient();
-    await redis.lpush(
-      `modal:ops:${volumeId}`,
-      JSON.stringify({
-        type: "read",
-        path: normalizedPath,
-        timestamp: new Date().toISOString(),
-      })
-    );
-    await redis.ltrim(`modal:ops:${volumeId}`, 0, 99);
-
-    console.log(`[Modal] Read file: ${normalizedPath} (${Buffer.byteLength(content, "utf8")} bytes)`);
+    console.log(`[Modal Redis] Read file: ${normalizedPath} (${Buffer.byteLength(content, "utf8")} bytes)`);
     return content;
-
   } catch (error) {
     console.error(`Error reading file ${filePath}:`, error);
     throw new Error(
@@ -354,7 +251,7 @@ export async function readFile(
 }
 
 /**
- * Get file tree structure from the Modal volume
+ * Get file tree structure from the volume
  *
  * @param sessionId - Session identifier (not volumeId for backward compatibility)
  * @param rootPath - Root path to list (defaults to "/")
@@ -364,32 +261,122 @@ export async function getFileSystem(
   sessionId: string,
   rootPath: string = "/"
 ): Promise<FileNode[]> {
+  const redis = getRedisClient();
+  const volumeId = `vol-${sessionId}`;
+
   try {
-    const volumeName = getVolumeName(sessionId);
-    const encodedPath = encodeURIComponent(rootPath);
+    const treeKey = `modal:volume:${volumeId}:tree`;
 
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes/${MODAL_VOLUME_NAMESPACE}/${volumeName}/tree?path=${encodedPath}`,
-      {
-        method: "GET",
-        headers: getAuthHeaders(),
-      }
-    );
+    // Get all file paths
+    const filePaths = await redis.zrange(treeKey, 0, -1);
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to get file tree (${response.status}): ${errorText}`);
+    if (filePaths.length === 0) {
+      return [];
     }
 
-    const data = await response.json();
-    console.log(`[Modal] Listed file tree for ${volumeName}`);
-    return data.tree || [];
+    // Build tree structure
+    const tree: FileNode[] = [];
+    const directories = new Map<string, FileNode>();
 
+    for (const path of filePaths) {
+      const metaKey = `modal:volume:${volumeId}:meta:${path}`;
+      const metaStr = await redis.get(metaKey);
+      const metadata: FileMetadata = metaStr ? JSON.parse(metaStr) : {
+        size: 0,
+        mtime: new Date().toISOString(),
+        type: "file",
+      };
+
+      const parts = path.split("/");
+      const name = parts[parts.length - 1];
+
+      const node: FileNode = {
+        name,
+        path: `/${path}`,
+        type: metadata.type,
+        size: metadata.size,
+        mtime: metadata.mtime,
+      };
+
+      // If file is in root, add directly
+      if (parts.length === 1) {
+        tree.push(node);
+      } else {
+        // Create parent directories if needed
+        let currentPath = "";
+        for (let i = 0; i < parts.length - 1; i++) {
+          const dirName = parts[i];
+          const parentPath = currentPath;
+          currentPath = currentPath ? `${currentPath}/${dirName}` : dirName;
+
+          if (!directories.has(currentPath)) {
+            const dirNode: FileNode = {
+              name: dirName,
+              path: `/${currentPath}`,
+              type: "directory",
+              children: [],
+            };
+            directories.set(currentPath, dirNode);
+
+            // Add to parent or root
+            if (parentPath) {
+              const parent = directories.get(parentPath);
+              if (parent && parent.children) {
+                parent.children.push(dirNode);
+              }
+            } else {
+              tree.push(dirNode);
+            }
+          }
+        }
+
+        // Add file to parent directory
+        const parentPath = parts.slice(0, -1).join("/");
+        if (parentPath) {
+          const parent = directories.get(parentPath);
+          if (parent && parent.children) {
+            parent.children.push(node);
+          }
+        }
+      }
+    }
+
+    console.log(`[Modal Redis] Listed ${filePaths.length} files in ${volumeId}`);
+    return tree;
   } catch (error) {
     console.error("Error getting file system:", error);
     throw new Error(
       `File system read failed: ${error instanceof Error ? error.message : "Unknown error"}`
     );
+  }
+}
+
+/**
+ * Update directory tree when a file is added
+ */
+async function updateDirectoryTree(volumeId: string, filePath: string): Promise<void> {
+  const redis = getRedisClient();
+  const parts = filePath.split("/");
+
+  // Create directory entries for all parent directories
+  for (let i = 1; i < parts.length; i++) {
+    const dirPath = parts.slice(0, i).join("/");
+    const metaKey = `modal:volume:${volumeId}:meta:${dirPath}`;
+
+    // Check if directory metadata exists
+    const exists = await redis.exists(metaKey);
+    if (!exists) {
+      const dirMetadata: FileMetadata = {
+        size: 0,
+        mtime: new Date().toISOString(),
+        type: "directory",
+      };
+      await redis.set(metaKey, JSON.stringify(dirMetadata));
+
+      // Add to tree
+      const treeKey = `modal:volume:${volumeId}:tree`;
+      await redis.zadd(treeKey, Date.now(), dirPath);
+    }
   }
 }
 
@@ -469,11 +456,25 @@ export async function executeCode(
 }
 
 // ============================================================================
-// SANDBOX & TERMINAL
+// TERMINAL & COMMAND EXECUTION
 // ============================================================================
 
 /**
+ * Sandbox instance metadata
+ */
+export interface SandboxInstance {
+  id: string;
+  sessionId: string;
+  volumeId: string;
+  status: "initializing" | "ready" | "running" | "stopped";
+  createdAt: Date;
+  language: string;
+  wsUrl?: string;
+}
+
+/**
  * Create a sandbox instance for a session
+ * For Redis-backed version, this just initializes metadata
  *
  * @param sessionId - Session identifier
  * @param initialFiles - Initial files to populate (optional)
@@ -488,15 +489,18 @@ export async function createSandbox(
   const sandboxId = `sandbox-${sessionId}`;
 
   try {
-    // Create Modal volume
-    const volume = await createVolume(sessionId);
+    // Create volume if it doesn't exist
+    const volumes = await listVolumes();
+    if (!volumes.find(v => v.id === volumeId)) {
+      await createVolume(sessionId);
+    }
 
     // Initialize files if provided
     for (const [path, content] of Object.entries(initialFiles)) {
       await writeFile(volumeId, path, content);
     }
 
-    // Store sandbox metadata in Redis
+    // Store sandbox metadata
     const sandbox: SandboxInstance = {
       id: sandboxId,
       sessionId,
@@ -512,7 +516,7 @@ export async function createSandbox(
       JSON.stringify(sandbox)
     );
 
-    console.log(`[Modal] Created sandbox: ${sandboxId} with volume ${volume.id}`);
+    console.log(`[Modal Redis] Created sandbox: ${sandboxId}`);
     return sandbox;
   } catch (error) {
     console.error("Error creating sandbox:", error);
@@ -579,7 +583,7 @@ export async function runCommand(
       };
     }
 
-    // Handle built-in commands that use Modal Volume
+    // Handle built-in commands that don't need subprocess
     const trimmedCmd = command.trim().toLowerCase();
 
     // pwd - print working directory
@@ -591,7 +595,7 @@ export async function runCommand(
       };
     }
 
-    // ls - list files from Modal volume
+    // ls - list files from Redis volume
     if (trimmedCmd === "ls" || trimmedCmd === "ls -la" || trimmedCmd === "ls -l") {
       const files = await getFileSystem(sessionId, workingDir);
       const output = files
@@ -614,7 +618,7 @@ export async function runCommand(
       };
     }
 
-    // cat - read file from Modal volume
+    // cat - read file from Redis volume
     if (trimmedCmd.startsWith("cat ")) {
       const filePath = command.substring(4).trim();
       try {
@@ -713,6 +717,6 @@ export async function closeConnection(): Promise<void> {
   if (redisClient) {
     await redisClient.quit();
     redisClient = null;
-    console.log("[Modal] Redis connection closed");
+    console.log("[Modal Redis] Connection closed");
   }
 }

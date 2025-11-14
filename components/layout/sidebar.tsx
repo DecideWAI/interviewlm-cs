@@ -15,6 +15,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Logo } from "@/components/Logo";
+import { useUser } from "@/lib/hooks/useUser";
+import { signOut } from "next-auth/react";
 
 const navigation = [
   {
@@ -51,6 +53,22 @@ const navigation = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { user, loading } = useUser();
+
+  const handleSignOut = () => {
+    signOut({ callbackUrl: "/auth/signin" });
+  };
+
+  // Generate initials from user name
+  const getInitials = (name: string | null) => {
+    if (!name) return "U";
+    return name
+      .split(" ")
+      .map((n) => n[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
 
   return (
     <div className="flex h-screen w-64 flex-col border-r border-border bg-background-secondary">
@@ -88,15 +106,34 @@ export function Sidebar() {
 
       {/* User Profile */}
       <div className="border-t border-border p-3">
-        <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-text-secondary hover:bg-background-hover hover:text-text-primary transition-all">
-          <Avatar
-            size="sm"
-            fallback="JD"
-            src="https://api.dicebear.com/7.x/avataaars/svg?seed=John"
-          />
+        <button
+          onClick={handleSignOut}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-text-secondary hover:bg-background-hover hover:text-text-primary transition-all"
+        >
+          {loading ? (
+            <div className="h-8 w-8 rounded-full bg-background-tertiary animate-pulse" />
+          ) : (
+            <Avatar
+              size="sm"
+              fallback={getInitials(user?.name || null)}
+              src={user?.image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user?.email || "user"}`}
+            />
+          )}
           <div className="flex-1 text-left">
-            <div className="text-sm font-medium text-text-primary">John Doe</div>
-            <div className="text-xs text-text-tertiary">john@company.com</div>
+            <div className="text-sm font-medium text-text-primary">
+              {loading ? (
+                <div className="h-4 w-24 bg-background-tertiary rounded animate-pulse" />
+              ) : (
+                user?.name || "User"
+              )}
+            </div>
+            <div className="text-xs text-text-tertiary">
+              {loading ? (
+                <div className="h-3 w-32 bg-background-tertiary rounded animate-pulse mt-1" />
+              ) : (
+                user?.email || ""
+              )}
+            </div>
           </div>
           <LogOut className="h-4 w-4" />
         </button>
