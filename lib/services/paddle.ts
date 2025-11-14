@@ -231,6 +231,7 @@ export async function handleWebhook(
 
 /**
  * Handle successful payment webhook
+ * ACTUALLY adds credits to organization using atomic transaction
  */
 async function handlePaymentSucceeded(
   payload: any
@@ -245,41 +246,57 @@ async function handlePaymentSucceeded(
       throw new Error("Missing organization_id or credits in webhook payload");
     }
 
-    // Add credits to organization
-    const organization = await prisma.organization.findUnique({
-      where: { id: organizationId },
-    });
+    // Add credits to organization with atomic transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Get current organization state
+      const organization = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true, credits: true },
+      });
 
-    if (!organization) {
-      throw new Error(`Organization ${organizationId} not found`);
-    }
+      if (!organization) {
+        throw new Error(`Organization ${organizationId} not found`);
+      }
 
-    // Create credit transaction record
-    await prisma.$transaction(async (tx) => {
-      // TODO: Add CreditTransaction model to schema
-      // For now, we'll store in organization metadata or create a separate table
+      // Calculate new balance
+      const newBalance = organization.credits + creditsToAdd;
+
+      // Update organization credits
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: { credits: newBalance },
+      });
+
+      // Create transaction record
+      const transaction = await tx.creditTransaction.create({
+        data: {
+          organizationId,
+          type: "PURCHASE",
+          amount: creditsToAdd,
+          balanceAfter: newBalance,
+          paddleOrderId: payload.order_id,
+          paddlePaymentId: payload.payment_id,
+          amountPaid: parseFloat(payload.sale_gross),
+          currency: payload.currency,
+          description: `Purchased ${creditsToAdd} assessment credits`,
+          createdBy: userId,
+          metadata: {
+            paddleCheckoutId: payload.checkout_id,
+            paddleCustomerId: payload.customer_id,
+          },
+        },
+      });
 
       console.log(
-        `Added ${creditsToAdd} credits to organization ${organizationId}`
+        `[Paddle] Added ${creditsToAdd} credits to organization ${organizationId}. New balance: ${newBalance}`
       );
 
-      // Log the transaction
-      console.log({
-        type: "credit_purchase",
-        organizationId,
-        userId,
-        credits: creditsToAdd,
-        amount: parseFloat(payload.sale_gross),
-        currency: payload.currency,
-        paddleOrderId: payload.order_id,
-        paddlePaymentId: payload.payment_id,
-        timestamp: new Date(),
-      });
+      return { transaction, newBalance };
     });
 
     return {
       success: true,
-      message: `Added ${creditsToAdd} credits to organization ${organizationId}`,
+      message: `Added ${creditsToAdd} credits to organization ${organizationId}. New balance: ${result.newBalance}`,
     };
   } catch (error) {
     console.error("Error handling payment_succeeded:", error);
@@ -433,10 +450,16 @@ export async function getOrganizationCredits(
   organizationId: string
 ): Promise<number> {
   try {
-    // TODO: Query from CreditTransaction table or organization metadata
-    // For now, return placeholder
-    console.log(`Getting credits for organization ${organizationId}`);
-    return 0;
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { credits: true },
+    });
+
+    if (!organization) {
+      throw new Error(`Organization ${organizationId} not found`);
+    }
+
+    return organization.credits;
   } catch (error) {
     console.error("Error getting organization credits:", error);
     return 0;
@@ -445,23 +468,77 @@ export async function getOrganizationCredits(
 
 /**
  * Deduct credits from organization (when creating assessment)
+ * Uses atomic transaction to prevent race conditions
  */
 export async function deductCredits(
   organizationId: string,
-  amount: number
+  amount: number,
+  metadata?: {
+    assessmentId?: string;
+    candidateId?: string;
+    description?: string;
+    createdBy?: string;
+  }
 ): Promise<{ success: boolean; remainingCredits: number }> {
   try {
-    // TODO: Implement credit deduction
-    // - Check sufficient balance
-    // - Deduct credits atomically
-    // - Log transaction
-    // - Return remaining balance
+    if (amount <= 0) {
+      throw new Error("Credit amount must be positive");
+    }
 
-    console.log(`Deducting ${amount} credits from organization ${organizationId}`);
+    // Deduct credits with atomic transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Get current organization state
+      const organization = await tx.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true, credits: true },
+      });
+
+      if (!organization) {
+        throw new Error(`Organization ${organizationId} not found`);
+      }
+
+      // Check sufficient balance
+      if (organization.credits < amount) {
+        throw new Error(
+          `Insufficient credits. Required: ${amount}, Available: ${organization.credits}`
+        );
+      }
+
+      // Calculate new balance
+      const newBalance = organization.credits - amount;
+
+      // Update organization credits
+      await tx.organization.update({
+        where: { id: organizationId },
+        data: { credits: newBalance },
+      });
+
+      // Create transaction record
+      await tx.creditTransaction.create({
+        data: {
+          organizationId,
+          type: "DEDUCTION",
+          amount: -amount, // Negative for deduction
+          balanceAfter: newBalance,
+          assessmentId: metadata?.assessmentId,
+          candidateId: metadata?.candidateId,
+          description:
+            metadata?.description ||
+            `Deducted ${amount} credit(s) for assessment`,
+          createdBy: metadata?.createdBy,
+        },
+      });
+
+      console.log(
+        `[Paddle] Deducted ${amount} credits from organization ${organizationId}. New balance: ${newBalance}`
+      );
+
+      return { newBalance };
+    });
 
     return {
       success: true,
-      remainingCredits: 0, // Placeholder
+      remainingCredits: result.newBalance,
     };
   } catch (error) {
     console.error("Error deducting credits:", error);

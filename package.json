@@ -33,7 +33,8 @@
     "docker:build": "docker build -t interviewlm-app .",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "workers": "ts-node workers/index.ts",
+    "workers": "ts-node workers/start.ts",
+    "workers:dev": "ts-node-dev --respawn --transpile-only workers/start.ts",
     "workers:interview": "ts-node workers/interview-agent.ts",
     "workers:evaluation": "ts-node workers/evaluation-agent.ts"
   },
