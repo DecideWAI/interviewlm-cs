@@ -9,6 +9,7 @@
 import prisma from "@/lib/prisma";
 import { z } from "zod";
 import { getChatCompletion } from "./claude";
+import { getCachedQuestion, cacheQuestion } from "./question-cache";
 import type { Difficulty, QuestionStatus, GeneratedQuestion } from "@/lib/prisma-types";
 
 // Configuration
@@ -208,37 +209,74 @@ export async function generateQuestion(
 
     // Get problem seed if provided
     let seedProblem = null;
+    let seedTopic: string | undefined;
     if (params.seed) {
       seedProblem = await prisma.problemSeed.findUnique({
         where: { id: params.seed },
       });
+      seedTopic = seedProblem?.category || seedProblem?.tags?.join(",");
     }
 
-    // Build generation prompt
-    const systemPrompt = buildQuestionGenerationPrompt(
-      adaptedDifficulty,
-      params.language,
-      params.previousPerformance,
-      seedProblem
-    );
+    // Try to get from cache first (unless seed is provided - those should be unique)
+    let questionData: any = null;
+    let tokensUsed = 0;
+    let cacheHit = false;
 
-    // Call Claude to generate question
-    const response = await getChatCompletion(
-      [
-        {
-          role: "user",
-          content: "Generate a coding interview question based on the requirements.",
-        },
-      ],
-      {
-        problemTitle: "Question Generation",
-        problemDescription: systemPrompt,
-        language: params.language,
+    if (!params.seed) {
+      const cachedQuestion = await getCachedQuestion(
+        adaptedDifficulty,
+        params.language,
+        seedTopic
+      );
+
+      if (cachedQuestion) {
+        questionData = cachedQuestion;
+        cacheHit = true;
+        console.log(
+          `[Question Cache] Using cached question for ${adaptedDifficulty}/${params.language}`
+        );
       }
-    );
+    }
 
-    // Parse generated question
-    const questionData = parseQuestionResponse(response.content);
+    // If no cache hit, generate new question
+    if (!questionData) {
+      // Build generation prompt
+      const systemPrompt = buildQuestionGenerationPrompt(
+        adaptedDifficulty,
+        params.language,
+        params.previousPerformance,
+        seedProblem
+      );
+
+      // Call Claude to generate question
+      const response = await getChatCompletion(
+        [
+          {
+            role: "user",
+            content: "Generate a coding interview question based on the requirements.",
+          },
+        ],
+        {
+          problemTitle: "Question Generation",
+          problemDescription: systemPrompt,
+          language: params.language,
+        }
+      );
+
+      // Parse generated question
+      questionData = parseQuestionResponse(response.content);
+      tokensUsed = response.usage.totalTokens;
+
+      // Cache the question for future use (unless seed-based)
+      if (!params.seed) {
+        await cacheQuestion(
+          adaptedDifficulty,
+          params.language,
+          questionData,
+          seedTopic
+        );
+      }
+    }
 
     // Get candidate's current question order
     const existingQuestions = await prisma.generatedQuestion.count({

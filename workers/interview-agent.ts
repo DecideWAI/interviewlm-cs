@@ -17,6 +17,7 @@
 import { Worker, Job } from 'bullmq';
 import { redisConnection } from '../lib/queues/config';
 import { QUEUE_NAMES } from '../lib/types/events';
+import { moveToDeadLetterQueue } from '../lib/queues/dlq';
 import type {
   InterviewEventType,
   AIInteractionEventData,
@@ -90,8 +91,13 @@ class InterviewAgentWorker {
       console.log(`[Interview Agent] Processed event: ${job.name} for session ${job.data.sessionId}`);
     });
 
-    this.worker.on('failed', (job, err) => {
+    this.worker.on('failed', async (job, err) => {
       console.error(`[Interview Agent] Failed to process event: ${job?.name}`, err);
+
+      // Move to dead letter queue if exceeded max attempts
+      if (job && job.attemptsMade >= (job.opts.attempts || 3)) {
+        await moveToDeadLetterQueue(QUEUE_NAMES.INTERVIEW, job, err);
+      }
     });
 
     this.worker.on('error', (err) => {
