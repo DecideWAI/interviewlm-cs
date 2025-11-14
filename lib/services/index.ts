@@ -14,15 +14,15 @@ export type {
 } from "./claude";
 
 // Modal AI Sandbox Service
-// Using Redis-backed implementation with real file operations
-// Full volume management and file persistence via Redis
-export * as modalService from "./modal-redis";
+// Using Modal Volumes for file storage, Redis for operation tracking
+// Production-ready with persistent volumes and full sandbox management
+export * as modalService from "./modal";
 export type {
   TestResult,
   ExecutionResult,
   FileNode,
   SandboxInstance,
-} from "./modal-redis";
+} from "./modal";
 
 // S3 Storage Service
 export * as s3Service from "./s3";
@@ -39,6 +39,9 @@ export * as questionService from "./questions";
 export type {
   QuestionGenerationResult,
 } from "./questions";
+
+// Email Service
+export * as emailService from "./email";
 
 // Re-export individual functions for direct imports
 export {
@@ -57,7 +60,7 @@ export {
   createSandbox,
   listActiveSandboxes,
   runCommand,
-} from "./modal-redis";
+} from "./modal";
 
 export {
   uploadSessionRecording,
@@ -84,3 +87,10 @@ export {
   getCandidateQuestions,
   calculatePerformance,
 } from "./questions";
+
+export {
+  sendInvitationEmail,
+  sendCompletionNotification,
+  sendPasswordReset,
+  testEmailConnection,
+} from "./email";

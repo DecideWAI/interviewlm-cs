@@ -22,11 +22,12 @@ export async function GET() {
 
   try {
     // Perform health checks in parallel
-    const [dbHealth, redisHealth, queueHealth, cbHealth] = await Promise.all([
+    const [dbHealth, redisHealth, queueHealth, cbHealth, emailHealth] = await Promise.all([
       checkDatabase(),
       checkRedis(),
       checkQueues(),
       checkCircuitBreakers(),
+      checkEmail(),
     ]);
 
     // Determine overall status
@@ -34,13 +35,15 @@ export async function GET() {
       dbHealth.healthy &&
       redisHealth.healthy &&
       queueHealth.healthy &&
-      cbHealth.healthy;
+      cbHealth.healthy &&
+      emailHealth.healthy;
 
     const anyDegraded =
       dbHealth.degraded ||
       redisHealth.degraded ||
       queueHealth.degraded ||
-      cbHealth.degraded;
+      cbHealth.degraded ||
+      emailHealth.degraded;
 
     const overallStatus = allHealthy
       ? 'healthy'
@@ -60,6 +63,7 @@ export async function GET() {
           redis: redisHealth,
           queues: queueHealth,
           circuitBreakers: cbHealth,
+          email: emailHealth,
         },
       },
       { status: overallStatus === 'unhealthy' ? 503 : 200 }
@@ -129,7 +133,7 @@ async function checkRedis() {
 
 async function testModalFileStorage(): Promise<boolean> {
   try {
-    const { testConnection } = await import('@/lib/services/modal-redis');
+    const { testConnection } = await import('@/lib/services/modal');
     return await testConnection();
   } catch {
     return false;
@@ -187,6 +191,26 @@ async function checkCircuitBreakers() {
     return {
       healthy: false,
       degraded: false,
+      status: 'error',
+      error: (error as Error).message,
+    };
+  }
+}
+
+async function checkEmail() {
+  try {
+    const { testEmailConnection } = await import('@/lib/services/email');
+    const emailOk = await testEmailConnection();
+
+    return {
+      healthy: emailOk,
+      degraded: !emailOk,
+      status: emailOk ? 'configured' : 'not_configured',
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      degraded: true,
       status: 'error',
       error: (error as Error).message,
     };
