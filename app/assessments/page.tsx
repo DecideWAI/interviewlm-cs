@@ -85,7 +85,17 @@ export default function AssessmentsPage() {
       }
 
       const data = await response.json();
-      setAssessments(data.assessments || []);
+      // API returns 'stats' but frontend expects 'statistics', so map the data
+      const mappedAssessments = (data.assessments || []).map((assessment: any) => ({
+        ...assessment,
+        statistics: {
+          totalCandidates: assessment.stats?.candidateCount || 0,
+          completedCandidates: assessment.stats?.completedCount || 0,
+          avgScore: assessment.stats?.avgScore || null,
+          completionRate: assessment.stats?.completionRate || 0,
+        },
+      }));
+      setAssessments(mappedAssessments);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
       console.error("Error fetching assessments:", err);
