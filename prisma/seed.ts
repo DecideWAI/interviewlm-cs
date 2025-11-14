@@ -97,6 +97,50 @@ async function main() {
 
   console.log("✅ Linked admin user to organization");
 
+  // Seed problem seeds (curated question bank)
+  console.log("\n📚 Seeding problem seeds...");
+
+  const { ALL_PROBLEM_SEEDS } = await import("./seeds/problem-seeds");
+
+  let seedsCreated = 0;
+  let seedsSkipped = 0;
+
+  for (const seedData of ALL_PROBLEM_SEEDS) {
+    try {
+      const existing = await prisma.problemSeed.findFirst({
+        where: {
+          title: seedData.title,
+          organizationId: organization.id,
+        },
+      });
+
+      if (existing) {
+        seedsSkipped++;
+        continue;
+      }
+
+      await prisma.problemSeed.create({
+        data: {
+          organizationId: organization.id,
+          title: seedData.title,
+          description: seedData.description,
+          difficulty: seedData.difficulty,
+          category: seedData.category,
+          tags: seedData.tags,
+          starterCode: seedData.starterCode || null,
+          testCode: seedData.testCode || null,
+          language: seedData.language,
+        },
+      });
+
+      seedsCreated++;
+    } catch (error) {
+      console.error(`  ❌ Failed to create seed "${seedData.title}":`, error);
+    }
+  }
+
+  console.log(`✅ Created ${seedsCreated} problem seeds (${seedsSkipped} already existed)`);
+
   console.log("\n🎉 Seed completed successfully!");
   console.log("\nTest credentials:");
   console.log("  Email: test@interviewlm.com");
@@ -105,6 +149,12 @@ async function main() {
   console.log("  Email: admin@interviewlm.com");
   console.log(`  Password: ${seedPassword}`);
   console.log("\n💡 Tip: Set SEED_PASSWORD environment variable for consistent credentials");
+  console.log(`\n📊 Database seeded with ${seedsCreated} problem seeds across 5 categories:`);
+  console.log("  • Backend (8 seeds)");
+  console.log("  • Frontend (7 seeds)");
+  console.log("  • Algorithms (5 seeds)");
+  console.log("  • Full-Stack (4 seeds)");
+  console.log("  • Specialized (6 seeds)");
 }
 
 main()
