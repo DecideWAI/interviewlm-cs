@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -20,22 +20,46 @@ import {
   Lightbulb,
   Sparkles,
   Calendar,
+  Loader2,
 } from "lucide-react";
-import { MOCK_DASHBOARD_KPIS, MOCK_SOURCE_EFFECTIVENESS } from "@/lib/mock-analytics-data";
-import {
-  MOCK_ACTIONABLE_INSIGHTS,
-  MOCK_OPTIMIZATION_RECOMMENDATIONS,
-  MOCK_TREND_DATA,
-  MOCK_PERFORMANCE_BY_ROLE,
-} from "@/lib/mock-insights-data";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
 export default function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [dateRange, setDateRange] = useState("last_30_days");
+  const [loading, setLoading] = useState(true);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const kpis = MOCK_DASHBOARD_KPIS;
+  useEffect(() => {
+    fetchAnalytics();
+  }, [dateRange]);
+
+  const fetchAnalytics = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/analytics/overview?dateRange=${dateRange}`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch analytics");
+      }
+      const data = await response.json();
+      setAnalyticsData(data);
+    } catch (err) {
+      console.error("Error fetching analytics:", err);
+      setError(err instanceof Error ? err.message : "Failed to load analytics");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const kpis = analyticsData?.kpis || {
+    completedThisMonth: { value: 0, trend: { percentage: 0, direction: "up" } },
+    completionRate: { value: "0%", trend: { percentage: 0, direction: "up" } },
+    passRate: { value: "0%", trend: { percentage: 0, direction: "up" } },
+    avgAIProficiency: { value: "0/100", trend: { percentage: 0, direction: "up" } },
+  };
 
   return (
     <DashboardLayout>
@@ -64,122 +88,135 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        {/* Quick Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <MetricCard
-            label="Assessments Completed"
-            value={kpis.completedThisMonth.value.toString()}
-            change={kpis.completedThisMonth.trend?.percentage || 0}
-            isPositive={true}
-            icon={<Users className="h-5 w-5" />}
-            color="primary"
-          />
-          <MetricCard
-            label="Completion Rate"
-            value={kpis.completionRate.value.toString()}
-            change={kpis.completionRate.trend?.percentage || 0}
-            isPositive={true}
-            icon={<Target className="h-5 w-5" />}
-            color="success"
-          />
-          <MetricCard
-            label="Pass Rate"
-            value={kpis.passRate.value.toString()}
-            change={kpis.passRate.trend?.percentage || 0}
-            isPositive={false}
-            icon={<BarChart3 className="h-5 w-5" />}
-            color="warning"
-          />
-          <MetricCard
-            label="Avg AI Proficiency"
-            value={kpis.avgAIProficiency.value.toString()}
-            change={kpis.avgAIProficiency.trend?.percentage || 0}
-            isPositive={true}
-            icon={<Sparkles className="h-5 w-5" />}
-            color="info"
-          />
-        </div>
+        {/* Loading State */}
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </div>
+        )}
 
-        {/* Actionable Insights */}
-        <Card className="bg-background-secondary border-border p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Lightbulb className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold text-text-primary">Actionable Insights</h3>
+        {/* Error State */}
+        {error && !loading && (
+          <Card className="bg-error/10 border-error/30 p-6">
+            <div className="flex items-center gap-2 text-error">
+              <AlertCircle className="h-5 w-5" />
+              <p className="text-sm font-medium">{error}</p>
             </div>
-            <Badge variant="primary">{MOCK_ACTIONABLE_INSIGHTS.length} active</Badge>
-          </div>
+          </Card>
+        )}
 
-          <div className="space-y-4">
-            {MOCK_ACTIONABLE_INSIGHTS.slice(0, 3).map((insight) => (
-              <ActionableInsightCard key={insight.id} insight={insight} />
-            ))}
-          </div>
+        {/* Quick Stats */}
+        {!loading && !error && (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <MetricCard
+                label="Assessments Completed"
+                value={kpis.completedThisMonth.value.toString()}
+                change={kpis.completedThisMonth.trend?.percentage || 0}
+                isPositive={true}
+                icon={<Users className="h-5 w-5" />}
+                color="primary"
+              />
+              <MetricCard
+                label="Completion Rate"
+                value={kpis.completionRate.value.toString()}
+                change={kpis.completionRate.trend?.percentage || 0}
+                isPositive={true}
+                icon={<Target className="h-5 w-5" />}
+                color="success"
+              />
+              <MetricCard
+                label="Pass Rate"
+                value={kpis.passRate.value.toString()}
+                change={kpis.passRate.trend?.percentage || 0}
+                isPositive={true}
+                icon={<BarChart3 className="h-5 w-5" />}
+                color="warning"
+              />
+              <MetricCard
+                label="Avg AI Proficiency"
+                value={kpis.avgAIProficiency.value.toString()}
+                change={kpis.avgAIProficiency.trend?.percentage || 0}
+                isPositive={true}
+                icon={<Sparkles className="h-5 w-5" />}
+                color="info"
+              />
+            </div>
+          </>
+        )}
 
-          <div className="mt-4 text-center">
-            <Button variant="ghost" size="sm">
-              View All Insights ({MOCK_ACTIONABLE_INSIGHTS.length})
-            </Button>
-          </div>
-        </Card>
+        {/* Data available notice */}
+        {!loading && !error && analyticsData && (
+          <Card className="bg-background-secondary border-border p-6">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-success" />
+                <h3 className="text-lg font-semibold text-text-primary">Analytics Overview</h3>
+              </div>
+              <Badge variant="default">
+                {dateRange === "last_7_days"
+                  ? "Last 7 Days"
+                  : dateRange === "last_30_days"
+                  ? "Last 30 Days"
+                  : dateRange === "last_90_days"
+                  ? "Last 90 Days"
+                  : "This Quarter"}
+              </Badge>
+            </div>
+            <p className="text-sm text-text-secondary mt-2">
+              Data is live and updated in real-time from your organization's assessments.
+            </p>
+          </Card>
+        )}
 
         {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Assessment Volume Trend */}
-          <Card className="bg-background-secondary border-border p-6">
-            <h3 className="text-lg font-semibold text-text-primary mb-4">Assessment Volume Trend</h3>
-            <div className="h-64">
-              <SimpleTrendChart data={MOCK_TREND_DATA} />
-            </div>
-            <div className="mt-4 flex items-center justify-between text-sm">
-              <span className="text-text-tertiary">Last 25 days</span>
-              <div className="flex items-center gap-2 text-success">
-                <ArrowUp className="h-4 w-4" />
-                <span>+157% volume growth</span>
+        {!loading && !error && analyticsData && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Assessment Volume Trend */}
+            <Card className="bg-background-secondary border-border p-6">
+              <h3 className="text-lg font-semibold text-text-primary mb-4">Assessment Volume Trend</h3>
+              <div className="h-64">
+                {analyticsData.trendData && analyticsData.trendData.length > 0 ? (
+                  <SimpleTrendChart data={analyticsData.trendData} />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-text-tertiary">
+                    <p className="text-sm">No trend data available</p>
+                  </div>
+                )}
               </div>
-            </div>
-          </Card>
+              <div className="mt-4 flex items-center justify-between text-sm">
+                <span className="text-text-tertiary">
+                  {dateRange === "last_7_days"
+                    ? "Last 7 days"
+                    : dateRange === "last_30_days"
+                    ? "Last 30 days"
+                    : dateRange === "last_90_days"
+                    ? "Last 90 days"
+                    : "This quarter"}
+                </span>
+                <div className="flex items-center gap-2 text-text-secondary">
+                  <span>Real-time data</span>
+                </div>
+              </div>
+            </Card>
 
-          {/* Performance by Role */}
-          <Card className="bg-background-secondary border-border p-6">
-            <h3 className="text-lg font-semibold text-text-primary mb-4">Performance by Role</h3>
-            <div className="space-y-3">
-              {MOCK_PERFORMANCE_BY_ROLE.map((role) => (
-                <RolePerformanceRow key={role.role} data={role} />
-              ))}
-            </div>
-            <div className="mt-4 pt-4 border-t border-border">
-              <p className="text-sm text-text-tertiary">
-                💡 Frontend candidates have highest AI skills but lowest pass rate - consider adjusting difficulty
-              </p>
-            </div>
-          </Card>
-
-          {/* Source Effectiveness */}
-          <Card className="bg-background-secondary border-border p-6">
-            <h3 className="text-lg font-semibold text-text-primary mb-4">Source Effectiveness</h3>
-            <div className="space-y-3">
-              {MOCK_SOURCE_EFFECTIVENESS.map((source) => (
-                <SourceRow key={source.source} data={source} />
-              ))}
-            </div>
-            <div className="mt-4 pt-4 border-t border-border">
-              <p className="text-sm text-text-tertiary">
-                ⭐ Employee Referrals have 8.5x ROI - 4x better than LinkedIn
-              </p>
-            </div>
-          </Card>
-
-          {/* Optimization Recommendations */}
-          <Card className="bg-background-secondary border-border p-6">
-            <h3 className="text-lg font-semibold text-text-primary mb-4">Optimization Recommendations</h3>
-            <div className="space-y-4">
-              {MOCK_OPTIMIZATION_RECOMMENDATIONS.map((rec) => (
-                <OptimizationCard key={rec.id} recommendation={rec} />
-              ))}
-            </div>
-          </Card>
-        </div>
+            {/* Performance by Role */}
+            <Card className="bg-background-secondary border-border p-6">
+              <h3 className="text-lg font-semibold text-text-primary mb-4">Performance by Role</h3>
+              {analyticsData.performanceByRole && analyticsData.performanceByRole.length > 0 ? (
+                <div className="space-y-3">
+                  {analyticsData.performanceByRole.map((role: any) => (
+                    <RolePerformanceRow key={role.role} data={role} />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-32 text-text-tertiary">
+                  <p className="text-sm">No role data available</p>
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );

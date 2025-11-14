@@ -541,26 +541,86 @@ export async function getSessionRecording(
 }
 
 /**
- * Get session statistics for analytics
+ * Get comprehensive session statistics for analytics and evaluation
  *
  * @param sessionId - Session identifier
- * @returns Session statistics
+ * @returns Detailed session statistics
  */
 export async function getSessionStats(sessionId: string): Promise<{
+  // Basic metrics
   eventCount: number;
-  claudeInteractionCount: number;
-  totalTokensUsed: number;
-  codeSnapshotCount: number;
-  testResultCount: number;
-  testsPassedCount: number;
   duration: number | null;
+
+  // File change metrics
+  fileChanges: {
+    totalSnapshots: number;
+    uniqueFiles: number;
+    totalLinesAdded: number;
+    totalLinesDeleted: number;
+    mostEditedFiles: Array<{ fileName: string; editCount: number }>;
+  };
+
+  // Claude interaction metrics
+  claudeInteractions: {
+    totalInteractions: number;
+    totalTokensUsed: number;
+    inputTokens: number;
+    outputTokens: number;
+    averageLatency: number | null;
+    averagePromptQuality: number | null;
+    interactionsByRole: {
+      user: number;
+      assistant: number;
+      system: number;
+    };
+  };
+
+  // Terminal activity metrics
+  terminalActivity: {
+    totalCommands: number;
+    uniqueCommands: number;
+    commandCategories: {
+      test: number;
+      git: number;
+      fileOps: number;
+      package: number;
+      other: number;
+    };
+  };
+
+  // Test execution metrics
+  testExecution: {
+    totalTests: number;
+    passedTests: number;
+    failedTests: number;
+    passRate: number;
+    averageDuration: number | null;
+    firstPassTime: number | null; // Seconds from session start
+  };
+
+  // Activity timeline
+  activityTimeline: {
+    firstEventTime: Date | null;
+    lastEventTime: Date | null;
+    totalActiveTime: number | null; // Seconds of actual activity
+  };
 }> {
   try {
     const session = await prisma.sessionRecording.findUnique({
       where: { id: sessionId },
       include: {
-        claudeInteractions: true,
-        testResults: true,
+        events: {
+          orderBy: { timestamp: "asc" },
+        },
+        claudeInteractions: {
+          orderBy: { timestamp: "asc" },
+        },
+        codeSnapshots: {
+          orderBy: { timestamp: "asc" },
+        },
+        testResults: {
+          orderBy: { timestamp: "asc" },
+        },
       },
     });
 
@@ -568,24 +628,173 @@ export async function getSessionStats(sessionId: string): Promise<{
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    const totalTokensUsed = session.claudeInteractions.reduce(
-      (sum: number, interaction: any) =>
-        sum + (interaction.inputTokens || 0) + (interaction.outputTokens || 0),
+    // File change metrics
+    const totalLinesAdded = session.codeSnapshots.reduce(
+      (sum: number, snap: any) => sum + (snap.linesAdded || 0),
+      0
+    );
+    const totalLinesDeleted = session.codeSnapshots.reduce(
+      (sum: number, snap: any) => sum + (snap.linesDeleted || 0),
       0
     );
 
-    const testsPassedCount = session.testResults.filter((t: any) => t.passed).length;
+    // Count edits per file
+    const fileEditCounts = new Map<string, number>();
+    session.codeSnapshots.forEach((snap: any) => {
+      const count = fileEditCounts.get(snap.fileName) || 0;
+      fileEditCounts.set(snap.fileName, count + 1);
+    });
+
+    const mostEditedFiles = Array.from(fileEditCounts.entries())
+      .map(([fileName, editCount]) => ({ fileName, editCount }))
+      .sort((a, b) => b.editCount - a.editCount)
+      .slice(0, 5);
+
+    // Claude interaction metrics
+    const totalInputTokens = session.claudeInteractions.reduce(
+      (sum: number, interaction: any) => sum + (interaction.inputTokens || 0),
+      0
+    );
+    const totalOutputTokens = session.claudeInteractions.reduce(
+      (sum: number, interaction: any) => sum + (interaction.outputTokens || 0),
+      0
+    );
+
+    const interactionsWithLatency = session.claudeInteractions.filter(
+      (i: any) => i.latency !== null && i.latency !== undefined
+    );
+    const averageLatency = interactionsWithLatency.length > 0
+      ? interactionsWithLatency.reduce((sum: number, i: any) => sum + i.latency, 0) / interactionsWithLatency.length
+      : null;
+
+    const interactionsWithQuality = session.claudeInteractions.filter(
+      (i: any) => i.promptQuality !== null && i.promptQuality !== undefined
+    );
+    const averagePromptQuality = interactionsWithQuality.length > 0
+      ? interactionsWithQuality.reduce((sum: number, i: any) => sum + (i.promptQuality || 0), 0) / interactionsWithQuality.length
+      : null;
+
+    const interactionsByRole = {
+      user: session.claudeInteractions.filter((i: any) => i.role === "user").length,
+      assistant: session.claudeInteractions.filter((i: any) => i.role === "assistant").length,
+      system: session.claudeInteractions.filter((i: any) => i.role === "system").length,
+    };
+
+    // Terminal activity metrics
+    const terminalInputEvents = session.events.filter((e: any) => e.type === "terminal_input");
+    const commands = terminalInputEvents.map((e: any) => e.data?.command).filter(Boolean);
+    const uniqueCommands = new Set(commands).size;
+
+    const commandCategories = {
+      test: commands.filter((cmd: string) =>
+        cmd.includes("test") || cmd.includes("jest") || cmd.includes("npm run test") || cmd.includes("pytest")
+      ).length,
+      git: commands.filter((cmd: string) => cmd.startsWith("git")).length,
+      fileOps: commands.filter((cmd: string) =>
+        cmd.startsWith("cat") || cmd.startsWith("ls") || cmd.startsWith("mkdir") ||
+        cmd.startsWith("rm") || cmd.startsWith("cp") || cmd.startsWith("mv")
+      ).length,
+      package: commands.filter((cmd: string) =>
+        cmd.includes("npm") || cmd.includes("pip") || cmd.includes("yarn") || cmd.includes("pnpm")
+      ).length,
+      other: 0,
+    };
+    commandCategories.other = commands.length - (
+      commandCategories.test + commandCategories.git +
+      commandCategories.fileOps + commandCategories.package
+    );
+
+    // Test execution metrics
+    const passedTests = session.testResults.filter((t: any) => t.passed).length;
+    const failedTests = session.testResults.length - passedTests;
+    const passRate = session.testResults.length > 0
+      ? (passedTests / session.testResults.length) * 100
+      : 0;
+
+    const testsWithDuration = session.testResults.filter(
+      (t: any) => t.duration !== null && t.duration !== undefined
+    );
+    const averageTestDuration = testsWithDuration.length > 0
+      ? testsWithDuration.reduce((sum: number, t: any) => sum + (t.duration || 0), 0) / testsWithDuration.length
+      : null;
+
+    // Find first test pass
+    const firstPassedTest = session.testResults.find((t: any) => t.passed);
+    const firstPassTime = firstPassedTest && session.startTime
+      ? Math.floor((new Date(firstPassedTest.timestamp).getTime() - session.startTime.getTime()) / 1000)
+      : null;
+
+    // Activity timeline
+    const firstEventTime = session.events.length > 0
+      ? session.events[0].timestamp
+      : null;
+    const lastEventTime = session.events.length > 0
+      ? session.events[session.events.length - 1].timestamp
+      : null;
+
+    // Calculate active time (time between events with gaps > 5 minutes considered idle)
+    let totalActiveTime: number | null = null;
+    if (session.events.length > 1) {
+      let activeSeconds = 0;
+      for (let i = 1; i < session.events.length; i++) {
+        const gap = (new Date(session.events[i].timestamp).getTime() -
+                     new Date(session.events[i - 1].timestamp).getTime()) / 1000;
+        // Only count gaps < 5 minutes as active time
+        if (gap < 300) {
+          activeSeconds += gap;
+        }
+      }
+      totalActiveTime = activeSeconds;
+    }
 
     return {
+      // Basic metrics
       eventCount: session.eventCount,
-      claudeInteractionCount: session.claudeInteractions.length,
-      totalTokensUsed,
-      codeSnapshotCount: await prisma.codeSnapshot.count({
-        where: { sessionId },
-      }),
-      testResultCount: session.testResults.length,
-      testsPassedCount,
       duration: session.duration,
+
+      // File change metrics
+      fileChanges: {
+        totalSnapshots: session.codeSnapshots.length,
+        uniqueFiles: fileEditCounts.size,
+        totalLinesAdded,
+        totalLinesDeleted,
+        mostEditedFiles,
+      },
+
+      // Claude interaction metrics
+      claudeInteractions: {
+        totalInteractions: session.claudeInteractions.length,
+        totalTokensUsed: totalInputTokens + totalOutputTokens,
+        inputTokens: totalInputTokens,
+        outputTokens: totalOutputTokens,
+        averageLatency,
+        averagePromptQuality,
+        interactionsByRole,
+      },
+
+      // Terminal activity metrics
+      terminalActivity: {
+        totalCommands: commands.length,
+        uniqueCommands,
+        commandCategories,
+      },
+
+      // Test execution metrics
+      testExecution: {
+        totalTests: session.testResults.length,
+        passedTests,
+        failedTests,
+        passRate,
+        averageDuration: averageTestDuration,
+        firstPassTime,
+      },
+
+      // Activity timeline
+      activityTimeline: {
+        firstEventTime,
+        lastEventTime,
+        totalActiveTime,
+      },
     };
 
   } catch (error) {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import Anthropic from "@anthropic-ai/sdk";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import { publishAIInteraction } from "@/lib/queues";
 
 // Request validation schema
 const chatRequestSchema = z.object({
@@ -175,6 +176,19 @@ export async function GET(
           await prisma.claudeInteraction.update({
             where: { id: interaction.id },
             data: { promptQuality },
+          });
+
+          // Publish AI interaction event to BullMQ for Interview Agent
+          publishAIInteraction({
+            sessionId: sessionRecording.id,
+            timestamp: new Date(),
+            candidateMessage: message,
+            aiResponse: fullResponse,
+            toolsUsed: [], // TODO: Extract from tool use when implemented
+            filesModified: [], // TODO: Track file modifications
+          }).catch((error) => {
+            // Log error but don't fail the request
+            console.error('Failed to publish AI interaction event:', error);
           });
 
           // Send usage event (frontend expects this format)

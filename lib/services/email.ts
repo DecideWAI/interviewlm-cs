@@ -331,6 +331,244 @@ ${BRANDING.emailFooterText}
   `.trim();
 }
 
+/**
+ * Send interview completion notification to hiring team
+ */
+export async function sendCompletionNotification(params: {
+  to: string;
+  candidateName: string;
+  assessmentTitle: string;
+  completedAt: Date;
+  duration: number; // seconds
+  dashboardUrl: string;
+  organizationName?: string;
+}) {
+  const {
+    to,
+    candidateName,
+    assessmentTitle,
+    completedAt,
+    duration,
+    dashboardUrl,
+    organizationName = BRANDING.name,
+  } = params;
+
+  const durationMinutes = Math.round(duration / 60);
+  const completedAtFormatted = completedAt.toLocaleString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interview Completed</title>
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #000000; color: #ffffff; }
+    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+    .header { text-align: center; margin-bottom: 40px; }
+    .logo { font-size: 24px; font-weight: bold; color: #5E6AD2; margin-bottom: 8px; }
+    .card { background: #0A0A0A; border: 1px solid #1A1A1A; border-radius: 8px; padding: 32px; }
+    .title { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: #ffffff; }
+    .message { font-size: 14px; line-height: 1.6; color: #9CA3AF; margin-bottom: 24px; }
+    .info-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #1A1A1A; }
+    .info-label { color: #6B7280; font-size: 14px; }
+    .info-value { color: #ffffff; font-size: 14px; font-weight: 500; }
+    .cta-button { display: inline-block; background: #5E6AD2; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-weight: 500; font-size: 16px; margin: 24px 0; }
+    .cta-button:hover { background: #6B77E1; }
+    .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 1px solid #1A1A1A; color: #6B7280; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">${BRANDING.emailLogoText}</div>
+      <p style="color: #6B7280; font-size: 14px;">${BRANDING.tagline}</p>
+    </div>
+    <div class="card">
+      <div class="title">Interview Completed</div>
+      <div class="message">${candidateName} has completed the ${assessmentTitle} assessment.</div>
+      <div style="margin: 24px 0;">
+        <div class="info-row">
+          <span class="info-label">Candidate</span>
+          <span class="info-value">${candidateName}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Completed</span>
+          <span class="info-value">${completedAtFormatted}</span>
+        </div>
+        <div class="info-row" style="border-bottom: none;">
+          <span class="info-label">Duration</span>
+          <span class="info-value">${durationMinutes} minutes</span>
+        </div>
+      </div>
+      <div class="message">View the full interview recording, code snapshots, and detailed evaluation in your dashboard.</div>
+      <div style="text-align: center;">
+        <a href="${dashboardUrl}" class="cta-button">View Results</a>
+      </div>
+    </div>
+    <div class="footer">
+      <p>Powered by <strong style="color: #5E6AD2;">${BRANDING.name}</strong><br>${BRANDING.emailFooterText}</p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  const emailText = `
+Interview Completed
+
+${candidateName} has completed the ${assessmentTitle} assessment.
+
+Details:
+- Candidate: ${candidateName}
+- Completed: ${completedAtFormatted}
+- Duration: ${durationMinutes} minutes
+
+View the full results: ${dashboardUrl}
+
+---
+Powered by ${BRANDING.name}
+${BRANDING.emailFooterText}
+  `.trim();
+
+  try {
+    const result = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || BRANDING.defaultEmailFrom,
+      to,
+      subject: `${candidateName} completed ${assessmentTitle}`,
+      html: emailHtml,
+      text: emailText,
+    });
+
+    return { success: true, messageId: result.data?.id };
+  } catch (error) {
+    console.error("Failed to send completion notification:", error);
+    throw new Error("Failed to send completion notification");
+  }
+}
+
+/**
+ * Send password reset email
+ */
+export async function sendPasswordReset(params: {
+  to: string;
+  userName: string;
+  resetUrl: string;
+  expiresAt: Date;
+}) {
+  const { to, userName, resetUrl, expiresAt } = params;
+
+  const expiresAtFormatted = expiresAt.toLocaleString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reset Password</title>
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #000000; color: #ffffff; }
+    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+    .header { text-align: center; margin-bottom: 40px; }
+    .logo { font-size: 24px; font-weight: bold; color: #5E6AD2; margin-bottom: 8px; }
+    .card { background: #0A0A0A; border: 1px solid #1A1A1A; border-radius: 8px; padding: 32px; }
+    .title { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: #ffffff; }
+    .message { font-size: 14px; line-height: 1.6; color: #9CA3AF; margin-bottom: 24px; }
+    .cta-button { display: inline-block; background: #5E6AD2; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-weight: 500; font-size: 16px; margin: 24px 0; }
+    .cta-button:hover { background: #6B77E1; }
+    .warning { background: #1A1A1A; border: 1px solid #2A2A2A; border-radius: 6px; padding: 12px; margin-top: 24px; font-size: 13px; color: #9CA3AF; }
+    .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 1px solid #1A1A1A; color: #6B7280; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">${BRANDING.emailLogoText}</div>
+      <p style="color: #6B7280; font-size: 14px;">${BRANDING.tagline}</p>
+    </div>
+    <div class="card">
+      <div class="title">Reset Your Password</div>
+      <div class="message">Hi ${userName},</div>
+      <div class="message">We received a request to reset your password for your ${BRANDING.name} account.</div>
+      <div style="text-align: center;">
+        <a href="${resetUrl}" class="cta-button">Reset Password</a>
+      </div>
+      <div class="warning">This link will expire at ${expiresAtFormatted}. If you didn't request this password reset, you can safely ignore this email.</div>
+      <div class="message" style="font-size: 12px; margin-top: 16px;">
+        Or copy and paste this link into your browser:<br>${resetUrl}
+      </div>
+    </div>
+    <div class="footer">
+      <p>Powered by <strong style="color: #5E6AD2;">${BRANDING.name}</strong><br>${BRANDING.emailFooterText}</p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  const emailText = `
+Reset Your Password
+
+Hi ${userName},
+
+We received a request to reset your password for your ${BRANDING.name} account.
+
+Reset your password: ${resetUrl}
+
+This link will expire at ${expiresAtFormatted}. If you didn't request this password reset, you can safely ignore this email.
+
+---
+Powered by ${BRANDING.name}
+${BRANDING.emailFooterText}
+  `.trim();
+
+  try {
+    const result = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || BRANDING.defaultEmailFrom,
+      to,
+      subject: `Reset your ${BRANDING.name} password`,
+      html: emailHtml,
+      text: emailText,
+    });
+
+    return { success: true, messageId: result.data?.id };
+  } catch (error) {
+    console.error("Failed to send password reset email:", error);
+    throw new Error("Failed to send password reset email");
+  }
+}
+
+/**
+ * Test email connection
+ */
+export async function testEmailConnection(): Promise<boolean> {
+  try {
+    if (!process.env.RESEND_API_KEY) {
+      console.warn('[Email] RESEND_API_KEY not configured');
+      return false;
+    }
+    console.log('[Email] Connection OK');
+    return true;
+  } catch (error) {
+    console.error('[Email] Connection test failed:', error);
+    return false;
+  }
+}
+
 export const emailService = {
   sendInvitationEmail,
+  sendCompletionNotification,
+  sendPasswordReset,
+  testEmailConnection,
 };
