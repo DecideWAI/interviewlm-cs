@@ -233,34 +233,52 @@ export async function POST(
       );
     }
 
+    // Record EVERY file change to session (comprehensive tracking)
+    let previousContent: string | undefined;
+    if (candidate.sessionRecording) {
+      // IMPORTANT: Fetch previous content BEFORE writing new content
+      // This allows us to calculate diffs
+      try {
+        previousContent = await modal.readFile(volumeId, path);
+      } catch (error) {
+        // File doesn't exist yet, this is a new file
+        previousContent = undefined;
+      }
+    }
+
     // Write file to Modal volume
     await modal.writeFile(volumeId, path, content);
 
-    // Record code change event (for session replay)
+    // Record file change events after write
     if (candidate.sessionRecording) {
+      // Record file write event (for session replay timeline)
       await sessions.recordEvent(candidate.sessionRecording.id, {
-        type: "code_edit",
+        type: "file_write",
         data: {
-          fileName: path,
+          filePath: path,
+          fileName: path.split("/").pop() || path,
           language: language || getLanguageFromExtension(path),
-          content,
+          size: Buffer.byteLength(content, "utf8"),
+          isNewFile: !previousContent,
+          linesChanged: previousContent
+            ? Math.abs(content.split("\n").length - previousContent.split("\n").length)
+            : content.split("\n").length,
           timestamp: new Date().toISOString(),
         },
       });
 
-      // Create code snapshot for significant changes
-      const isSignificantChange = content.length > 50; // Simple heuristic
-      if (isSignificantChange) {
-        await sessions.recordCodeSnapshot(
-          candidate.sessionRecording.id,
-          {
-            fileId: path,
-            fileName: path.split("/").pop() || path,
-            language: language || getLanguageFromExtension(path),
-            content,
-          }
-        );
-      }
+      // ALWAYS create code snapshot (no "significant change" filter)
+      // Every file write is important for comprehensive session replay
+      await sessions.recordCodeSnapshot(
+        candidate.sessionRecording.id,
+        {
+          fileId: path,
+          fileName: path.split("/").pop() || path,
+          language: language || getLanguageFromExtension(path),
+          content,
+        },
+        previousContent // Pass previous content for diff calculation
+      );
     }
 
     return NextResponse.json({
