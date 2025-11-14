@@ -401,7 +401,7 @@ ${helpfulnessConfig.allowedTools.join(', ')}
 
   /**
    * Tool implementations
-   * These would interact with the Modal sandbox in production
+   * These interact with the Modal sandbox for real file operations
    */
 
   private async toolRead(filePath: string): Promise<unknown> {
@@ -411,13 +411,27 @@ ${helpfulnessConfig.allowedTools.join(', ')}
       return { success: false, error: pathCheck.reason };
     }
 
-    // TODO: Implement actual file reading from Modal sandbox
-    // For now, return a placeholder
-    return {
-      success: true,
-      content: '// File content would be read from Modal sandbox',
-      path: filePath,
-    };
+    try {
+      // Import Modal service dynamically
+      const { readFile } = await import('../services/modal-production');
+
+      // Get volume ID from session
+      const volumeId = `vol-${this.config.sessionId}`;
+
+      // Read file from Modal
+      const content = await readFile(volumeId, filePath);
+
+      return {
+        success: true,
+        content,
+        path: filePath,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to read file',
+      };
+    }
   }
 
   private async toolWrite(filePath: string, content: string): Promise<unknown> {
@@ -427,12 +441,27 @@ ${helpfulnessConfig.allowedTools.join(', ')}
       return { success: false, error: pathCheck.reason };
     }
 
-    // TODO: Implement actual file writing to Modal sandbox
-    return {
-      success: true,
-      path: filePath,
-      bytesWritten: content.length,
-    };
+    try {
+      // Import Modal service dynamically
+      const { writeFile } = await import('../services/modal-production');
+
+      // Get volume ID from session
+      const volumeId = `vol-${this.config.sessionId}`;
+
+      // Write file to Modal
+      await writeFile(volumeId, filePath, content);
+
+      return {
+        success: true,
+        path: filePath,
+        bytesWritten: content.length,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to write file',
+      };
+    }
   }
 
   private async toolEdit(
@@ -446,28 +475,129 @@ ${helpfulnessConfig.allowedTools.join(', ')}
       return { success: false, error: pathCheck.reason };
     }
 
-    // TODO: Implement actual file editing in Modal sandbox
-    return {
-      success: true,
-      path: filePath,
-      replacements: 1,
-    };
+    try {
+      // Import Modal service dynamically
+      const { readFile, writeFile } = await import('../services/modal-production');
+
+      // Get volume ID from session
+      const volumeId = `vol-${this.config.sessionId}`;
+
+      // Read current file content
+      const currentContent = await readFile(volumeId, filePath);
+
+      // Perform replacement
+      const escapedOld = oldString.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const replacements = (currentContent.match(new RegExp(escapedOld, 'g')) || []).length;
+
+      if (replacements === 0) {
+        return {
+          success: false,
+          error: 'String not found in file',
+        };
+      }
+
+      const newContent = currentContent.replace(new RegExp(escapedOld, 'g'), newString);
+
+      // Write back to Modal
+      await writeFile(volumeId, filePath, newContent);
+
+      return {
+        success: true,
+        path: filePath,
+        replacements,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to edit file',
+      };
+    }
   }
 
   private async toolGrep(pattern: string, path?: string): Promise<unknown> {
-    // TODO: Implement grep in Modal sandbox
-    return {
-      success: true,
-      matches: [],
-    };
+    try {
+      // Import Modal service dynamically
+      const { getFileSystem, readFile } = await import('../services/modal-production');
+
+      // Get volume ID from session
+      const volumeId = `vol-${this.config.sessionId}`;
+      const sessionId = this.config.sessionId;
+
+      // Get all files
+      const files = await getFileSystem(sessionId, path || '/');
+
+      const matches: Array<{ file: string; line: number; text: string }> = [];
+      const regex = new RegExp(pattern);
+
+      // Search through files
+      for (const file of files) {
+        if (file.type === 'file') {
+          try {
+            const content = await readFile(volumeId, file.path);
+            const lines = content.split('\n');
+
+            lines.forEach((line, index) => {
+              if (regex.test(line)) {
+                matches.push({
+                  file: file.path,
+                  line: index + 1,
+                  text: line.trim(),
+                });
+              }
+            });
+          } catch {
+            // Skip files that can't be read
+          }
+        }
+      }
+
+      return {
+        success: true,
+        matches,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Grep failed',
+        matches: [],
+      };
+    }
   }
 
   private async toolGlob(pattern: string): Promise<unknown> {
-    // TODO: Implement glob in Modal sandbox
-    return {
-      success: true,
-      files: [],
-    };
+    try {
+      // Import Modal service dynamically
+      const { getFileSystem } = await import('../services/modal-production');
+
+      const sessionId = this.config.sessionId;
+
+      // Get all files
+      const allFiles = await getFileSystem(sessionId, '/');
+
+      // Simple glob matching (supports ** and *)
+      const regex = new RegExp(
+        '^' + pattern
+          .replace(/\*\*/g, '.*')
+          .replace(/\*/g, '[^/]*')
+          .replace(/\./g, '\\.')
+          + '$'
+      );
+
+      const matchedFiles = allFiles
+        .filter(file => file.type === 'file' && regex.test(file.path))
+        .map(file => file.path);
+
+      return {
+        success: true,
+        files: matchedFiles,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Glob failed',
+        files: [],
+      };
+    }
   }
 
   private async toolBash(command: string): Promise<unknown> {
@@ -483,31 +613,45 @@ ${helpfulnessConfig.allowedTools.join(', ')}
       return { success: false, error: bashCheck.reason };
     }
 
-    // TODO: Implement actual bash execution in Modal sandbox
-    const output = {
-      success: true,
-      stdout: '// Command output from Modal sandbox',
-      stderr: '',
-      exitCode: 0,
-    };
+    try {
+      // Import Modal service dynamically
+      const { runCommand } = await import('../services/modal-production');
 
-    // Sanitize output
-    return sanitizeToolOutput('execute_bash', output);
+      const sessionId = this.config.sessionId;
+
+      // Execute command in Modal
+      const result = await runCommand(sessionId, command);
+
+      const output = {
+        success: result.exitCode === 0,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      };
+
+      // Sanitize output
+      return sanitizeToolOutput('execute_bash', output);
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Command execution failed',
+        stdout: '',
+        stderr: '',
+        exitCode: 1,
+      };
+    }
   }
 
   private async toolRunTests(): Promise<unknown> {
-    // TODO: Implement actual test execution in Modal sandbox
-    const output = {
-      success: true,
-      passed: 5,
-      total: 5,
-      testResults: [
-        { name: 'test_example', passed: true, error: null },
-      ],
+    // NOTE: Test running is handled separately via the run-tests API endpoint
+    // This tool just directs users to use the proper interface
+    return {
+      success: false,
+      error: 'Please use the "Run Tests" button in the interface to execute tests with proper validation and scoring.',
+      passed: 0,
+      total: 0,
+      testResults: [],
     };
-
-    // Sanitize to hide evaluation metrics
-    return sanitizeToolOutput('run_tests', output);
   }
 }
 

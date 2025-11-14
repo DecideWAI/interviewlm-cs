@@ -14,15 +14,15 @@ export type {
 } from "./claude";
 
 // Modal AI Sandbox Service
-// Using Modal Volumes for file storage, Redis for operation tracking
-// Production-ready with persistent volumes and full sandbox management
-export * as modalService from "./modal";
+// Production implementation using deployed Modal.com web endpoints
+// Real sandboxed code execution with file storage
+export * as modalService from "./modal-production";
 export type {
   TestResult,
   ExecutionResult,
   FileNode,
   SandboxInstance,
-} from "./modal";
+} from "./modal-production";
 
 // S3 Storage Service
 export * as s3Service from "./s3";
@@ -60,7 +60,7 @@ export {
   createSandbox,
   listActiveSandboxes,
   runCommand,
-} from "./modal";
+} from "./modal-production";
 
 export {
   uploadSessionRecording,
