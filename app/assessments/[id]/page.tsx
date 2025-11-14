@@ -58,7 +58,13 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
       }
 
       const data = await response.json();
-      setAssessment(data.assessment);
+      // API returns { assessment, candidates, statistics } as separate properties
+      // Combine them for easier access in the component
+      setAssessment({
+        ...data.assessment,
+        candidates: data.candidates || [],
+        statistics: data.statistics || {},
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
       console.error("Error fetching assessment details:", err);
@@ -96,17 +102,28 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
   const assessmentCandidates = assessment.candidates || [];
   const problemSeeds = assessment.questions || [];
 
+  // API returns statistics object with specific property names
+  const statistics = assessment.statistics || {
+    totalCandidates: 0,
+    completedCount: 0,
+    inProgressCount: 0,
+    invitedCount: 0,
+    avgScore: null,
+    completionRate: 0,
+    passRate: 0,
+  };
+
   const stats = {
-    total: assessment.statistics.totalCandidates,
-    completed: assessment.statistics.completedCandidates,
-    inProgress: assessment.statistics.inProgressCandidates,
-    invited: assessment.statistics.invitedCandidates,
+    total: statistics.totalCandidates,
+    completed: statistics.completedCount,
+    inProgress: statistics.inProgressCount,
+    invited: statistics.invitedCount,
   };
 
   const perf = {
-    avgScore: assessment.statistics.avgScore || 0,
-    completionRate: assessment.statistics.completionRate,
-    passRate: assessment.statistics.passRate || 0,
+    avgScore: statistics.avgScore || 0,
+    completionRate: statistics.completionRate,
+    passRate: statistics.passRate / 100, // API returns percentage (0-100), convert to decimal
   };
 
   const getStatusVariant = () => {
