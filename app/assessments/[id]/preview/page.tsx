@@ -1,11 +1,14 @@
 "use client";
 
-import { use } from "react";
+import { use, useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Eye, Play } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
+import { ArrowLeft, Eye, Play, AlertCircle } from "lucide-react";
+import { toast } from "sonner";
 
 // Dynamic import to avoid SSR issues with xterm.js
 const InterviewPreview = dynamic(
@@ -19,16 +22,103 @@ interface PreviewPageProps {
 
 export default function AssessmentPreviewPage({ params }: PreviewPageProps) {
   const { id } = use(params);
+  const router = useRouter();
 
-  // TODO: Fetch actual assessment config from backend
-  const mockAssessment = {
-    id,
-    title: "Senior Full-Stack Developer Assessment",
-    role: "Full-Stack Engineer",
-    seniority: "Senior",
-    duration: 90,
-    description: "Comprehensive assessment for senior full-stack engineering candidates",
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [assessment, setAssessment] = useState<any>(null);
+  const [isStartingPreview, setIsStartingPreview] = useState(false);
+
+  useEffect(() => {
+    fetchAssessment();
+  }, [id]);
+
+  const fetchAssessment = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/assessments/${id}`);
+
+      if (!response.ok) {
+        throw new Error("Failed to fetch assessment");
+      }
+
+      const data = await response.json();
+      setAssessment(data.assessment);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An error occurred");
+      console.error("Error fetching assessment:", err);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  const handleStartLivePreview = async () => {
+    setIsStartingPreview(true);
+
+    try {
+      const response = await fetch(`/api/assessments/${id}/start-preview`, {
+        method: "POST",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 403 && data.error === "Preview limit reached") {
+          toast.error("Preview Limit Reached", {
+            description: data.message,
+            duration: 6000,
+          });
+        } else {
+          throw new Error(data.error || "Failed to start preview");
+        }
+        setIsStartingPreview(false);
+        return;
+      }
+
+      // Show success message
+      toast.success("Starting preview session", {
+        description: `${data.remainingPreviews} preview${data.remainingPreviews !== 1 ? 's' : ''} remaining`,
+        duration: 2000,
+      });
+
+      // Redirect to full interview session
+      router.push(`/interview/${data.candidateId}`);
+    } catch (err) {
+      console.error("Error starting preview:", err);
+      toast.error("Failed to start preview", {
+        description: err instanceof Error ? err.message : "Unknown error",
+        duration: 4000,
+      });
+      setIsStartingPreview(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (error || !assessment) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="h-12 w-12 text-error mx-auto mb-4" />
+          <p className="text-text-primary mb-4">{error || "Assessment not found"}</p>
+          <Link href="/assessments">
+            <Button variant="outline">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Assessments
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -51,23 +141,26 @@ export default function AssessmentPreviewPage({ params }: PreviewPageProps) {
                     Preview Mode
                   </Badge>
                   <h1 className="text-lg font-semibold text-text-primary">
-                    {mockAssessment.title}
+                    {assessment.title}
                   </h1>
                 </div>
                 <p className="text-sm text-text-tertiary">
-                  {mockAssessment.role} • {mockAssessment.seniority} • {mockAssessment.duration} min
+                  {assessment.role} • {assessment.seniority} • {assessment.duration} min
                 </p>
               </div>
             </div>
 
             <div className="flex items-center gap-3">
-              <Link href={`/interview/demo`}>
-                <Button variant="primary">
-                  <Play className="h-4 w-4 mr-2" />
-                  Start Live Preview
-                </Button>
-              </Link>
-              <Link href="/assessments">
+              <Button
+                variant="primary"
+                onClick={handleStartLivePreview}
+                disabled={isStartingPreview || (assessment.previewSessionsUsed >= assessment.previewLimit)}
+                loading={isStartingPreview}
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {isStartingPreview ? "Starting..." : "Start Live Preview"}
+              </Button>
+              <Link href={`/assessments/${id}`}>
                 <Button variant="outline">Exit Preview</Button>
               </Link>
             </div>
@@ -91,6 +184,9 @@ export default function AssessmentPreviewPage({ params }: PreviewPageProps) {
                   environment includes a code editor, terminal, file explorer, and AI chat.
                   Click "Start Live Preview" to experience the full interactive assessment.
                 </p>
+                <p className="text-xs text-text-tertiary mt-2">
+                  💡 Previews remaining: <span className="font-semibold text-primary">{assessment.previewLimit - (assessment.previewSessionsUsed || 0)}</span> / {assessment.previewLimit}
+                </p>
               </div>
             </div>
           </div>
@@ -99,15 +195,15 @@ export default function AssessmentPreviewPage({ params }: PreviewPageProps) {
           <div className="grid md:grid-cols-3 gap-6 mb-6">
             <div className="p-4 bg-background-secondary border border-border rounded-lg">
               <p className="text-sm text-text-tertiary mb-1">Role</p>
-              <p className="font-medium text-text-primary">{mockAssessment.role}</p>
+              <p className="font-medium text-text-primary">{assessment.role}</p>
             </div>
             <div className="p-4 bg-background-secondary border border-border rounded-lg">
               <p className="text-sm text-text-tertiary mb-1">Seniority Level</p>
-              <p className="font-medium text-text-primary">{mockAssessment.seniority}</p>
+              <p className="font-medium text-text-primary">{assessment.seniority}</p>
             </div>
             <div className="p-4 bg-background-secondary border border-border rounded-lg">
               <p className="text-sm text-text-tertiary mb-1">Duration</p>
-              <p className="font-medium text-text-primary">{mockAssessment.duration} minutes</p>
+              <p className="font-medium text-text-primary">{assessment.duration} minutes</p>
             </div>
           </div>
 
@@ -138,12 +234,15 @@ export default function AssessmentPreviewPage({ params }: PreviewPageProps) {
                   Modify Configuration
                 </Button>
               </Link>
-              <Link href={`/interview/demo`}>
-                <Button variant="primary">
-                  <Play className="h-4 w-4 mr-2" />
-                  Start Live Preview
-                </Button>
-              </Link>
+              <Button
+                variant="primary"
+                onClick={handleStartLivePreview}
+                disabled={isStartingPreview || (assessment.previewSessionsUsed >= assessment.previewLimit)}
+                loading={isStartingPreview}
+              >
+                <Play className="h-4 w-4 mr-2" />
+                {isStartingPreview ? "Starting..." : "Start Live Preview"}
+              </Button>
             </div>
           </div>
         </div>

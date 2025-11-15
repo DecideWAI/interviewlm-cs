@@ -54,6 +54,14 @@ export async function GET(
             email: true,
           },
         },
+        questions: {
+          include: {
+            problemSeed: true,
+          },
+          orderBy: {
+            order: "asc",
+          },
+        },
         candidates: {
           include: {
             sessionRecording: {
@@ -151,12 +159,15 @@ export async function GET(
         enableCoding: assessment.enableCoding,
         enableTerminal: assessment.enableTerminal,
         enableAI: assessment.enableAI,
+        previewSessionsUsed: assessment.previewSessionsUsed,
+        previewLimit: assessment.previewLimit,
         organization: assessment.organization,
         createdBy: assessment.createdBy,
         createdAt: assessment.createdAt,
         publishedAt: assessment.publishedAt,
         updatedAt: assessment.updatedAt,
       },
+      questions: assessment.questions || [],
       candidates: assessment.candidates.map((c: any) => ({
         id: c.id,
         name: c.name,
