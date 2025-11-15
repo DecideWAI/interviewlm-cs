@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TIER_LIMITS, TIER_INFO } from "@/lib/assessment-config";
+import { TeamInviteDialog } from "@/components/team/TeamInviteDialog";
 
 type SettingsSection =
   | "account"
@@ -753,11 +754,21 @@ function NotificationsSection({ settings }: { settings: any }) {
 
 // Team Section
 function TeamSection({ tierLimits, teamMembers }: any) {
+  const [showInviteDialog, setShowInviteDialog] = useState(false);
   const currentMembers = teamMembers?.length || 0;
   const maxMembers = tierLimits.maxTeamMembers;
   const canAddMore = typeof maxMembers === "string" || currentMembers < maxMembers;
 
   return (
+    <>
+      <TeamInviteDialog
+        open={showInviteDialog}
+        onClose={() => setShowInviteDialog(false)}
+        onSuccess={() => {
+          // Refresh team members list
+          window.location.reload();
+        }}
+      />
     <div className="space-y-6">
       <Card className="bg-background-secondary border-border p-6">
         <div className="flex items-center justify-between mb-4">
@@ -794,7 +805,7 @@ function TeamSection({ tierLimits, teamMembers }: any) {
         </div>
 
         {canAddMore ? (
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" onClick={() => setShowInviteDialog(true)}>
             <Users className="h-4 w-4 mr-2" />
             Invite Team Member
           </Button>
@@ -845,6 +856,7 @@ function TeamSection({ tierLimits, teamMembers }: any) {
         </div>
       </Card>
     </div>
+    </>
   );
 }
 
