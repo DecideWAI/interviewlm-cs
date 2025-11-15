@@ -140,6 +140,10 @@ model Assessment {
   enableTerminal Boolean         @default(true) @map("enable_terminal")
   enableAI       Boolean         @default(true) @map("enable_ai")
 
+  // Preview tracking
+  previewSessionsUsed Int        @default(0) @map("preview_sessions_used")
+  previewLimit        Int        @default(3) @map("preview_limit") // 3 previews per assessment
+
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
   publishedAt    DateTime?       @map("published_at")
@@ -210,6 +214,9 @@ model Candidate {
   email          String
   phone          String?
 
+  // Preview mode flag
+  isPreview      Boolean  @default(false) @map("is_preview")
+
   // Interview details
   status         CandidateStatus @default(INVITED)
   invitedAt      DateTime @default(now()) @map("invited_at")
@@ -245,6 +252,7 @@ model Candidate {
   sessionRecording SessionRecording?
   generatedQuestions GeneratedQuestion[]
 
+  @@index([isPreview])
   @@map("candidates")
 }
 
