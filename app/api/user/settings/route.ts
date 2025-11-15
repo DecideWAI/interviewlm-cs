@@ -10,25 +10,32 @@ import { getSession } from "@/lib/auth-helpers";
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
+    console.log("Settings API - Session:", session ? "exists" : "null");
 
     if (!session?.user?.id) {
+      console.log("Settings API - No session or user ID");
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
 
+    console.log("Settings API - User ID:", session.user.id);
+
     // Get user with full organization data
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
       include: {
-        organizationMembers: {
+        organizationMember: {
           include: {
             organization: true,
           },
         },
       },
     });
+
+    console.log("Settings API - User found:", user ? "yes" : "no");
+    console.log("Settings API - Organization members:", user?.organizationMember?.length || 0);
 
     if (!user) {
       return NextResponse.json(
@@ -37,7 +44,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const primaryOrg = user.organizationMembers?.[0];
+    const primaryOrg = user.organizationMember?.[0];
     const organizationId = primaryOrg?.organizationId;
 
     // Get team members if in an organization
@@ -66,8 +73,8 @@ export async function GET(request: NextRequest) {
       }));
     }
 
-    // Get current tier info from organization or default
-    const currentTier = primaryOrg?.organization?.tier || "small";
+    // Get current plan info from organization or default
+    const currentPlan = primaryOrg?.organization?.plan || "FREE";
 
     return NextResponse.json({
       user: {
@@ -83,7 +90,7 @@ export async function GET(request: NextRequest) {
         ? {
             id: primaryOrg.organization.id,
             name: primaryOrg.organization.name,
-            tier: currentTier,
+            plan: currentPlan,
             createdAt: primaryOrg.organization.createdAt,
           }
         : null,

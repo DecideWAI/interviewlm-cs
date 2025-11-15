@@ -55,9 +55,16 @@ export default function SettingsPage() {
     try {
       const response = await fetch("/api/user/settings");
       if (!response.ok) {
-        throw new Error("Failed to fetch settings");
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Settings API error:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData,
+        });
+        throw new Error(errorData.message || `Failed to fetch settings (${response.status})`);
       }
       const data = await response.json();
+      console.log("Settings data received:", data);
       setSettingsData(data);
       setError(null);
     } catch (err) {
@@ -68,9 +75,23 @@ export default function SettingsPage() {
     }
   };
 
-  const currentTier = settingsData?.organization?.tier || "small";
-  const tierLimits = TIER_LIMITS[currentTier];
-  const tierInfo = TIER_INFO[currentTier];
+  // Map database Plan enum to frontend tier names
+  const planToTierMap: Record<string, string> = {
+    FREE: "payg",
+    STARTUP: "small",
+    GROWTH: "medium",
+    ENTERPRISE: "enterprise",
+  };
+
+  const dbPlan = settingsData?.organization?.plan || "FREE";
+  const currentTier = planToTierMap[dbPlan] || "payg";
+
+  console.log("Settings page - dbPlan:", dbPlan, "currentTier:", currentTier);
+  console.log("TIER_LIMITS keys:", Object.keys(TIER_LIMITS));
+  console.log("TIER_INFO keys:", Object.keys(TIER_INFO));
+
+  const tierLimits = TIER_LIMITS[currentTier as keyof typeof TIER_LIMITS] || TIER_LIMITS.payg;
+  const tierInfo = TIER_INFO[currentTier as keyof typeof TIER_INFO] || TIER_INFO.payg;
 
   const handleSave = async () => {
     setIsSaving(true);
@@ -153,7 +174,7 @@ export default function SettingsPage() {
               </Card>
             )}
 
-            {!loading && !error && settingsData && (
+            {!loading && !error && settingsData && tierLimits && tierInfo && (
               <>
                 {activeSection === "account" && <AccountSection user={settingsData.user} organization={settingsData.organization} />}
                 {activeSection === "billing" && <BillingSection currentTier={currentTier} tierLimits={tierLimits} tierInfo={tierInfo} />}
