@@ -79,8 +79,8 @@ export async function GET(request: NextRequest) {
       completedPrevMonth,
       totalCandidates,
       totalPrevCandidates,
-      sessions,
-      prevSessions,
+      candidatesThisPeriod,
+      candidatesPrevPeriod,
     ] = await Promise.all([
       // Completed assessments this period
       prisma.candidate.count({
@@ -110,28 +110,18 @@ export async function GET(request: NextRequest) {
           invitedAt: { gte: previousStartDate, lt: startDate },
         },
       }),
-      // Sessions this period
-      prisma.interviewSession.findMany({
+      // Candidates with sessions this period
+      prisma.candidate.findMany({
         where: {
-          candidate: {
-            organizationId: userOrg.organizationId,
-          },
+          organizationId: userOrg.organizationId,
           createdAt: { gte: startDate, lte: now },
         },
-        include: {
-          candidate: true,
-        },
       }),
-      // Sessions previous period
-      prisma.interviewSession.findMany({
+      // Candidates with sessions previous period
+      prisma.candidate.findMany({
         where: {
-          candidate: {
-            organizationId: userOrg.organizationId,
-          },
+          organizationId: userOrg.organizationId,
           createdAt: { gte: previousStartDate, lt: startDate },
-        },
-        include: {
-          candidate: true,
         },
       }),
     ]);
@@ -144,22 +134,22 @@ export async function GET(request: NextRequest) {
       : 0;
 
     // Calculate pass rate (candidates with overallScore >= 70)
-    const passedCandidates = sessions.filter(s => s.candidate.overallScore && s.candidate.overallScore >= 70).length;
+    const passedCandidates = candidatesThisPeriod.filter(c => c.overallScore && c.overallScore >= 70).length;
     const passRate = completedThisMonth > 0 ? (passedCandidates / completedThisMonth) * 100 : 0;
 
-    const prevPassedCandidates = prevSessions.filter(s => s.candidate.overallScore && s.candidate.overallScore >= 70).length;
+    const prevPassedCandidates = candidatesPrevPeriod.filter(c => c.overallScore && c.overallScore >= 70).length;
     const prevPassRate = completedPrevMonth > 0 ? (prevPassedCandidates / completedPrevMonth) * 100 : 0;
     const passRateTrend = prevPassRate > 0 ? ((passRate - prevPassRate) / prevPassRate) * 100 : 0;
 
-    // Calculate AI proficiency (average AI collaboration score)
-    const candidatesWithAIScore = sessions.filter(s => s.candidate.aiCollaborationScore).map(s => s.candidate);
-    const avgAIProficiency = candidatesWithAIScore.length > 0
-      ? candidatesWithAIScore.reduce((sum, c) => sum + (c.aiCollaborationScore || 0), 0) / candidatesWithAIScore.length
+    // Calculate average score as AI proficiency proxy
+    const candidatesWithScore = candidatesThisPeriod.filter(c => c.overallScore);
+    const avgAIProficiency = candidatesWithScore.length > 0
+      ? candidatesWithScore.reduce((sum, c) => sum + (c.overallScore || 0), 0) / candidatesWithScore.length
       : 0;
 
-    const prevCandidatesWithAIScore = prevSessions.filter(s => s.candidate.aiCollaborationScore).map(s => s.candidate);
-    const prevAvgAIProficiency = prevCandidatesWithAIScore.length > 0
-      ? prevCandidatesWithAIScore.reduce((sum, c) => sum + (c.aiCollaborationScore || 0), 0) / prevCandidatesWithAIScore.length
+    const prevCandidatesWithScore = candidatesPrevPeriod.filter(c => c.overallScore);
+    const prevAvgAIProficiency = prevCandidatesWithScore.length > 0
+      ? prevCandidatesWithScore.reduce((sum, c) => sum + (c.overallScore || 0), 0) / prevCandidatesWithScore.length
       : 0;
     const aiProficiencyTrend = prevAvgAIProficiency > 0
       ? ((avgAIProficiency - prevAvgAIProficiency) / prevAvgAIProficiency) * 100

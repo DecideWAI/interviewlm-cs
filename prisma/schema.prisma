@@ -88,6 +88,7 @@ model Organization {
 
   // Billing
   plan        Plan     @default(FREE)
+  credits     Int      @default(0) // Available assessment credits
 
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -97,6 +98,7 @@ model Organization {
   assessments Assessment[]
   candidates  Candidate[]
   problemSeeds ProblemSeed[]
+  creditTransactions CreditTransaction[]
 
   @@map("organizations")
 }
@@ -137,6 +139,10 @@ model Assessment {
   enableCoding   Boolean         @default(true) @map("enable_coding")
   enableTerminal Boolean         @default(true) @map("enable_terminal")
   enableAI       Boolean         @default(true) @map("enable_ai")
+
+  // Preview tracking
+  previewSessionsUsed Int        @default(0) @map("preview_sessions_used")
+  previewLimit        Int        @default(3) @map("preview_limit") // 3 previews per assessment
 
   createdAt      DateTime        @default(now()) @map("created_at")
   updatedAt      DateTime        @updatedAt @map("updated_at")
@@ -208,6 +214,9 @@ model Candidate {
   email          String
   phone          String?
 
+  // Preview mode flag
+  isPreview      Boolean  @default(false) @map("is_preview")
+
   // Interview details
   status         CandidateStatus @default(INVITED)
   invitedAt      DateTime @default(now()) @map("invited_at")
@@ -243,6 +252,7 @@ model Candidate {
   sessionRecording SessionRecording?
   generatedQuestions GeneratedQuestion[]
 
+  @@index([isPreview])
   @@map("candidates")
 }
 
@@ -470,4 +480,46 @@ enum QuestionStatus {
   IN_PROGRESS
   COMPLETED
   SKIPPED
+}
+
+enum TransactionType {
+  PURCHASE      // Credit purchase via Paddle
+  DEDUCTION     // Credit used for assessment
+  REFUND        // Credit refunded
+  ADJUSTMENT    // Manual adjustment by admin
+}
+
+// Credit Transaction Model for Payment Tracking
+model CreditTransaction {
+  id             String          @id @default(cuid())
+  organizationId String          @map("organization_id")
+
+  type           TransactionType
+  amount         Int             // Positive for additions, negative for deductions
+  balanceAfter   Int             @map("balance_after") // Balance after this transaction
+
+  // Payment details (for PURCHASE transactions)
+  paddleOrderId     String?   @map("paddle_order_id")
+  paddlePaymentId   String?   @map("paddle_payment_id")
+  amountPaid        Decimal?  @map("amount_paid") @db.Decimal(10, 2)
+  currency          String?
+
+  // Assessment reference (for DEDUCTION transactions)
+  assessmentId   String?         @map("assessment_id")
+  candidateId    String?         @map("candidate_id")
+
+  // Metadata
+  description    String?
+  metadata       Json?           // Additional transaction data
+
+  createdAt      DateTime        @default(now()) @map("created_at")
+  createdBy      String?         @map("created_by") // User who initiated transaction
+
+  // Relations
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([paddleOrderId])
+  @@index([assessmentId])
+  @@map("credit_transactions")
 }

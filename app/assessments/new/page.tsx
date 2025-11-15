@@ -18,13 +18,26 @@ export default function NewAssessmentPage() {
     setIsSaving(true);
 
     try {
+      // Extract and flatten tech stack from techStackRequirements
+      const techStack: string[] = [];
+      if (config.techStackRequirements) {
+        const allTech = [
+          ...config.techStackRequirements.critical,
+          ...config.techStackRequirements.required,
+          ...config.techStackRequirements.recommended,
+          ...config.techStackRequirements.optional,
+        ];
+        techStack.push(...allTech.map(tech => tech.name));
+      }
+
       // Map AssessmentConfig to API request format
       const requestBody = {
         title: config.title || "",
         description: config.description || undefined,
         role: config.role || "",
-        seniority: config.seniority || "MID",
-        techStack: config.techStack || [],
+        // Convert seniority to uppercase to match API enum
+        seniority: (config.seniority || "mid").toUpperCase(),
+        techStack: techStack.length > 0 ? techStack : ["JavaScript"], // Default to avoid validation error
         duration: config.duration || 60,
         enableCoding: config.aiAssistanceEnabled ?? true,
         enableTerminal: config.aiMonitoringEnabled ?? true,

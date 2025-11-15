@@ -19,6 +19,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { redisConnection } from '../lib/queues/config';
 import { QUEUE_NAMES } from '../lib/types/events';
 import { AGENT_MODEL_RECOMMENDATIONS } from '../lib/constants/models';
+import { moveToDeadLetterQueue } from '../lib/queues/dlq';
 import type {
   EvaluationEventType,
   EvaluationAnalyzeEventData,
@@ -120,8 +121,13 @@ class EvaluationAgentWorker {
       console.log(`[Evaluation Agent] Evaluated session: ${job.data.sessionId}`);
     });
 
-    this.worker.on('failed', (job, err) => {
+    this.worker.on('failed', async (job, err) => {
       console.error(`[Evaluation Agent] Failed to evaluate session: ${job?.data.sessionId}`, err);
+
+      // Move to dead letter queue if exceeded max attempts
+      if (job && job.attemptsMade >= (job.opts.attempts || 3)) {
+        await moveToDeadLetterQueue(QUEUE_NAMES.EVALUATION, job, err);
+      }
     });
 
     this.worker.on('error', (err) => {
@@ -699,6 +705,9 @@ Respond with ONLY a number between 0-100.`,
         claudeInteractions: true,
         codeSnapshots: true,
         terminalCommands: true,
+        testResults: {
+          orderBy: { timestamp: 'asc' },
+        },
       },
     });
 
@@ -725,7 +734,14 @@ Respond with ONLY a number between 0-100.`,
         filesModified: [],
         promptQuality: i.promptQuality,
       })),
-      testResults: [], // TODO: Fetch from test runs
+      testResults: session.testResults.map((t: any) => ({
+        timestamp: t.timestamp,
+        testName: t.testName,
+        passed: t.passed,
+        output: t.output || '',
+        error: t.error || undefined,
+        duration: t.duration || 0,
+      })),
       terminalCommands: session.terminalCommands.map((c: any) => ({
         timestamp: c.timestamp,
         command: c.command,
