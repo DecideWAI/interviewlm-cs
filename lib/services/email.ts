@@ -566,9 +566,107 @@ export async function testEmailConnection(): Promise<boolean> {
   }
 }
 
+/**
+ * Send email verification email
+ */
+export async function sendEmailVerification(params: {
+  to: string;
+  userName: string;
+  verificationUrl: string;
+  expiresAt: Date;
+}) {
+  const { to, userName, verificationUrl, expiresAt } = params;
+
+  const expiresAtFormatted = expiresAt.toLocaleString("en-US", {
+    month: "long",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verify Your Email</title>
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #000000; color: #ffffff; }
+    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+    .header { text-align: center; margin-bottom: 40px; }
+    .logo { font-size: 24px; font-weight: bold; color: #5E6AD2; margin-bottom: 8px; }
+    .card { background: #0A0A0A; border: 1px solid #1A1A1A; border-radius: 8px; padding: 32px; }
+    .title { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: #ffffff; }
+    .message { font-size: 14px; line-height: 1.6; color: #9CA3AF; margin-bottom: 24px; }
+    .cta-button { display: inline-block; background: #5E6AD2; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-weight: 500; font-size: 16px; margin: 24px 0; }
+    .cta-button:hover { background: #6B77E1; }
+    .warning { background: #1A1A1A; border: 1px solid #2A2A2A; border-radius: 6px; padding: 12px; margin-top: 24px; font-size: 13px; color: #9CA3AF; }
+    .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 1px solid #1A1A1A; color: #6B7280; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">${BRANDING.emailLogoText}</div>
+      <p style="color: #6B7280; font-size: 14px;">${BRANDING.tagline}</p>
+    </div>
+    <div class="card">
+      <div class="title">Verify Your Email Address</div>
+      <div class="message">Hi ${userName},</div>
+      <div class="message">Thanks for signing up for ${BRANDING.name}! Please verify your email address to get started.</div>
+      <div style="text-align: center;">
+        <a href="${verificationUrl}" class="cta-button">Verify Email Address</a>
+      </div>
+      <div class="warning">This link will expire on ${expiresAtFormatted}. If you didn't create an account, you can safely ignore this email.</div>
+      <div class="message" style="font-size: 12px; margin-top: 16px;">
+        Or copy and paste this link into your browser:<br>${verificationUrl}
+      </div>
+    </div>
+    <div class="footer">
+      <p>Powered by <strong style="color: #5E6AD2;">${BRANDING.name}</strong><br>${BRANDING.emailFooterText}</p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  const emailText = `
+Verify Your Email Address
+
+Hi ${userName},
+
+Thanks for signing up for ${BRANDING.name}! Please verify your email address to get started.
+
+Verify your email: ${verificationUrl}
+
+This link will expire on ${expiresAtFormatted}. If you didn't create an account, you can safely ignore this email.
+
+---
+Powered by ${BRANDING.name}
+${BRANDING.emailFooterText}
+  `.trim();
+
+  try {
+    const result = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || BRANDING.defaultEmailFrom,
+      to,
+      subject: `Verify your ${BRANDING.name} email address`,
+      html: emailHtml,
+      text: emailText,
+    });
+
+    return { success: true, messageId: result.data?.id };
+  } catch (error) {
+    console.error("Failed to send email verification:", error);
+    throw new Error("Failed to send email verification");
+  }
+}
+
 export const emailService = {
   sendInvitationEmail,
   sendCompletionNotification,
   sendPasswordReset,
+  sendEmailVerification,
   testEmailConnection,
 };
