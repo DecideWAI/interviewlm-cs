@@ -220,7 +220,6 @@ export async function generateQuestion(
     // Try to get from cache first (unless seed is provided - those should be unique)
     let questionData: any = null;
     let tokensUsed = 0;
-    let cacheHit = false;
 
     if (!params.seed) {
       const cachedQuestion = await getCachedQuestion(
@@ -231,7 +230,7 @@ export async function generateQuestion(
 
       if (cachedQuestion) {
         questionData = cachedQuestion;
-        cacheHit = true;
+        tokensUsed = 0; // Cache hit - no tokens used
         console.log(
           `[Question Cache] Using cached question for ${adaptedDifficulty}/${params.language}`
         );
@@ -310,7 +309,7 @@ export async function generateQuestion(
     return {
       question,
       generationTime,
-      tokensUsed: response.usage.totalTokens,
+      tokensUsed,
       adaptedDifficulty,
     };
 
