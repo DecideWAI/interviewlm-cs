@@ -39,14 +39,12 @@ export async function getCachedQuestion(
   language: string,
   topic?: string
 ): Promise<any | null> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
     const cacheKey = generateQuestionCacheKey(difficulty, language, topic);
 
     // Get all cached questions for this key
     const cachedData = await redis.get(cacheKey);
-
-    redis.disconnect();
 
     if (!cachedData) {
       console.log(`[Question Cache] Cache miss for key: ${cacheKey}`);
@@ -66,6 +64,8 @@ export async function getCachedQuestion(
   } catch (error) {
     console.error("[Question Cache] Error getting cached question:", error);
     return null;
+  } finally {
+    redis.disconnect();
   }
 }
 
@@ -78,8 +78,8 @@ export async function cacheQuestion(
   questionData: any,
   topic?: string
 ): Promise<void> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
     const cacheKey = generateQuestionCacheKey(difficulty, language, topic);
 
     // Get existing cached questions
@@ -104,12 +104,12 @@ export async function cacheQuestion(
     // Store back in cache with TTL
     await redis.setex(cacheKey, CACHE_TTL, JSON.stringify(cachedQuestions));
 
-    redis.disconnect();
-
     console.log(`[Question Cache] Cached question for key: ${cacheKey} (total: ${cachedQuestions.length})`);
   } catch (error) {
     console.error("[Question Cache] Error caching question:", error);
     // Don't throw - caching failure shouldn't block question generation
+  } finally {
+    redis.disconnect();
   }
 }
 
@@ -120,9 +120,8 @@ export async function clearQuestionCache(
   difficulty?: string,
   language?: string
 ): Promise<number> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
-
     let pattern: string;
     if (difficulty && language) {
       pattern = `question:${difficulty.toLowerCase()}:${language.toLowerCase()}:*`;
@@ -135,13 +134,10 @@ export async function clearQuestionCache(
     const keys = await redis.keys(pattern);
 
     if (keys.length === 0) {
-      redis.disconnect();
       return 0;
     }
 
     const deleted = await redis.del(...keys);
-
-    redis.disconnect();
 
     console.log(`[Question Cache] Cleared ${deleted} cached questions matching pattern: ${pattern}`);
 
@@ -149,6 +145,8 @@ export async function clearQuestionCache(
   } catch (error) {
     console.error("[Question Cache] Error clearing cache:", error);
     return 0;
+  } finally {
+    redis.disconnect();
   }
 }
 
@@ -161,9 +159,8 @@ export async function getQuestionCacheStats(): Promise<{
   byDifficulty: Record<string, number>;
   byLanguage: Record<string, number>;
 }> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
-
     const keys = await redis.keys("question:*");
 
     const stats = {
@@ -191,8 +188,6 @@ export async function getQuestionCacheStats(): Promise<{
       }
     }
 
-    redis.disconnect();
-
     return stats;
   } catch (error) {
     console.error("[Question Cache] Error getting stats:", error);
@@ -202,5 +197,7 @@ export async function getQuestionCacheStats(): Promise<{
       byDifficulty: {},
       byLanguage: {},
     };
+  } finally {
+    redis.disconnect();
   }
 }

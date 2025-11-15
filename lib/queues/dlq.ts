@@ -10,7 +10,6 @@
 
 import { Queue, Job } from "bullmq";
 import { Redis } from "ioredis";
-import prisma from "@/lib/prisma";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -25,9 +24,8 @@ export async function moveToDeadLetterQueue(
   job: Job,
   error: Error
 ): Promise<void> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
-
     const dlqEntry = {
       jobId: job.id,
       queueName,
@@ -68,10 +66,10 @@ export async function moveToDeadLetterQueue(
     if (isCriticalJob(queueName, job.name)) {
       await sendFailureAlert(dlqEntry);
     }
-
-    redis.disconnect();
   } catch (dlqError) {
     console.error("[DLQ] Failed to move job to DLQ:", dlqError);
+  } finally {
+    redis.disconnect();
   }
 }
 
@@ -82,9 +80,8 @@ export async function getDeadLetterJobs(
   queueName: string,
   limit: number = 100
 ): Promise<any[]> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
-
     // Get job IDs from sorted set (most recent first)
     const jobIds = await redis.zrevrange(
       `${DLQ_KEY_PREFIX}${queueName}:index`,
@@ -100,12 +97,12 @@ export async function getDeadLetterJobs(
       })
     );
 
-    redis.disconnect();
-
     return jobs.filter((job) => job !== null);
   } catch (error) {
     console.error("[DLQ] Failed to get dead letter jobs:", error);
     return [];
+  } finally {
+    redis.disconnect();
   }
 }
 
@@ -116,9 +113,10 @@ export async function retryDeadLetterJob(
   queueName: string,
   jobId: string
 ): Promise<boolean> {
-  try {
-    const redis = new Redis(REDIS_URL);
+  const redis = new Redis(REDIS_URL);
+  let queue: Queue | null = null;
 
+  try {
     // Get job data from DLQ
     const dlqKey = `${DLQ_KEY_PREFIX}${queueName}:${jobId}`;
     const data = await redis.get(dlqKey);
@@ -131,7 +129,7 @@ export async function retryDeadLetterJob(
     const dlqEntry = JSON.parse(data);
 
     // Re-add to original queue
-    const queue = new Queue(queueName, {
+    queue = new Queue(queueName, {
       connection: redis,
     });
 
@@ -149,13 +147,15 @@ export async function retryDeadLetterJob(
 
     console.log(`[DLQ] Job ${jobId} retried from DLQ`);
 
-    await queue.close();
-    redis.disconnect();
-
     return true;
   } catch (error) {
     console.error("[DLQ] Failed to retry job:", error);
     return false;
+  } finally {
+    if (queue) {
+      await queue.close();
+    }
+    redis.disconnect();
   }
 }
 
@@ -163,9 +163,8 @@ export async function retryDeadLetterJob(
  * Clear dead letter queue for a specific queue
  */
 export async function clearDeadLetterQueue(queueName: string): Promise<number> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
-
     // Get all job IDs
     const jobIds = await redis.zrange(
       `${DLQ_KEY_PREFIX}${queueName}:index`,
@@ -183,14 +182,14 @@ export async function clearDeadLetterQueue(queueName: string): Promise<number> {
     // Delete index
     await redis.del(`${DLQ_KEY_PREFIX}${queueName}:index`);
 
-    redis.disconnect();
-
     console.log(`[DLQ] Cleared ${jobIds.length} jobs from DLQ for queue ${queueName}`);
 
     return jobIds.length;
   } catch (error) {
     console.error("[DLQ] Failed to clear DLQ:", error);
     return 0;
+  } finally {
+    redis.disconnect();
   }
 }
 
@@ -270,9 +269,8 @@ export async function getDeadLetterStats(): Promise<{
     newestFailure: number | null;
   };
 }> {
+  const redis = new Redis(REDIS_URL);
   try {
-    const redis = new Redis(REDIS_URL);
-
     // Get all DLQ index keys
     const keys = await redis.keys(`${DLQ_KEY_PREFIX}*:index`);
 
@@ -292,11 +290,11 @@ export async function getDeadLetterStats(): Promise<{
       };
     }
 
-    redis.disconnect();
-
     return stats;
   } catch (error) {
     console.error("[DLQ] Failed to get stats:", error);
     return {};
+  } finally {
+    redis.disconnect();
   }
 }
