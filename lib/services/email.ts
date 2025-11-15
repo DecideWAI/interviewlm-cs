@@ -663,10 +663,115 @@ ${BRANDING.emailFooterText}
   }
 }
 
+/**
+ * Send team invitation email
+ */
+export async function sendTeamInviteEmail(params: {
+  to: string;
+  inviterName: string;
+  organizationName: string;
+  role: string;
+  inviteUrl: string;
+  expiresAt: Date;
+}) {
+  const { to, inviterName, organizationName, role, inviteUrl, expiresAt } = params;
+
+  const expiresAtFormatted = expiresAt.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+  });
+
+  const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Team Invitation</title>
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #000000; color: #ffffff; }
+    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+    .header { text-align: center; margin-bottom: 40px; }
+    .logo { font-size: 24px; font-weight: bold; color: #5E6AD2; margin-bottom: 8px; }
+    .card { background: #0A0A0A; border: 1px solid #1A1A1A; border-radius: 8px; padding: 32px; }
+    .title { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: #ffffff; }
+    .message { font-size: 14px; line-height: 1.6; color: #9CA3AF; margin-bottom: 24px; }
+    .cta-button { display: inline-block; background: #5E6AD2; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-weight: 500; font-size: 16px; margin: 24px 0; }
+    .cta-button:hover { background: #6B77E1; }
+    .info-box { background: #1A1A1A; border: 1px solid #2A2A2A; border-radius: 6px; padding: 16px; margin-top: 24px; }
+    .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 1px solid #1A1A1A; color: #6B7280; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">${BRANDING.emailLogoText}</div>
+      <p style="color: #6B7280; font-size: 14px;">${BRANDING.tagline}</p>
+    </div>
+    <div class="card">
+      <div class="title">You're Invited!</div>
+      <div class="message">Hi there,</div>
+      <div class="message">${inviterName} has invited you to join <strong style="color: #ffffff;">${organizationName}</strong> on ${BRANDING.name} as a <strong style="color: #5E6AD2;">${role}</strong>.</div>
+      <div class="message">${BRANDING.name} is an AI-powered technical assessment platform that helps teams evaluate candidates' ability to work with modern coding tools.</div>
+      <div style="text-align: center;">
+        <a href="${inviteUrl}" class="cta-button">Accept Invitation</a>
+      </div>
+      <div class="info-box">
+        <p style="font-size: 13px; color: #9CA3AF; margin: 0;">
+          This invitation will expire on ${expiresAtFormatted}. If you didn't expect this invitation, you can safely ignore this email.
+        </p>
+      </div>
+      <div class="message" style="font-size: 12px; margin-top: 16px;">
+        Or copy and paste this link into your browser:<br>${inviteUrl}
+      </div>
+    </div>
+    <div class="footer">
+      <p>Powered by <strong style="color: #5E6AD2;">${BRANDING.name}</strong><br>${BRANDING.emailFooterText}</p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  const emailText = `
+You're Invited!
+
+Hi there,
+
+${inviterName} has invited you to join ${organizationName} on ${BRANDING.name} as a ${role}.
+
+${BRANDING.name} is an AI-powered technical assessment platform that helps teams evaluate candidates' ability to work with modern coding tools.
+
+Accept your invitation: ${inviteUrl}
+
+This invitation will expire on ${expiresAtFormatted}. If you didn't expect this invitation, you can safely ignore this email.
+
+---
+Powered by ${BRANDING.name}
+${BRANDING.emailFooterText}
+  `.trim();
+
+  try {
+    const result = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || BRANDING.defaultEmailFrom,
+      to,
+      subject: `You've been invited to join ${organizationName} on ${BRANDING.name}`,
+      html: emailHtml,
+      text: emailText,
+    });
+
+    return { success: true, messageId: result.data?.id };
+  } catch (error) {
+    console.error("Failed to send team invite email:", error);
+    throw new Error("Failed to send team invite email");
+  }
+}
+
 export const emailService = {
   sendInvitationEmail,
   sendCompletionNotification,
   sendPasswordReset,
   sendEmailVerification,
+  sendTeamInviteEmail,
   testEmailConnection,
 };
