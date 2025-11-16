@@ -144,20 +144,34 @@ model AssessmentQuestion {
 }
 
 model ProblemSeed {
-  id             String               @id @default(cuid())
-  organizationId String               @map("organization_id")
-  title          String
-  description    String
-  difficulty     Difficulty
-  category       String
-  tags           String[]             @default([])
-  starterCode    String?              @map("starter_code")
-  testCode       String?              @map("test_code")
-  language       String               @default("javascript")
-  createdAt      DateTime             @default(now()) @map("created_at")
-  updatedAt      DateTime             @updatedAt @map("updated_at")
-  questions      AssessmentQuestion[]
-  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  id                String               @id @default(cuid())
+  organizationId    String               @map("organization_id")
+  title             String
+  description       String
+  difficulty        Difficulty
+  category          String
+  tags              String[]             @default([])
+  starterCode       String?              @map("starter_code")
+  testCode          String?              @map("test_code")
+  language          String               @default("javascript")
+
+  // Seed management fields
+  createdBy         String?              @map("created_by") // User ID who created this seed
+  status            String               @default("active") // active, draft, archived
+  instructions      String?              // Detailed instructions for AI question generation
+  topics            String[]             @default([]) // e.g., ["arrays", "recursion", "dynamic-programming"]
+  estimatedTime     Int                  @default(30) @map("estimated_time") // Estimated time in minutes
+  usageCount        Int                  @default(0) @map("usage_count") // Number of times used in assessments
+  avgCandidateScore Float?               @map("avg_candidate_score") // Average candidate score (0-100)
+  parentSeedId      String?              @map("parent_seed_id") // For cloned seeds (copy-on-write)
+  isSystemSeed      Boolean              @default(false) @map("is_system_seed") // True for default system seeds
+
+  createdAt         DateTime             @default(now()) @map("created_at")
+  updatedAt         DateTime             @updatedAt @map("updated_at")
+  questions         AssessmentQuestion[]
+  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parentSeed        ProblemSeed?         @relation("SeedClones", fields: [parentSeedId], references: [id], onDelete: SetNull)
+  clonedSeeds       ProblemSeed[]        @relation("SeedClones")
 
   @@map("problem_seeds")
 }

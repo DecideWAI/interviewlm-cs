@@ -643,15 +643,35 @@ ${helpfulnessConfig.allowedTools.join(', ')}
   }
 
   private async toolRunTests(): Promise<unknown> {
-    // NOTE: Test running is handled separately via the run-tests API endpoint
-    // This tool just directs users to use the proper interface
-    return {
-      success: false,
-      error: 'Please use the "Run Tests" button in the interface to execute tests with proper validation and scoring.',
-      passed: 0,
-      total: 0,
-      testResults: [],
-    };
+    try {
+      // Import the test execution function
+      const { executeRunTests } = await import('../agent-tools/run-tests');
+
+      // Execute tests using the dedicated test runner
+      const result = await executeRunTests(
+        this.config.candidateId || '',
+        this.config.sessionId,
+        {}
+      );
+
+      return {
+        success: result.success,
+        passed: result.passed,
+        failed: result.failed,
+        total: result.total,
+        testResults: result.results,
+        error: result.error,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to run tests',
+        passed: 0,
+        failed: 0,
+        total: 0,
+        testResults: [],
+      };
+    }
   }
 }
 
