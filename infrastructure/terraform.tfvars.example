@@ -1,0 +1,125 @@
+# Terraform Variables Example
+# Copy this file to terraform.tfvars and fill in your values
+# cp terraform.tfvars.example terraform.tfvars
+
+# AWS Region
+aws_region = "us-east-1"
+
+# Project Configuration
+project_name = "interviewlm"
+
+# VPC Configuration (shared between environments)
+vpc_cidr           = "10.0.0.0/16"
+availability_zones = ["us-east-1a", "us-east-1b", "us-east-1c"]
+
+# Database Configuration
+db_name     = "interviewlm"
+db_username = "interviewlm_admin"
+
+# Container Images (update after building and pushing to ECR)
+# Format: <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/<REPOSITORY>:<TAG>
+container_image_staging    = "123456789012.dkr.ecr.us-east-1.amazonaws.com/interviewlm:staging-latest"
+container_image_production = "123456789012.dkr.ecr.us-east-1.amazonaws.com/interviewlm:production-latest"
+
+# Application URLs
+app_url_staging    = "http://staging.interviewlm.com"  # Or use ALB DNS initially
+app_url_production = "https://interviewlm.com"
+
+# SSL Certificates (optional - create in ACM first)
+# Leave as null to use HTTP only (for initial testing)
+ssl_certificate_arn_staging    = null  # Or "arn:aws:acm:us-east-1:123456789012:certificate/..."
+ssl_certificate_arn_production = null  # Or "arn:aws:acm:us-east-1:123456789012:certificate/..."
+
+# CORS Allowed Origins
+allowed_origins_staging = [
+  "http://localhost:3000",
+  "http://staging.interviewlm.com"
+]
+
+allowed_origins_production = [
+  "https://interviewlm.com",
+  "https://www.interviewlm.com"
+]
+
+# Environment-Specific Configurations
+# You can customize these, or use the defaults in variables.tf
+
+# environments = {
+#   staging = {
+#     # Database - Cost-optimized
+#     db_instance_class         = "db.t4g.micro"
+#     db_allocated_storage      = 20
+#     db_max_allocated_storage  = 50
+#     db_backup_retention_days  = 7
+#     db_multi_az               = false
+#     db_skip_final_snapshot    = true
+#
+#     # Redis - Minimal
+#     redis_node_type                = "cache.t4g.micro"
+#     redis_num_cache_nodes          = 1
+#     redis_engine_version           = "7.0"
+#     redis_parameter_group_family   = "redis7"
+#     redis_encryption_in_transit    = false
+#     redis_persistence_enabled      = false
+#     redis_snapshot_retention_days  = 1
+#
+#     # ECS - Use Fargate Spot for cost savings
+#     ecs_task_cpu              = 256
+#     ecs_task_memory           = 512
+#     ecs_desired_count         = 1
+#     ecs_min_capacity          = 1
+#     ecs_max_capacity          = 2
+#     ecs_cpu_target_value      = 75
+#     ecs_memory_target_value   = 80
+#     use_fargate_spot          = true
+#     enable_container_insights = false
+#     enable_ecs_exec           = true
+#
+#     # Storage
+#     enable_s3_versioning       = false
+#     recordings_retention_days  = 90
+#
+#     # Logging
+#     log_retention_days         = 7
+#     enable_deletion_protection = false
+#   }
+#
+#   production = {
+#     # Database - Production-grade
+#     db_instance_class         = "db.t4g.small"
+#     db_allocated_storage      = 100
+#     db_max_allocated_storage  = 500
+#     db_backup_retention_days  = 30
+#     db_multi_az               = true
+#     db_skip_final_snapshot    = false
+#
+#     # Redis - High availability
+#     redis_node_type                = "cache.t4g.small"
+#     redis_num_cache_nodes          = 2
+#     redis_engine_version           = "7.0"
+#     redis_parameter_group_family   = "redis7"
+#     redis_encryption_in_transit    = true
+#     redis_persistence_enabled      = true
+#     redis_snapshot_retention_days  = 7
+#
+#     # ECS - Production capacity
+#     ecs_task_cpu              = 512
+#     ecs_task_memory           = 1024
+#     ecs_desired_count         = 2
+#     ecs_min_capacity          = 2
+#     ecs_max_capacity          = 10
+#     ecs_cpu_target_value      = 70
+#     ecs_memory_target_value   = 80
+#     use_fargate_spot          = false
+#     enable_container_insights = true
+#     enable_ecs_exec           = false
+#
+#     # Storage
+#     enable_s3_versioning       = true
+#     recordings_retention_days  = 365
+#
+#     # Logging
+#     log_retention_days         = 30
+#     enable_deletion_protection = true
+#   }
+# }
