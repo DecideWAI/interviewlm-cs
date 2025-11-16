@@ -1,11 +1,8 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
-  provider = "prisma-client-js"
-  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+  provider        = "prisma-client-js"
   previewFeatures = []
-  engineType = "library"
+  binaryTargets   = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+  engineType      = "library"
 }
 
 datasource db {
@@ -13,24 +10,20 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// NextAuth.js Models
-// You can find the latest schema at: https://authjs.dev/getting-started/adapters/prisma
-
 model Account {
   id                String  @id @default(cuid())
   userId            String  @map("user_id")
   type              String
   provider          String
   providerAccountId String  @map("provider_account_id")
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
+  refresh_token     String?
+  access_token      String?
   expires_at        Int?
   token_type        String?
   scope             String?
-  id_token          String? @db.Text
+  id_token          String?
   session_state     String?
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
   @@map("accounts")
@@ -47,23 +40,20 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String?
-  email         String    @unique
-  emailVerified DateTime? @map("email_verified")
-  image         String?
-  password      String?   // For credentials provider
-  role          UserRole  @default(USER)
-
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-
-  // Relations
+  id                 String               @id @default(cuid())
+  name               String?
+  email              String               @unique
+  emailVerified      DateTime?            @map("email_verified")
+  image              String?
+  password           String?
+  role               UserRole             @default(USER)
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
   accounts           Account[]
-  sessions           Session[]
-  organizationMember OrganizationMember[]
   assessments        Assessment[]
   candidates         Candidate[]
+  organizationMember OrganizationMember[]
+  sessions           Session[]
 
   @@map("users")
 }
@@ -77,41 +67,32 @@ model VerificationToken {
   @@map("verification_tokens")
 }
 
-// Organization and Team Management
-
 model Organization {
-  id          String   @id @default(cuid())
-  name        String
-  slug        String   @unique
-  description String?
-  image       String?
-
-  // Billing
-  plan        Plan     @default(FREE)
-  credits     Int      @default(0) // Available assessment credits
-
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  // Relations
-  members     OrganizationMember[]
-  assessments Assessment[]
-  candidates  Candidate[]
-  problemSeeds ProblemSeed[]
+  id                 String               @id @default(cuid())
+  name               String
+  slug               String               @unique
+  description        String?
+  image              String?
+  plan               Plan                 @default(FREE)
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+  credits            Int                  @default(0)
+  assessments        Assessment[]
+  candidates         Candidate[]
   creditTransactions CreditTransaction[]
+  members            OrganizationMember[]
+  problemSeeds       ProblemSeed[]
 
   @@map("organizations")
 }
 
 model OrganizationMember {
-  id             String   @id @default(cuid())
-  organizationId String   @map("organization_id")
-  userId         String   @map("user_id")
-  role           OrgRole  @default(MEMBER)
-
-  invitedAt      DateTime @default(now()) @map("invited_at")
-  joinedAt       DateTime? @map("joined_at")
-
+  id             String       @id @default(cuid())
+  organizationId String       @map("organization_id")
+  userId         String       @map("user_id")
+  role           OrgRole      @default(MEMBER)
+  invitedAt      DateTime     @default(now()) @map("invited_at")
+  joinedAt       DateTime?    @map("joined_at")
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -119,190 +100,134 @@ model OrganizationMember {
   @@map("organization_members")
 }
 
-// Assessment and Interview Management
-
 model Assessment {
-  id             String          @id @default(cuid())
-  organizationId String          @map("organization_id")
-  createdById    String          @map("created_by_id")
-
-  title          String
-  description    String?
-  role           String
-  seniority      Seniority
-  duration       Int             // in minutes
-  techStack      String[]        @default([])    // Technologies/languages
-
-  status         AssessmentStatus @default(DRAFT)
-
-  // Configuration
-  enableCoding   Boolean         @default(true) @map("enable_coding")
-  enableTerminal Boolean         @default(true) @map("enable_terminal")
-  enableAI       Boolean         @default(true) @map("enable_ai")
-
-  // Preview tracking
-  previewSessionsUsed Int        @default(0) @map("preview_sessions_used")
-  previewLimit        Int        @default(3) @map("preview_limit") // 3 previews per assessment
-
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  publishedAt    DateTime?       @map("published_at")
-
-  // Relations
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdBy      User            @relation(fields: [createdById], references: [id])
-  questions      AssessmentQuestion[]
-  candidates     Candidate[]
+  id                  String               @id @default(cuid())
+  organizationId      String               @map("organization_id")
+  createdById         String               @map("created_by_id")
+  title               String
+  description         String?
+  role                String
+  seniority           Seniority
+  duration            Int
+  techStack           String[]             @default([])
+  status              AssessmentStatus     @default(DRAFT)
+  enableCoding        Boolean              @default(true) @map("enable_coding")
+  enableTerminal      Boolean              @default(true) @map("enable_terminal")
+  enableAI            Boolean              @default(true) @map("enable_ai")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  publishedAt         DateTime?            @map("published_at")
+  previewLimit        Int                  @default(3) @map("preview_limit")
+  previewSessionsUsed Int                  @default(0) @map("preview_sessions_used")
+  questions           AssessmentQuestion[]
+  createdBy           User                 @relation(fields: [createdById], references: [id])
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidates          Candidate[]
 
   @@map("assessments")
 }
 
 model AssessmentQuestion {
-  id           String     @id @default(cuid())
-  assessmentId String     @map("assessment_id")
-  problemSeedId String?   @map("problem_seed_id")
-
-  order        Int
-  title        String
-  description  String     @db.Text
-  difficulty   Difficulty
-  timeLimit    Int?       @map("time_limit") // in minutes
-
-  // Question type
-  type         QuestionType @default(CODING)
-
-  assessment   Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-  problemSeed  ProblemSeed? @relation(fields: [problemSeedId], references: [id])
+  id            String       @id @default(cuid())
+  assessmentId  String       @map("assessment_id")
+  problemSeedId String?      @map("problem_seed_id")
+  order         Int
+  title         String
+  description   String
+  difficulty    Difficulty
+  timeLimit     Int?         @map("time_limit")
+  type          QuestionType @default(CODING)
+  assessment    Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  problemSeed   ProblemSeed? @relation(fields: [problemSeedId], references: [id])
 
   @@map("assessment_questions")
 }
 
 model ProblemSeed {
-  id             String     @id @default(cuid())
-  organizationId String     @map("organization_id")
-
+  id             String               @id @default(cuid())
+  organizationId String               @map("organization_id")
   title          String
-  description    String     @db.Text
+  description    String
   difficulty     Difficulty
   category       String
-  tags           String[]   @default([])
-
-  // Initial code and test setup
-  starterCode    String?    @map("starter_code") @db.Text
-  testCode       String?    @map("test_code") @db.Text
-  language       String     @default("javascript")
-
-  createdAt      DateTime   @default(now()) @map("created_at")
-  updatedAt      DateTime   @updatedAt @map("updated_at")
-
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  tags           String[]             @default([])
+  starterCode    String?              @map("starter_code")
+  testCode       String?              @map("test_code")
+  language       String               @default("javascript")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
   questions      AssessmentQuestion[]
+  organization   Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@map("problem_seeds")
 }
 
-// Candidate and Interview Management
-
 model Candidate {
-  id             String   @id @default(cuid())
-  organizationId String   @map("organization_id")
-  assessmentId   String   @map("assessment_id")
-  createdById    String   @map("created_by_id")
-
-  // Candidate info
-  name           String
-  email          String
-  phone          String?
-
-  // Preview mode flag
-  isPreview      Boolean  @default(false) @map("is_preview")
-
-  // Interview details
-  status         CandidateStatus @default(INVITED)
-  invitedAt      DateTime @default(now()) @map("invited_at")
-  startedAt      DateTime? @map("started_at")
-  completedAt    DateTime? @map("completed_at")
-
-  // Invitation
-  invitationToken     String?   @unique @map("invitation_token")
-  invitationSentAt    DateTime? @map("invitation_sent_at")
-  invitationExpiresAt DateTime? @map("invitation_expires_at")
-  deadlineAt          DateTime? @map("deadline_at")
-
-  // Modal sandbox
-  volumeId       String?  @map("volume_id")
-
-  // Scoring
-  overallScore   Float?   @map("overall_score")
-  codingScore    Float?   @map("coding_score")
-  communicationScore Float? @map("communication_score")
-  problemSolvingScore Float? @map("problem_solving_score")
-
-  // Session recording
-  sessionData    Json?    @map("session_data")
-
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  assessment     Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
-  createdBy      User         @relation(fields: [createdById], references: [id])
-
-  // Relations to session data
-  sessionRecording SessionRecording?
-  generatedQuestions GeneratedQuestion[]
+  id                  String              @id @default(cuid())
+  organizationId      String              @map("organization_id")
+  assessmentId        String              @map("assessment_id")
+  createdById         String              @map("created_by_id")
+  name                String
+  email               String
+  phone               String?
+  status              CandidateStatus     @default(INVITED)
+  invitedAt           DateTime            @default(now()) @map("invited_at")
+  startedAt           DateTime?           @map("started_at")
+  completedAt         DateTime?           @map("completed_at")
+  invitationToken     String?             @unique @map("invitation_token")
+  invitationSentAt    DateTime?           @map("invitation_sent_at")
+  invitationExpiresAt DateTime?           @map("invitation_expires_at")
+  deadlineAt          DateTime?           @map("deadline_at")
+  volumeId            String?             @map("volume_id")
+  overallScore        Float?              @map("overall_score")
+  codingScore         Float?              @map("coding_score")
+  communicationScore  Float?              @map("communication_score")
+  problemSolvingScore Float?              @map("problem_solving_score")
+  sessionData         Json?               @map("session_data")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  isPreview           Boolean             @default(false) @map("is_preview")
+  assessment          Assessment          @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  createdBy           User                @relation(fields: [createdById], references: [id])
+  organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  generatedQuestions  GeneratedQuestion[]
+  sessionRecording    SessionRecording?
 
   @@index([isPreview])
   @@map("candidates")
 }
 
-// Session Recording and Events
-
 model SessionRecording {
-  id          String   @id @default(cuid())
-  candidateId String   @unique @map("candidate_id")
-
-  startTime   DateTime @default(now()) @map("start_time")
-  endTime     DateTime? @map("end_time")
-  duration    Int?     // in seconds
-
-  status      SessionStatus @default(ACTIVE)
-
-  // Storage info
-  eventCount  Int      @default(0) @map("event_count")
-  storagePath String?  @map("storage_path") // S3 path to compressed events
-  storageSize Int?     @map("storage_size") // bytes
-
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-
-  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-
-  // Relations
-  events      SessionEvent[]
+  id                 String              @id @default(cuid())
+  candidateId        String              @unique @map("candidate_id")
+  startTime          DateTime            @default(now()) @map("start_time")
+  endTime            DateTime?           @map("end_time")
+  duration           Int?
+  status             SessionStatus       @default(ACTIVE)
+  eventCount         Int                 @default(0) @map("event_count")
+  storagePath        String?             @map("storage_path")
+  storageSize        Int?                @map("storage_size")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
   claudeInteractions ClaudeInteraction[]
-  codeSnapshots CodeSnapshot[]
-  testResults TestResult[]
+  codeSnapshots      CodeSnapshot[]
+  events             SessionEvent[]
+  candidate          Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  testResults        TestResult[]
 
   @@index([candidateId])
   @@map("session_recordings")
 }
 
 model SessionEvent {
-  id          String   @id @default(cuid())
-  sessionId   String   @map("session_id")
-
-  timestamp   DateTime @default(now())
-  type        String   // keystroke, code_snapshot, file_created, terminal_output, etc.
-  fileId      String?  @map("file_id")
-
-  // Event data stored as JSON
-  data        Json
-
-  // For fast seeking in replay
-  checkpoint  Boolean  @default(false)
-
-  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id         String           @id @default(cuid())
+  sessionId  String           @map("session_id")
+  timestamp  DateTime         @default(now())
+  type       String
+  fileId     String?          @map("file_id")
+  data       Json
+  checkpoint Boolean          @default(false)
+  session    SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, timestamp])
   @@index([sessionId, checkpoint])
@@ -310,48 +235,36 @@ model SessionEvent {
 }
 
 model ClaudeInteraction {
-  id          String   @id @default(cuid())
-  sessionId   String   @map("session_id")
-
-  timestamp   DateTime @default(now())
-  role        String   // user, assistant, system
-  content     String   @db.Text
-
-  // Metadata
-  model       String?
-  inputTokens Int?     @map("input_tokens")
-  outputTokens Int?    @map("output_tokens")
-  latency     Int?     // milliseconds
-  stopReason  String?  @map("stop_reason")
-
-  // AI collaboration scoring
-  promptQuality Float? @map("prompt_quality") // 1-5 rating
-
-  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id            String           @id @default(cuid())
+  sessionId     String           @map("session_id")
+  timestamp     DateTime         @default(now())
+  role          String
+  content       String
+  model         String?
+  inputTokens   Int?             @map("input_tokens")
+  outputTokens  Int?             @map("output_tokens")
+  latency       Int?
+  stopReason    String?          @map("stop_reason")
+  promptQuality Float?           @map("prompt_quality")
+  session       SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, timestamp])
   @@map("claude_interactions")
 }
 
 model CodeSnapshot {
-  id          String   @id @default(cuid())
-  sessionId   String   @map("session_id")
-
-  timestamp   DateTime @default(now())
-  fileId      String   @map("file_id")
-  fileName    String   @map("file_name")
-  language    String
-
-  // Content storage
-  contentHash String   @map("content_hash")
-  fullContent String?  @map("full_content") @db.Text
-  diffFromPrevious Json? @map("diff_from_previous")
-
-  // Metrics
-  linesAdded  Int      @default(0) @map("lines_added")
-  linesDeleted Int     @default(0) @map("lines_deleted")
-
-  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id               String           @id @default(cuid())
+  sessionId        String           @map("session_id")
+  timestamp        DateTime         @default(now())
+  fileId           String           @map("file_id")
+  fileName         String           @map("file_name")
+  language         String
+  contentHash      String           @map("content_hash")
+  fullContent      String?          @map("full_content")
+  diffFromPrevious Json?            @map("diff_from_previous")
+  linesAdded       Int              @default(0) @map("lines_added")
+  linesDeleted     Int              @default(0) @map("lines_deleted")
+  session          SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, timestamp])
   @@index([sessionId, fileId])
@@ -359,61 +272,67 @@ model CodeSnapshot {
 }
 
 model TestResult {
-  id          String   @id @default(cuid())
-  sessionId   String   @map("session_id")
-
-  timestamp   DateTime @default(now())
-  testName    String   @map("test_name")
-
-  passed      Boolean
-  output      String?  @db.Text
-  error       String?  @db.Text
-  duration    Int?     // milliseconds
-
-  session     SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  id        String           @id @default(cuid())
+  sessionId String           @map("session_id")
+  timestamp DateTime         @default(now())
+  testName  String           @map("test_name")
+  passed    Boolean
+  output    String?
+  error     String?
+  duration  Int?
+  session   SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, timestamp])
   @@map("test_results")
 }
 
-// Dynamic Question Generation
-
 model GeneratedQuestion {
-  id          String   @id @default(cuid())
-  candidateId String   @map("candidate_id")
-  questionSeedId String? @map("question_seed_id")
-
-  order       Int      // Question order in assessment
-  title       String
-  description String   @db.Text
-  difficulty  Difficulty
-
-  // Problem details
-  language    String   @default("typescript")
-  requirements String[] @default([])
-  estimatedTime Int    @map("estimated_time") // minutes
-
-  // Code templates and tests
-  starterCode Json     @map("starter_code") // array of {fileName, content}
-  testCases   Json     @map("test_cases")   // array of {name, input, expected, hidden}
-
-  // Question state
-  status      QuestionStatus @default(PENDING)
-  startedAt   DateTime? @map("started_at")
-  completedAt DateTime? @map("completed_at")
-
-  // Scoring
-  score       Float?
-
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  candidate   Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id             String         @id @default(cuid())
+  candidateId    String         @map("candidate_id")
+  questionSeedId String?        @map("question_seed_id")
+  order          Int
+  title          String
+  description    String
+  difficulty     Difficulty
+  language       String         @default("typescript")
+  requirements   String[]       @default([])
+  estimatedTime  Int            @map("estimated_time")
+  starterCode    Json           @map("starter_code")
+  testCases      Json           @map("test_cases")
+  status         QuestionStatus @default(PENDING)
+  startedAt      DateTime?      @map("started_at")
+  completedAt    DateTime?      @map("completed_at")
+  score          Float?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  candidate      Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@index([candidateId, order])
   @@map("generated_questions")
 }
 
-// Enums
+model CreditTransaction {
+  id              String          @id @default(cuid())
+  organizationId  String          @map("organization_id")
+  type            TransactionType
+  amount          Int
+  balanceAfter    Int             @map("balance_after")
+  paddleOrderId   String?         @map("paddle_order_id")
+  paddlePaymentId String?         @map("paddle_payment_id")
+  amountPaid      Decimal?        @map("amount_paid") @db.Decimal(10, 2)
+  currency        String?
+  assessmentId    String?         @map("assessment_id")
+  candidateId     String?         @map("candidate_id")
+  description     String?
+  metadata        Json?
+  createdAt       DateTime        @default(now()) @map("created_at")
+  createdBy       String?         @map("created_by")
+  organization    Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([paddleOrderId])
+  @@index([assessmentId])
+  @@map("credit_transactions")
+}
 
 enum UserRole {
   USER
@@ -483,43 +402,8 @@ enum QuestionStatus {
 }
 
 enum TransactionType {
-  PURCHASE      // Credit purchase via Paddle
-  DEDUCTION     // Credit used for assessment
-  REFUND        // Credit refunded
-  ADJUSTMENT    // Manual adjustment by admin
-}
-
-// Credit Transaction Model for Payment Tracking
-model CreditTransaction {
-  id             String          @id @default(cuid())
-  organizationId String          @map("organization_id")
-
-  type           TransactionType
-  amount         Int             // Positive for additions, negative for deductions
-  balanceAfter   Int             @map("balance_after") // Balance after this transaction
-
-  // Payment details (for PURCHASE transactions)
-  paddleOrderId     String?   @map("paddle_order_id")
-  paddlePaymentId   String?   @map("paddle_payment_id")
-  amountPaid        Decimal?  @map("amount_paid") @db.Decimal(10, 2)
-  currency          String?
-
-  // Assessment reference (for DEDUCTION transactions)
-  assessmentId   String?         @map("assessment_id")
-  candidateId    String?         @map("candidate_id")
-
-  // Metadata
-  description    String?
-  metadata       Json?           // Additional transaction data
-
-  createdAt      DateTime        @default(now()) @map("created_at")
-  createdBy      String?         @map("created_by") // User who initiated transaction
-
-  // Relations
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-
-  @@index([organizationId])
-  @@index([paddleOrderId])
-  @@index([assessmentId])
-  @@map("credit_transactions")
+  PURCHASE
+  DEDUCTION
+  REFUND
+  ADJUSTMENT
 }
