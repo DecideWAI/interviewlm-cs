@@ -457,6 +457,84 @@ export default function InterviewPage() {
     }, 2000); // 2 second debounce
   }, [sessionData, selectedFile, candidateId]);
 
+  const handleRunTests = async () => {
+    if (!sessionData) return;
+
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/run-tests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          language: sessionData.question.language,
+          testCases: sessionData.question.testCases,
+          fileName: selectedFile?.name,
+        }),
+      });
+
+      if (response.ok) {
+        const results = await response.json();
+        setTestResults({
+          passed: results.passed,
+          total: results.total,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to run tests:", err);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!sessionData || isSubmitting) return;
+
+    // Confirm submission
+    const confirmSubmit = window.confirm(
+      "Are you sure you want to submit your assessment? This action cannot be undone."
+    );
+
+    if (!confirmSubmit) return;
+
+    try {
+      setIsSubmitting(true);
+
+      // Submit assessment
+      const response = await fetch(`/api/interview/${candidateId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finalCode: {
+            [`solution.${sessionData.question.language === "python" ? "py" : "js"}`]: code,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Submission failed");
+      }
+
+      const result = await response.json();
+
+      // Clear session state - assessment is complete
+      clearSessionState();
+
+      // Show success message
+      alert(
+        `Assessment submitted successfully!\n\n` +
+        `Overall Score: ${result.overallScore?.toFixed(1) || "N/A"}/100\n` +
+        `Tests Passed: ${result.testsPassed || 0}/${result.totalTests || 0}\n\n` +
+        `Recommendation: ${result.recommendation?.decision || "Pending"}`
+      );
+
+      // Redirect to dashboard or thank you page
+      router.push("/dashboard");
+    } catch (err) {
+      console.error("Submission error:", err);
+      alert(`Failed to submit assessment: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setIsSubmitting(false);
+    }
+  };
+
   // Keyboard shortcuts - must be before early returns (Rules of Hooks)
   useInterviewKeyboardShortcuts({
     onSave: handleManualSave,
@@ -623,57 +701,6 @@ export default function InterviewPage() {
     }
   };
 
-  const handleSubmit = async () => {
-    if (!sessionData || isSubmitting) return;
-
-    // Confirm submission
-    const confirmSubmit = window.confirm(
-      "Are you sure you want to submit your assessment? This action cannot be undone."
-    );
-
-    if (!confirmSubmit) return;
-
-    try {
-      setIsSubmitting(true);
-
-      // Submit assessment
-      const response = await fetch(`/api/interview/${candidateId}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          finalCode: {
-            [`solution.${sessionData.question.language === "python" ? "py" : "js"}`]: code,
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Submission failed");
-      }
-
-      const result = await response.json();
-
-      // Clear session state - assessment is complete
-      clearSessionState();
-
-      // Show success message
-      alert(
-        `Assessment submitted successfully!\n\n` +
-        `Overall Score: ${result.overallScore?.toFixed(1) || "N/A"}/100\n` +
-        `Tests Passed: ${result.testsPassed || 0}/${result.totalTests || 0}\n\n` +
-        `Recommendation: ${result.recommendation?.decision || "Pending"}`
-      );
-
-      // Redirect to dashboard or thank you page
-      router.push("/dashboard");
-    } catch (err) {
-      console.error("Submission error:", err);
-      alert(`Failed to submit assessment: ${err instanceof Error ? err.message : "Unknown error"}`);
-      setIsSubmitting(false);
-    }
-  };
-
   // Format time remaining
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -727,33 +754,6 @@ export default function InterviewPage() {
         // Fallback to starter code
         setCode(sessionData?.question.starterCode || "");
       }
-    }
-  };
-
-  const handleRunTests = async () => {
-    if (!sessionData) return;
-
-    try {
-      const response = await fetch(`/api/interview/${candidateId}/run-tests`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          code,
-          language: sessionData.question.language,
-          testCases: sessionData.question.testCases,
-          fileName: selectedFile?.name,
-        }),
-      });
-
-      if (response.ok) {
-        const results = await response.json();
-        setTestResults({
-          passed: results.passed,
-          total: results.total,
-        });
-      }
-    } catch (err) {
-      console.error("Failed to run tests:", err);
     }
   };
 
