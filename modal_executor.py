@@ -493,3 +493,98 @@ def list_files(request_data: Dict[str, Any]) -> Dict[str, Any]:
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+@app.function(
+    image=image,
+    volumes={"/data": volume},
+    timeout=30,
+)
+@modal.fastapi_endpoint(method="POST")
+def execute_command(request_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Execute a bash command in a session directory
+
+    Args:
+        request_data: {
+            "sessionId": "session-xxx",
+            "command": "npm install",
+            "workingDir": "/workspace" (optional, relative to session root)
+        }
+
+    Returns:
+        {
+            "success": bool,
+            "stdout": str,
+            "stderr": str,
+            "exitCode": int,
+            "error": str (if failed)
+        }
+    """
+    session_id = request_data.get("sessionId", "")
+    command = request_data.get("command", "")
+    working_dir = request_data.get("workingDir", "")
+
+    if not session_id:
+        return {"success": False, "error": "Missing sessionId"}
+
+    if not command:
+        return {"success": False, "error": "Missing command"}
+
+    # Security: Block dangerous commands
+    dangerous_patterns = [
+        "rm -rf /",
+        ":(){ :|:& };:",  # Fork bomb
+        "mkfs",
+        "dd if=",
+        "curl.*|.*sh",  # Piping to shell
+        "wget.*|.*sh",
+    ]
+
+    command_lower = command.lower()
+    for pattern in dangerous_patterns:
+        if pattern.lower() in command_lower:
+            return {
+                "success": False,
+                "error": f"Command blocked for security reasons: {pattern}"
+            }
+
+    try:
+        session_dir = Path("/data") / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        # Set working directory
+        if working_dir:
+            exec_dir = session_dir / working_dir.lstrip("/")
+            exec_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            exec_dir = session_dir
+
+        # Execute command with timeout
+        process = subprocess.run(
+            command,
+            shell=True,
+            cwd=str(exec_dir),
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_SECONDS,
+        )
+
+        return {
+            "success": True,
+            "stdout": sanitize_output(process.stdout),
+            "stderr": sanitize_output(process.stderr),
+            "exitCode": process.returncode,
+        }
+
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "error": f"Command timed out after {TIMEOUT_SECONDS} seconds",
+            "exitCode": -1,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "exitCode": -1,
+        }
