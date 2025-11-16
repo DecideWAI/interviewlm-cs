@@ -153,16 +153,20 @@ module.exports = longestPalindrome;`,
       );
     }
 
-    // Get or create session recording
-    let sessionRecording = candidate.sessionRecording;
-    if (!sessionRecording) {
-      sessionRecording = await prisma.sessionRecording.create({
-        data: {
-          candidateId,
-          status: "ACTIVE",
-        },
-      });
-    }
+    // Get or create session recording using upsert to handle existing records
+    const sessionRecording = await prisma.sessionRecording.upsert({
+      where: {
+        candidateId,
+      },
+      update: {
+        // If record exists, ensure it's active
+        status: "ACTIVE",
+      },
+      create: {
+        candidateId,
+        status: "ACTIVE",
+      },
+    });
 
     // Get or generate question
     let question = candidate.generatedQuestions?.[0];
