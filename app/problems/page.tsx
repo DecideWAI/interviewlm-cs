@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import Link from "next/link";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { PageHeader } from "@/components/layout/page-header";
@@ -25,8 +25,10 @@ import {
   Edit,
   Copy,
   Archive,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
-import { MOCK_PROBLEM_SEEDS, getSeedStats, EnhancedQuestionSeed } from "@/lib/mock-seeds-data";
+import { useSeeds, calculateSeedStats, useCloneSeed } from "@/hooks/useSeeds";
 import { ROLES, SENIORITY_LEVELS } from "@/lib/assessment-config";
 import { cn } from "@/lib/utils";
 
@@ -37,32 +39,35 @@ export default function ProblemsPage() {
   const [roleFilter, setRoleFilter] = useState<string>("all");
   const [seniorityFilter, setSeniorityFilter] = useState<string>("all");
 
-  // Get statistics
-  const stats = getSeedStats();
-
-  // Filter seeds
-  const filteredSeeds = MOCK_PROBLEM_SEEDS.filter((seed) => {
-    // Search filter
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      const matchesSearch =
-        seed.title.toLowerCase().includes(query) ||
-        seed.description?.toLowerCase().includes(query) ||
-        seed.tags.some((tag) => tag.toLowerCase().includes(query));
-      if (!matchesSearch) return false;
-    }
-
-    // Status filter
-    if (statusFilter !== "all" && seed.status !== statusFilter) return false;
-
-    // Role filter
-    if (roleFilter !== "all" && seed.role !== roleFilter && seed.role !== "any") return false;
-
-    // Seniority filter
-    if (seniorityFilter !== "all" && seed.seniority !== seniorityFilter && seed.seniority !== "any") return false;
-
-    return true;
+  // Fetch seeds from API
+  const { seeds, loading, error, refetch } = useSeeds({
+    status: statusFilter !== "all" ? statusFilter : undefined,
+    includeSystem: true, // Include system seeds for users to clone
   });
+
+  // Get statistics
+  const stats = useMemo(() => calculateSeedStats(seeds), [seeds]);
+
+  // Filter seeds (client-side filtering for search)
+  const filteredSeeds = useMemo(() => {
+    return seeds.filter((seed) => {
+      // Search filter
+      if (searchQuery) {
+        const query = searchQuery.toLowerCase();
+        const matchesSearch =
+          seed.title.toLowerCase().includes(query) ||
+          seed.description?.toLowerCase().includes(query) ||
+          seed.tags.some((tag) => tag.toLowerCase().includes(query)) ||
+          seed.topics?.some((topic) => topic.toLowerCase().includes(query));
+        if (!matchesSearch) return false;
+      }
+
+      // Note: Role and seniority filters removed since seeds don't have these fields
+      // in the new schema. They can be added back if needed via topics/tags.
+
+      return true;
+    });
+  }, [seeds, searchQuery]);
 
   return (
     <DashboardLayout>
@@ -74,7 +79,7 @@ export default function ProblemsPage() {
             description="LLM instruction templates that generate assessment questions"
           />
           <div className="flex items-center gap-3">
-            <Button variant="outline">
+            <Button variant="outline" onClick={refetch} disabled={loading}>
               <Download className="h-4 w-4 mr-2" />
               Export Seeds
             </Button>
@@ -87,7 +92,32 @@ export default function ProblemsPage() {
           </div>
         </div>
 
+        {/* Loading State */}
+        {loading && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <span className="ml-3 text-text-secondary">Loading seeds...</span>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && (
+          <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg p-4">
+            <div className="flex items-center">
+              <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 mr-3" />
+              <div>
+                <p className="text-red-800 dark:text-red-200 font-medium">Failed to load seeds</p>
+                <p className="text-red-600 dark:text-red-400 text-sm mt-1">{error}</p>
+              </div>
+              <Button variant="outline" size="sm" onClick={refetch} className="ml-auto">
+                Retry
+              </Button>
+            </div>
+          </div>
+        )}
+
         {/* Stats Cards */}
+        {!loading && !error && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-background-secondary border border-border rounded-lg p-4 hover:border-primary/40 transition-all cursor-pointer">
             <div className="flex items-center justify-between mb-2">
@@ -102,33 +132,37 @@ export default function ProblemsPage() {
 
           <div className="bg-background-secondary border border-border rounded-lg p-4 hover:border-success/40 transition-all cursor-pointer">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-text-tertiary">Total Usage</p>
-              <Users className="h-5 w-5 text-success" />
+              <p className="text-sm text-text-tertiary">System Seeds</p>
+              <Star className="h-5 w-5 text-success" />
             </div>
-            <p className="text-3xl font-bold text-success">{stats.totalUsage}</p>
-            <p className="text-xs text-text-muted mt-1">Times used in assessments</p>
+            <p className="text-3xl font-bold text-success">{stats.systemSeeds}</p>
+            <p className="text-xs text-text-muted mt-1">{stats.customSeeds} custom seeds</p>
           </div>
 
           <div className="bg-background-secondary border border-border rounded-lg p-4 hover:border-warning/40 transition-all cursor-pointer">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-text-tertiary">Avg Score</p>
-              <TrendingUp className="h-5 w-5 text-warning" />
+              <p className="text-sm text-text-tertiary">Avg Usage</p>
+              <BarChart3 className="h-5 w-5 text-warning" />
             </div>
-            <p className="text-3xl font-bold text-warning">{stats.avgScore}</p>
-            <p className="text-xs text-text-muted mt-1">Average candidate score</p>
+            <p className="text-3xl font-bold text-warning">{Math.round(stats.avgUsageCount)}</p>
+            <p className="text-xs text-text-muted mt-1">Avg times used per seed</p>
           </div>
 
           <div className="bg-background-secondary border border-border rounded-lg p-4 hover:border-info/40 transition-all cursor-pointer">
             <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-text-tertiary">Completion Rate</p>
-              <Target className="h-5 w-5 text-info" />
+              <p className="text-sm text-text-tertiary">Avg Score</p>
+              <TrendingUp className="h-5 w-5 text-info" />
             </div>
-            <p className="text-3xl font-bold text-info">{stats.avgCompletionRate}%</p>
-            <p className="text-xs text-text-muted mt-1">Average completion rate</p>
+            <p className="text-3xl font-bold text-info">
+              {stats.avgCandidateScore > 0 ? Math.round(stats.avgCandidateScore) : 'N/A'}
+            </p>
+            <p className="text-xs text-text-muted mt-1">Average candidate score</p>
           </div>
         </div>
+        )}
 
         {/* Smart Filters */}
+        {!loading && !error && (
         <div className="flex items-center gap-2 flex-wrap">
           <p className="text-sm text-text-tertiary">Quick filters:</p>
           <Badge
@@ -274,13 +308,30 @@ export default function ProblemsPage() {
             </div>
           )}
         </div>
+        )}
       </div>
     </DashboardLayout>
   );
 }
 
 // Seed Card Component
-function SeedCard({ seed }: { seed: EnhancedQuestionSeed }) {
+function SeedCard({ seed }: { seed: import("@/hooks/useSeeds").ProblemSeed }) {
+  const { cloneSeed, cloning } = useCloneSeed();
+
+  const handleClone = async (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent Link navigation
+    e.stopPropagation();
+
+    try {
+      await cloneSeed(seed.id);
+      // Show success message (you can add a toast notification here)
+      window.location.reload(); // Reload to show new seed
+    } catch (error) {
+      console.error('Failed to clone seed:', error);
+      // Show error message
+    }
+  };
+
   const getStatusBadge = () => {
     switch (seed.status) {
       case "active":
@@ -307,15 +358,8 @@ function SeedCard({ seed }: { seed: EnhancedQuestionSeed }) {
     }
   };
 
-  const getRoleLabel = () => {
-    if (seed.role === "any") return "Any Role";
-    return ROLES[seed.role]?.name || seed.role;
-  };
-
-  const getSeniorityLabel = () => {
-    if (seed.seniority === "any") return "Any Level";
-    return SENIORITY_LEVELS[seed.seniority]?.name || seed.seniority;
-  };
+  // Note: Role and seniority removed from seed schema
+  // These can be inferred from topics/tags if needed
 
   const getScoreColor = (score?: number) => {
     if (!score) return "text-text-muted";
@@ -340,14 +384,19 @@ function SeedCard({ seed }: { seed: EnhancedQuestionSeed }) {
           {getStatusBadge()}
         </div>
 
-        {/* Role & Seniority */}
-        <div className="flex items-center gap-2 mb-4">
-          <Badge variant="default" className="text-xs capitalize">
-            {getRoleLabel()}
-          </Badge>
-          <Badge variant="default" className="text-xs capitalize">
-            {getSeniorityLabel()}
-          </Badge>
+        {/* Topics & Metadata */}
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          {seed.topics && seed.topics.length > 0 && seed.topics.slice(0, 2).map((topic) => (
+            <Badge key={topic} variant="default" className="text-xs capitalize">
+              {topic}
+            </Badge>
+          ))}
+          {seed.isSystemSeed && (
+            <Badge variant="primary" className="text-xs">
+              <Star className="h-3 w-3 mr-1" />
+              System
+            </Badge>
+          )}
           <div className="flex items-center gap-1 text-xs text-text-tertiary">
             <Clock className="h-3 w-3" />
             {seed.estimatedTime}m
@@ -410,24 +459,24 @@ function SeedCard({ seed }: { seed: EnhancedQuestionSeed }) {
           </div>
         </div>
 
-        {/* Completion Rate Bar */}
-        {seed.avgCompletionRate !== undefined && (
+        {/* Average Score Bar */}
+        {seed.avgCandidateScore !== null && seed.avgCandidateScore > 0 && (
           <div className="mt-3">
             <div className="flex items-center justify-between text-xs text-text-tertiary mb-1">
-              <span>Completion Rate</span>
-              <span>{Math.round(seed.avgCompletionRate * 100)}%</span>
+              <span>Avg Candidate Score</span>
+              <span>{Math.round(seed.avgCandidateScore)}/100</span>
             </div>
             <div className="h-1.5 bg-background-tertiary rounded-full overflow-hidden">
               <div
                 className={cn(
                   "h-full rounded-full transition-all",
-                  seed.avgCompletionRate >= 0.8
+                  seed.avgCandidateScore >= 80
                     ? "bg-success"
-                    : seed.avgCompletionRate >= 0.6
+                    : seed.avgCandidateScore >= 60
                     ? "bg-warning"
                     : "bg-error"
                 )}
-                style={{ width: `${seed.avgCompletionRate * 100}%` }}
+                style={{ width: `${seed.avgCandidateScore}%` }}
               />
             </div>
           </div>
@@ -440,9 +489,19 @@ function SeedCard({ seed }: { seed: EnhancedQuestionSeed }) {
               <Eye className="h-3 w-3 mr-1" />
               Preview
             </Button>
-            <Button variant="ghost" size="sm" className="flex-1 h-7 text-xs">
-              <Copy className="h-3 w-3 mr-1" />
-              Duplicate
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex-1 h-7 text-xs"
+              onClick={handleClone}
+              disabled={cloning}
+            >
+              {cloning ? (
+                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <Copy className="h-3 w-3 mr-1" />
+              )}
+              {cloning ? 'Cloning...' : 'Clone'}
             </Button>
           </div>
         </div>
