@@ -256,6 +256,16 @@ module.exports = longestPalindrome;`,
     // Default to 3 questions for adaptive assessments
     const totalQuestions = 3;
 
+    // Transform test cases to match ProblemPanel interface
+    const transformedTestCases = Array.isArray(question.testCases)
+      ? question.testCases.map((tc: any) => ({
+          name: tc.name || "",
+          input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
+          expectedOutput: typeof tc.expected === 'object' ? JSON.stringify(tc.expected) : String(tc.expected),
+          hidden: tc.hidden || false,
+        }))
+      : [];
+
     // Return initialization data
     return NextResponse.json({
       sessionId: sessionRecording.id,
@@ -268,7 +278,7 @@ module.exports = longestPalindrome;`,
         difficulty: question.difficulty,
         language: question.language,
         starterCode: question.starterCode,
-        testCases: question.testCases,
+        testCases: transformedTestCases,
       },
       sandbox: {
         volumeId,
