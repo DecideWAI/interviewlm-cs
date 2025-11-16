@@ -428,6 +428,43 @@ export default function InterviewPage() {
     }
   }, [sessionData, selectedFile, candidateId, code, isOnline]);
 
+  const handleCodeChange = useCallback((newCode: string) => {
+    // Update local state immediately (optimistic update)
+    setCode(newCode);
+
+    // Clear previous debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Debounce API call (2 seconds)
+    debounceTimerRef.current = setTimeout(async () => {
+      if (sessionData && selectedFile) {
+        try {
+          await fetch(`/api/interview/${candidateId}/files`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              path: selectedFile.path,
+              content: newCode,
+              language: sessionData.question.language,
+            }),
+          });
+        } catch (err) {
+          console.error("Failed to sync file:", err);
+        }
+      }
+    }, 2000); // 2 second debounce
+  }, [sessionData, selectedFile, candidateId]);
+
+  // Keyboard shortcuts - must be before early returns (Rules of Hooks)
+  useInterviewKeyboardShortcuts({
+    onSave: handleManualSave,
+    onRunTests: handleRunTests,
+    onToggleAIChat: () => setIsAIChatOpen((prev) => !prev),
+    onSubmit: handleSubmit,
+  });
+
   // Mobile check loading
   if (isChecking) {
     return (
@@ -693,35 +730,6 @@ export default function InterviewPage() {
     }
   };
 
-  const handleCodeChange = useCallback((newCode: string) => {
-    // Update local state immediately (optimistic update)
-    setCode(newCode);
-
-    // Clear previous debounce timer
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-    }
-
-    // Debounce API call (2 seconds)
-    debounceTimerRef.current = setTimeout(async () => {
-      if (sessionData && selectedFile) {
-        try {
-          await fetch(`/api/interview/${candidateId}/files`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              path: selectedFile.path,
-              content: newCode,
-              language: sessionData.question.language,
-            }),
-          });
-        } catch (err) {
-          console.error("Failed to sync file:", err);
-        }
-      }
-    }, 2000); // 2 second debounce
-  }, [sessionData, selectedFile, candidateId]);
-
   const handleRunTests = async () => {
     if (!sessionData) return;
 
@@ -748,14 +756,6 @@ export default function InterviewPage() {
       console.error("Failed to run tests:", err);
     }
   };
-
-  // Keyboard shortcuts
-  useInterviewKeyboardShortcuts({
-    onSave: handleManualSave,
-    onRunTests: handleRunTests,
-    onToggleAIChat: () => setIsAIChatOpen((prev) => !prev),
-    onSubmit: handleSubmit,
-  });
 
   return (
     <div className="h-screen flex flex-col bg-background">

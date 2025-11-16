@@ -4,14 +4,23 @@ import * as React from "react";
 import { Search, Command } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { OrganizationSwitcher } from "./OrganizationSwitcher";
 
 export interface HeaderProps extends React.HTMLAttributes<HTMLDivElement> {
   title?: string;
   subtitle?: string;
   actions?: React.ReactNode;
+  showOrganizationSwitcher?: boolean;
 }
 
-export function Header({ className, title, subtitle, actions, ...props }: HeaderProps) {
+export function Header({
+  className,
+  title,
+  subtitle,
+  actions,
+  showOrganizationSwitcher = true,
+  ...props
+}: HeaderProps) {
   return (
     <div
       className={cn(
@@ -30,6 +39,9 @@ export function Header({ className, title, subtitle, actions, ...props }: Header
       </div>
 
       <div className="flex items-center gap-4">
+        {/* Organization Switcher */}
+        {showOrganizationSwitcher && <OrganizationSwitcher />}
+
         {/* Quick search */}
         <button className="flex items-center gap-2 rounded-md border border-border bg-background-secondary px-3 py-1.5 text-sm text-text-muted hover:border-border-hover hover:text-text-secondary transition-all">
           <Search className="h-4 w-4" />
