@@ -216,11 +216,11 @@ export default function SignInPage() {
 
         <p className="mt-6 text-center text-xs text-text-tertiary">
           By continuing, you agree to our{" "}
-          <Link href="/terms" className="underline hover:text-text-secondary">
+          <Link href="/legal/terms" className="underline hover:text-text-secondary">
             Terms of Service
           </Link>{" "}
           and{" "}
-          <Link href="/privacy" className="underline hover:text-text-secondary">
+          <Link href="/legal/privacy" className="underline hover:text-text-secondary">
             Privacy Policy
           </Link>
         </p>

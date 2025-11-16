@@ -35,6 +35,7 @@ image = (
         "black",
         "pylint",
         "mypy",
+        "fastapi",  # Required for web endpoints
     )
     .apt_install(
         "nodejs",
@@ -304,7 +305,7 @@ def execute_javascript_tests(code: str, test_cases: List[Dict], language: str = 
     memory=512,
     cpu=1.0,
 )
-@modal.web_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST")
 def execute(request_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Execute code with test cases in a sandboxed environment
@@ -394,7 +395,7 @@ def execute(request_data: Dict[str, Any]) -> Dict[str, Any]:
     volumes={"/data": volume},
     timeout=10,
 )
-@modal.web_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST")
 def write_file(request_data: Dict[str, Any]) -> Dict[str, Any]:
     """Write a file to the session volume"""
     session_id = request_data.get("sessionId", "")
@@ -430,7 +431,7 @@ def write_file(request_data: Dict[str, Any]) -> Dict[str, Any]:
     volumes={"/data": volume},
     timeout=10,
 )
-@modal.web_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST")
 def read_file(request_data: Dict[str, Any]) -> Dict[str, Any]:
     """Read a file from the session volume"""
     session_id = request_data.get("sessionId", "")
@@ -461,7 +462,7 @@ def read_file(request_data: Dict[str, Any]) -> Dict[str, Any]:
     volumes={"/data": volume},
     timeout=10,
 )
-@modal.web_endpoint(method="POST")
+@modal.fastapi_endpoint(method="POST")
 def list_files(request_data: Dict[str, Any]) -> Dict[str, Any]:
     """List files in a session directory"""
     session_id = request_data.get("sessionId", "")
