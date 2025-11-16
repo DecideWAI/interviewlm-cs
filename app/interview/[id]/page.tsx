@@ -1,0 +1,1039 @@
+"use client";
+
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
+import { useParams, useRouter } from "next/navigation";
+import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { CodeEditor } from "@/components/interview/CodeEditor";
+import { FileTree, FileNode } from "@/components/interview/FileTree";
+import { AIChat, AIChatHandle, Message } from "@/components/interview/AIChat";
+import { ProblemPanel } from "@/components/interview/ProblemPanel";
+import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
+import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
+import { QuestionCompletionCard } from "@/components/interview/QuestionCompletionCard";
+import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
+import { resetConversation } from "@/lib/chat-resilience";
+import { useSessionRecovery, useSessionRecoveryDialog, SessionState } from "@/hooks/useSessionRecovery";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
+import { useIsMobile } from "@/lib/device-detection";
+import { MobileBlocker } from "@/components/interview/MobileBlocker";
+import { toast } from "sonner";
+
+// Dynamic import for Terminal (xterm.js requires client-side only)
+const Terminal = dynamic(
+  () => import("@/components/interview/Terminal").then((mod) => mod.Terminal),
+  { ssr: false }
+);
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  Play,
+  Square,
+  Clock,
+  CheckCircle2,
+  AlertCircle,
+  MessageSquare,
+  Code2,
+  Terminal as TerminalIcon,
+  BookOpen,
+  FileCode,
+} from "lucide-react";
+
+// Session initialization data interface
+interface SessionData {
+  sessionId: string;
+  candidateId: string;
+  totalQuestions?: number; // Total number of questions in assessment
+  question: {
+    id: string;
+    title: string;
+    description: string;
+    difficulty: string;
+    language: string;
+    starterCode: string;
+    testCases: Array<{
+      name: string;
+      input: string;
+      expectedOutput: string;
+      hidden: boolean;
+    }>;
+  };
+  sandbox: {
+    volumeId: string;
+    workspaceDir: string;
+    status: string;
+  };
+  files: FileNode[];
+  timeLimit: number;
+  timeRemaining: number;
+  startedAt: string;
+}
+
+export default function InterviewPage() {
+  const params = useParams();
+  const router = useRouter();
+  const candidateId = params.id as string;
+
+  // Mobile device detection - block mobile devices
+  const { isMobile, isChecking } = useIsMobile();
+
+  // Session state
+  const [sessionData, setSessionData] = useState<SessionData | null>(null);
+  const [isInitializing, setIsInitializing] = useState(true);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  // UI state
+  const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
+  const [code, setCode] = useState("");
+  const [isAIChatOpen, setIsAIChatOpen] = useState(true);
+  const [timeRemaining, setTimeRemaining] = useState(0);
+  const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [leftSidebarTab, setLeftSidebarTab] = useState<"problem" | "files">("problem");
+  const [panelSizes, setPanelSizes] = useState<{
+    horizontal: number[];
+    vertical: number[];
+  }>({
+    horizontal: [25, 48, 27], // Default: Sidebar, Editor+Terminal, Chat
+    vertical: [60, 40], // Default: Editor, Terminal
+  });
+
+  // Question progression state
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [totalQuestions, setTotalQuestions] = useState(3); // Default, will be updated
+  const [questionStartTime, setQuestionStartTime] = useState<Date | null>(null);
+  const [questionTimeElapsed, setQuestionTimeElapsed] = useState(0);
+  const [isLoadingNextQuestion, setIsLoadingNextQuestion] = useState(false);
+  const [showCompletionCard, setShowCompletionCard] = useState(false);
+  const [previousQuestionPerformance, setPreviousQuestionPerformance] = useState<{
+    score: number;
+    timeSpent: number;
+  } | null>(null);
+
+  // Debounce timer ref
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // AI Chat ref for resetConversation
+  const aiChatRef = useRef<AIChatHandle>(null);
+
+  // Session recovery for preventing data loss on refresh
+  const [showRecoveryPrompt, setShowRecoveryPrompt] = useState(false);
+  const [recoveredState, setRecoveredState] = useState<SessionState | null>(null);
+  const { saveSessionState, clearSessionState, checkRecoverableSession } = useSessionRecovery({
+    candidateId,
+    onRestore: (state) => {
+      setRecoveredState(state);
+      setShowRecoveryPrompt(true);
+    },
+  });
+  const { showRecoveryDialog } = useSessionRecoveryDialog();
+
+  // Offline detection for better error handling
+  const { isOnline, wasOffline, resetWasOffline } = useOnlineStatus();
+
+  // Load UI preferences from localStorage
+  useEffect(() => {
+    const savedTab = localStorage.getItem(`interview-sidebar-tab-${candidateId}`);
+    if (savedTab === "problem" || savedTab === "files") {
+      setLeftSidebarTab(savedTab);
+    }
+
+    const savedPanelSizes = localStorage.getItem(`interview-panel-sizes-${candidateId}-v2`);
+    if (savedPanelSizes) {
+      try {
+        const parsed = JSON.parse(savedPanelSizes);
+        setPanelSizes(parsed);
+      } catch (e) {
+        console.error("Failed to parse panel sizes:", e);
+      }
+    }
+  }, [candidateId]);
+
+  // Save sidebar tab preference
+  const handleTabChange = (tab: "problem" | "files") => {
+    setLeftSidebarTab(tab);
+    localStorage.setItem(`interview-sidebar-tab-${candidateId}`, tab);
+  };
+
+  // Save panel sizes to localStorage
+  const handleHorizontalLayout = (sizes: number[]) => {
+    const newSizes = { ...panelSizes, horizontal: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+  };
+
+  const handleVerticalLayout = (sizes: number[]) => {
+    const newSizes = { ...panelSizes, vertical: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+  };
+
+  // Handle session recovery acceptance
+  const handleRestoreSession = useCallback(async () => {
+    if (!recoveredState) return;
+
+    try {
+      setCode(recoveredState.code);
+      setTestResults(recoveredState.testResults);
+      setTimeRemaining(recoveredState.timeRemaining);
+      setCurrentQuestionIndex(recoveredState.currentQuestionIndex);
+      setQuestionTimeElapsed(recoveredState.questionTimeElapsed);
+
+      if (recoveredState.questionStartTime) {
+        setQuestionStartTime(new Date(recoveredState.questionStartTime));
+      }
+
+      // Find and select the file if it exists
+      if (sessionData && recoveredState.selectedFilePath) {
+        const file = sessionData.files.find(f => f.path === recoveredState.selectedFilePath);
+        if (file) {
+          setSelectedFile(file);
+        }
+      }
+
+      console.log('Session restored successfully');
+    } catch (error) {
+      console.error('Failed to restore session:', error);
+    } finally {
+      setShowRecoveryPrompt(false);
+      setRecoveredState(null);
+    }
+  }, [recoveredState, sessionData]);
+
+  // Initialize session on mount
+  useEffect(() => {
+    const initializeSession = async () => {
+      try {
+        setIsInitializing(true);
+        setInitError(null);
+
+        const response = await fetch(`/api/interview/${candidateId}/initialize`, {
+          method: "POST",
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to initialize session");
+        }
+
+        const data: SessionData = await response.json();
+        setSessionData(data);
+        setTimeRemaining(data.timeRemaining);
+
+        // Update total questions from API response
+        if (data.totalQuestions) {
+          setTotalQuestions(data.totalQuestions);
+        }
+
+        // Set default selected file and load its content
+        if (data.files.length > 0) {
+          const mainFile = data.files.find(
+            (f) => f.name.includes("solution") || f.name.includes("index")
+          ) || data.files[0];
+          setSelectedFile(mainFile);
+
+          // Load initial file content
+          try {
+            const fileResponse = await fetch(
+              `/api/interview/${candidateId}/files?path=${encodeURIComponent(mainFile.path)}`
+            );
+            if (fileResponse.ok) {
+              const fileData = await fileResponse.json();
+              setCode(fileData.content || data.question.starterCode);
+            } else {
+              setCode(data.question.starterCode);
+            }
+          } catch {
+            setCode(data.question.starterCode);
+          }
+        } else {
+          setCode(data.question.starterCode);
+        }
+      } catch (err) {
+        console.error("Session initialization error:", err);
+        setInitError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        setIsInitializing(false);
+      }
+    };
+
+    initializeSession();
+  }, [candidateId]);
+
+  // Timer countdown
+  useEffect(() => {
+    if (!sessionData || timeRemaining <= 0) return;
+
+    const intervalId = setInterval(() => {
+      setTimeRemaining((prev) => {
+        if (prev <= 1) {
+          // Time's up - auto-submit
+          handleSubmit();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [sessionData, timeRemaining]);
+
+  // Cleanup debounce timer on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  // Track question time elapsed
+  useEffect(() => {
+    if (!questionStartTime) {
+      // Set start time when session initializes
+      if (sessionData) {
+        setQuestionStartTime(new Date());
+      }
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const elapsed = Math.floor((Date.now() - questionStartTime.getTime()) / 1000);
+      setQuestionTimeElapsed(elapsed);
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [questionStartTime, sessionData]);
+
+  // Show completion card when all tests pass
+  useEffect(() => {
+    if (testResults.total > 0 && testResults.passed === testResults.total) {
+      setShowCompletionCard(true);
+    } else {
+      setShowCompletionCard(false);
+    }
+  }, [testResults]);
+
+  // Auto-save session state to localStorage (prevents data loss on refresh)
+  useEffect(() => {
+    if (!sessionData) return;
+
+    saveSessionState({
+      code,
+      selectedFilePath: selectedFile?.path || null,
+      testResults,
+      timeRemaining,
+      currentQuestionIndex,
+      questionStartTime: questionStartTime?.toISOString() || null,
+      questionTimeElapsed,
+    });
+  }, [
+    code,
+    selectedFile,
+    testResults,
+    timeRemaining,
+    currentQuestionIndex,
+    questionStartTime,
+    questionTimeElapsed,
+    sessionData,
+    saveSessionState,
+  ]);
+
+  // Show recovery dialog when recovered state is available
+  useEffect(() => {
+    if (showRecoveryPrompt && recoveredState) {
+      showRecoveryDialog(recoveredState).then((shouldRestore) => {
+        if (shouldRestore) {
+          handleRestoreSession();
+        } else {
+          // User declined - clear saved state
+          clearSessionState();
+          setShowRecoveryPrompt(false);
+          setRecoveredState(null);
+        }
+      });
+    }
+  }, [showRecoveryPrompt, recoveredState, showRecoveryDialog, handleRestoreSession, clearSessionState]);
+
+  // Show reconnection notification
+  useEffect(() => {
+    if (isOnline && wasOffline) {
+      toast.success("Connection restored", {
+        description: "You're back online. All changes will be synchronized.",
+        duration: 3000,
+        icon: "🌐",
+      });
+      resetWasOffline();
+    }
+  }, [isOnline, wasOffline, resetWasOffline]);
+
+  // Confirmation before leaving page
+  useEffect(() => {
+    if (!sessionData || isSubmitting) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = 'You have an interview in progress. Are you sure you want to leave?';
+      return 'You have an interview in progress. Are you sure you want to leave?';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [sessionData, isSubmitting]);
+
+  // Manual save handler (for Ctrl+S)
+  const handleManualSave = useCallback(async () => {
+    if (!sessionData || !selectedFile) return;
+
+    // Check online status
+    if (!isOnline) {
+      toast.warning("You're offline", {
+        description: "Changes are saved locally and will sync when reconnected.",
+        duration: 3000,
+      });
+      return;
+    }
+
+    const toastId = toast.loading(`Saving ${selectedFile.name}...`);
+
+    try {
+      await fetch(`/api/interview/${candidateId}/files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: selectedFile.path,
+          content: code,
+          language: sessionData.question.language,
+        }),
+      });
+
+      toast.success("File saved", {
+        id: toastId,
+        description: `${selectedFile.name} saved successfully`,
+        duration: 2000,
+        icon: "💾",
+      });
+    } catch (err) {
+      console.error("Failed to save file:", err);
+      toast.error("Save failed", {
+        id: toastId,
+        description: err instanceof Error ? err.message : "Failed to save file",
+        duration: 4000,
+      });
+    }
+  }, [sessionData, selectedFile, candidateId, code, isOnline]);
+
+  const handleCodeChange = useCallback((newCode: string) => {
+    // Update local state immediately (optimistic update)
+    setCode(newCode);
+
+    // Clear previous debounce timer
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    // Debounce API call (2 seconds)
+    debounceTimerRef.current = setTimeout(async () => {
+      if (sessionData && selectedFile) {
+        try {
+          await fetch(`/api/interview/${candidateId}/files`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              path: selectedFile.path,
+              content: newCode,
+              language: sessionData.question.language,
+            }),
+          });
+        } catch (err) {
+          console.error("Failed to sync file:", err);
+        }
+      }
+    }, 2000); // 2 second debounce
+  }, [sessionData, selectedFile, candidateId]);
+
+  const handleRunTests = async () => {
+    if (!sessionData) return;
+
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/run-tests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          language: sessionData.question.language,
+          testCases: sessionData.question.testCases,
+          fileName: selectedFile?.name,
+        }),
+      });
+
+      if (response.ok) {
+        const results = await response.json();
+        setTestResults({
+          passed: results.passed,
+          total: results.total,
+        });
+      }
+    } catch (err) {
+      console.error("Failed to run tests:", err);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!sessionData || isSubmitting) return;
+
+    // Confirm submission
+    const confirmSubmit = window.confirm(
+      "Are you sure you want to submit your assessment? This action cannot be undone."
+    );
+
+    if (!confirmSubmit) return;
+
+    try {
+      setIsSubmitting(true);
+
+      // Submit assessment
+      const response = await fetch(`/api/interview/${candidateId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          finalCode: {
+            [`solution.${sessionData.question.language === "python" ? "py" : "js"}`]: code,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Submission failed");
+      }
+
+      const result = await response.json();
+
+      // Clear session state - assessment is complete
+      clearSessionState();
+
+      // Show success message
+      alert(
+        `Assessment submitted successfully!\n\n` +
+        `Overall Score: ${result.overallScore?.toFixed(1) || "N/A"}/100\n` +
+        `Tests Passed: ${result.testsPassed || 0}/${result.totalTests || 0}\n\n` +
+        `Recommendation: ${result.recommendation?.decision || "Pending"}`
+      );
+
+      // Redirect to dashboard or thank you page
+      router.push("/dashboard");
+    } catch (err) {
+      console.error("Submission error:", err);
+      alert(`Failed to submit assessment: ${err instanceof Error ? err.message : "Unknown error"}`);
+      setIsSubmitting(false);
+    }
+  };
+
+  // Keyboard shortcuts - must be before early returns (Rules of Hooks)
+  useInterviewKeyboardShortcuts({
+    onSave: handleManualSave,
+    onRunTests: handleRunTests,
+    onToggleAIChat: () => setIsAIChatOpen((prev) => !prev),
+    onSubmit: handleSubmit,
+  });
+
+  // Mobile check loading
+  if (isChecking) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <Spinner className="mx-auto mb-4" />
+      </div>
+    );
+  }
+
+  // Block mobile devices
+  if (isMobile) {
+    return <MobileBlocker />;
+  }
+
+  // Loading state
+  if (isInitializing) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <Spinner className="mx-auto mb-4" />
+          <p className="text-text-secondary">Initializing interview session...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (initError || !sessionData) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-background">
+        <div className="text-center max-w-md">
+          <AlertCircle className="h-12 w-12 text-error mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-text-primary mb-2">
+            Failed to Initialize Interview
+          </h2>
+          <p className="text-text-secondary mb-4">
+            {initError || "Unknown error occurred"}
+          </p>
+          <Button onClick={() => router.push("/dashboard")}>
+            Return to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleNextQuestion = async () => {
+    if (!sessionData || isLoadingNextQuestion) return;
+
+    try {
+      setIsLoadingNextQuestion(true);
+      setShowCompletionCard(false);
+
+      // Calculate performance score
+      const timeSpent = questionTimeElapsed;
+      const testsPassedRatio = testResults.total > 0 ? testResults.passed / testResults.total : 0;
+      const score = Math.round(testsPassedRatio * 100); // Simple score calculation
+
+      // Store performance for loading screen
+      setPreviousQuestionPerformance({ score, timeSpent });
+
+      // Call API to generate next question
+      const response = await fetch(`/api/interview/${candidateId}/questions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          previousPerformance: {
+            questionId: sessionData.question.id,
+            score,
+            timeSpent,
+            testsPassedRatio,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to generate next question");
+      }
+
+      const data = await response.json();
+
+      // Check if this was the last question
+      if (data.completed) {
+        // Show final summary and submit
+        alert("All questions completed! Ready to submit your assessment.");
+        await handleSubmit();
+        return;
+      }
+
+      // Update session with new question
+      setSessionData({
+        ...sessionData,
+        question: {
+          id: data.question.id,
+          title: data.question.title,
+          description: data.question.description,
+          difficulty: data.question.difficulty.toUpperCase(),
+          language: data.question.language,
+          starterCode: data.question.starterCode[0]?.content || "",
+          testCases: data.question.testCases,
+        },
+      });
+
+      // Update question tracking
+      setCurrentQuestionIndex((prev) => prev + 1);
+      setQuestionStartTime(new Date());
+      setQuestionTimeElapsed(0);
+      setTestResults({ passed: 0, total: 0 });
+
+      // Reset editor with new starter code
+      setCode(data.question.starterCode[0]?.content || "");
+
+      // CRITICAL: Reset AI conversation history for new question
+      // This prevents context leakage between questions
+      // If this fails after retries, we BLOCK progression (security risk)
+      try {
+        await resetConversation(candidateId, data.question.id);
+        // Sync UI: Clear conversation in frontend
+        aiChatRef.current?.resetConversation();
+      } catch (resetError) {
+        // Conversation reset failed after 3 retries - CRITICAL
+        console.error("CRITICAL: Conversation reset failed:", resetError);
+        setIsLoadingNextQuestion(false);
+
+        toast.error("Security error", {
+          description: "Failed to prepare for next question. Please refresh the page and try again.",
+          duration: 8000,
+          action: {
+            label: "Refresh",
+            onClick: () => window.location.reload(),
+          },
+        });
+        return; // BLOCK question progression
+      }
+
+      // Clear previous performance after loading
+      setTimeout(() => {
+        setPreviousQuestionPerformance(null);
+        setIsLoadingNextQuestion(false);
+      }, 2000); // Show loading screen for 2 seconds
+    } catch (err) {
+      console.error("Failed to load next question:", err);
+      setIsLoadingNextQuestion(false);
+
+      const errorMessage = err instanceof Error ? err.message : "Unknown error";
+
+      toast.error("Failed to load next question", {
+        description: errorMessage,
+        duration: 6000,
+        action: {
+          label: "Try Again",
+          onClick: handleNextQuestion,
+        },
+      });
+    }
+  };
+
+  // Format time remaining
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const handleFileSelect = async (file: FileNode) => {
+    if (file.type === "file") {
+      // CRITICAL FIX: Flush pending save before switching files
+      // Without this, debounced changes to current file are lost
+      if (debounceTimerRef.current && sessionData && selectedFile) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+
+        // Save current file immediately
+        try {
+          await fetch(`/api/interview/${candidateId}/files`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              path: selectedFile.path,
+              content: code,
+              language: sessionData.question.language,
+            }),
+          });
+          console.debug('Flushed pending changes before file switch');
+        } catch (err) {
+          console.error("Failed to flush pending save:", err);
+        }
+      }
+
+      setSelectedFile(file);
+
+      // Load file content from Modal volume
+      try {
+        const response = await fetch(
+          `/api/interview/${candidateId}/files?path=${encodeURIComponent(file.path)}`
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          setCode(data.content || "");
+        } else {
+          // Fallback to starter code if file read fails
+          console.error("Failed to load file content");
+          setCode(sessionData?.question.starterCode || "");
+        }
+      } catch (err) {
+        console.error("Error loading file:", err);
+        // Fallback to starter code
+        setCode(sessionData?.question.starterCode || "");
+      }
+    }
+  };
+
+  return (
+    <div className="h-screen flex flex-col bg-background">
+      {/* Loading Next Question Overlay */}
+      {isLoadingNextQuestion && (
+        <NextQuestionLoading
+          previousScore={previousQuestionPerformance?.score}
+          previousTime={previousQuestionPerformance?.timeSpent}
+          nextDifficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
+          nextQuestionNumber={currentQuestionIndex + 2}
+        />
+      )}
+
+      {/* Compact Header */}
+      <div className="border-b border-border bg-background-secondary px-4 py-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <h1 className="text-sm font-semibold text-text-primary">
+              Question {currentQuestionIndex + 1}/{totalQuestions}: {sessionData.question.title}
+            </h1>
+
+            <Badge
+              variant={
+                sessionData.question.difficulty === "EASY"
+                  ? "success"
+                  : sessionData.question.difficulty === "MEDIUM"
+                  ? "warning"
+                  : "error"
+              }
+            >
+              {sessionData.question.difficulty}
+            </Badge>
+
+            {/* Test Status */}
+            {testResults.total > 0 && (
+              <Badge
+                variant={testResults.passed === testResults.total ? "success" : "default"}
+                className="gap-1"
+              >
+                {testResults.passed === testResults.total ? (
+                  <CheckCircle2 className="h-3 w-3" />
+                ) : (
+                  <AlertCircle className="h-3 w-3" />
+                )}
+                {testResults.passed}/{testResults.total}
+              </Badge>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            {/* Time Elapsed / Time Remaining */}
+            <div className="flex items-center gap-2 text-sm text-text-tertiary">
+              <Clock className="h-4 w-4" />
+              <span className="font-mono">{formatTime(timeRemaining)}</span>
+            </div>
+
+            {/* Actions */}
+            <Button size="sm" variant="outline" onClick={handleRunTests}>
+              <Play className="h-4 w-4 mr-2" />
+              Run Tests
+            </Button>
+
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={handleSubmit}
+              disabled={isSubmitting || timeRemaining === 0}
+              loading={isSubmitting}
+            >
+              {isSubmitting ? "Submitting..." : "Submit Assessment"}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Offline Warning Banner */}
+      {!isOnline && (
+        <div className="bg-warning/10 border-b border-warning/30 px-6 py-3">
+          <div className="flex items-center gap-3 text-warning">
+            <AlertCircle className="h-5 w-5 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="text-sm font-medium">You're offline</p>
+              <p className="text-xs text-warning/80">
+                Changes are saved locally and will sync when your connection is restored.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <div className="flex-1 overflow-hidden">
+        <PanelGroup direction="horizontal" onLayout={handleHorizontalLayout}>
+          {/* Left Sidebar - Problem/Files Tabs */}
+          <Panel defaultSize={panelSizes.horizontal[0]} minSize={20} maxSize={35}>
+            <div className="h-full border-r border-border flex flex-col bg-background">
+              {/* Tabs */}
+              <div className="border-b border-border bg-background-secondary flex">
+                <button
+                  onClick={() => handleTabChange("problem")}
+                  className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                    leftSidebarTab === "problem"
+                      ? "text-primary border-b-2 border-primary bg-background"
+                      : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <BookOpen className="h-4 w-4" />
+                    <span>Problem</span>
+                  </div>
+                </button>
+                <button
+                  onClick={() => handleTabChange("files")}
+                  className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                    leftSidebarTab === "files"
+                      ? "text-primary border-b-2 border-primary bg-background"
+                      : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                  }`}
+                >
+                  <div className="flex items-center justify-center gap-2">
+                    <FileCode className="h-4 w-4" />
+                    <span>Files</span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Tab Content */}
+              <div className="flex-1 overflow-hidden">
+                {leftSidebarTab === "problem" ? (
+                  <ProblemPanel
+                    title={sessionData.question.title}
+                    description={sessionData.question.description}
+                    difficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
+                    testCases={sessionData.question.testCases}
+                  />
+                ) : (
+                  <FileTree
+                    sessionId={sessionData.sessionId}
+                    files={sessionData.files}
+                    selectedFile={selectedFile?.path}
+                    onFileSelect={handleFileSelect}
+                    className="flex-1"
+                  />
+                )}
+              </div>
+            </div>
+          </Panel>
+
+          <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors" />
+
+          {/* Center - Editor and Terminal */}
+          <Panel defaultSize={isAIChatOpen ? panelSizes.horizontal[1] : 73} minSize={40}>
+            <PanelGroup direction="vertical" onLayout={handleVerticalLayout}>
+              {/* Editor */}
+              <Panel defaultSize={panelSizes.vertical[0]} minSize={30}>
+                <div className="h-full flex flex-col border-b border-border">
+                  {/* Editor Tabs */}
+                  <div className="border-b border-border bg-background-secondary flex items-center px-2">
+                    <div className="flex items-center gap-1 px-3 py-2 bg-background border-r border-border text-sm">
+                      <Code2 className="h-4 w-4 text-primary" />
+                      <span className="text-text-primary">
+                        {selectedFile?.name || "index.ts"}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Editor */}
+                  <div className="flex-1 min-h-0">
+                    <CodeEditor
+                      sessionId={sessionData.sessionId}
+                      questionId={sessionData.question.id}
+                      value={code}
+                      onChange={handleCodeChange}
+                      language={sessionData.question.language as any}
+                      fileName={selectedFile?.name}
+                    />
+                  </div>
+                </div>
+              </Panel>
+
+              <PanelResizeHandle className="h-1 bg-border hover:bg-primary transition-colors" />
+
+              {/* Terminal */}
+              <Panel defaultSize={panelSizes.vertical[1]} minSize={20}>
+                <div className="h-full flex flex-col">
+                  <div className="border-b border-border bg-background-secondary px-3 py-2 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <TerminalIcon className="h-4 w-4 text-success" />
+                      <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
+                        Terminal
+                      </p>
+                    </div>
+                    {showCompletionCard && (
+                      <Badge variant="success" className="animate-pulse">
+                        Ready for next question!
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex-1 min-h-0 relative">
+                    <Terminal sessionId={sessionData.sessionId} />
+
+                    {/* Completion Card Overlay */}
+                    {showCompletionCard && (
+                      <div className="absolute bottom-4 left-4 right-4 z-10">
+                        <QuestionCompletionCard
+                          testsPassed={testResults.passed}
+                          testsTotal={testResults.total}
+                          timeSpent={questionTimeElapsed}
+                          score={Math.round((testResults.passed / testResults.total) * 100)}
+                          onNext={handleNextQuestion}
+                          isLastQuestion={currentQuestionIndex + 1 >= totalQuestions}
+                          isLoading={isLoadingNextQuestion}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+
+          {/* Right Sidebar - AI Chat */}
+          {isAIChatOpen && (
+            <>
+              <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors" />
+              <Panel defaultSize={panelSizes.horizontal[2]} minSize={20} maxSize={50}>
+                <div className="h-full border-l border-border">
+                  <AIChat
+                    ref={aiChatRef}
+                    sessionId={sessionData.sessionId}
+                    onFileModified={async (path) => {
+                      // Reload file content when AI modifies it
+                      if (selectedFile && selectedFile.path === path) {
+                        try {
+                          const response = await fetch(
+                            `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
+                          );
+                          if (response.ok) {
+                            const data = await response.json();
+                            setCode(data.content || "");
+                          }
+                        } catch (err) {
+                          console.error("Failed to reload file:", err);
+                        }
+                      }
+                    }}
+                    onTestResultsUpdated={(results) => {
+                      // Update test results display
+                      setTestResults({
+                        passed: results.passed || 0,
+                        total: results.total || 0,
+                      });
+                    }}
+                    onSuggestNextQuestion={(suggestion) => {
+                      // AI suggests moving to next question
+                      console.log("AI suggests next question:", suggestion.reason);
+                      setShowCompletionCard(true);
+                    }}
+                  />
+                </div>
+              </Panel>
+            </>
+          )}
+        </PanelGroup>
+      </div>
+
+      {/* Toggle AI Chat */}
+      {!isAIChatOpen && (
+        <button
+          onClick={() => setIsAIChatOpen(true)}
+          className="fixed bottom-4 right-4 h-12 w-12 rounded-full bg-primary text-white shadow-lg flex items-center justify-center hover:bg-primary-hover transition-colors"
+        >
+          <MessageSquare className="h-6 w-6" />
+        </button>
+      )}
+
+      {/* Keyboard Shortcuts Panel */}
+      <KeyboardShortcutsPanel shortcuts={defaultInterviewShortcuts} showOnFirstVisit={true} />
+    </div>
+  );
+}
