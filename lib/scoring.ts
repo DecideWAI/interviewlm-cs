@@ -129,8 +129,7 @@ export function calculateAICollaborationScore(
   let independence = 75; // Default baseline
 
   // Factor 1: Total interaction count (fewer is more independent)
-  const interactions = candidate.claudeInteractions || 0;
-  const timeAllocated = candidate.timeAllocated || 60;
+  // Reuse interactions and timeAllocated variables from above
   const interactionsPerHour = interactions / (timeAllocated / 60);
 
   // Ideal: 5-10 interactions per hour shows balanced usage
@@ -146,7 +145,7 @@ export function calculateAICollaborationScore(
   }
 
   // Factor 2: Acceptance rate (too high = over-reliant, balanced is better)
-  const acceptanceRate = (candidate.aiAcceptanceRate || 0) * 100;
+  // Reuse acceptanceRate variable from above
   if (acceptanceRate > 85) {
     // Over-reliant on AI suggestions
     independence -= 10;
