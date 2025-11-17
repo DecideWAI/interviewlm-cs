@@ -9,9 +9,10 @@ import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { EditorView } from "@codemirror/view";
 import { Extension } from "@codemirror/state";
 import { Button } from "@/components/ui/button";
-import { Play, CheckCircle2, XCircle, Loader2 } from "lucide-react";
+import { Play, CheckCircle2, XCircle, Loader2, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useEventBatcher } from "@/lib/eventBatcher";
+import { useCodeStreaming } from "@/hooks/useCodeStreaming";
 
 interface TestResult {
   passed: number;
@@ -49,9 +50,34 @@ export function CodeEditor({
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSnapshotRef = useRef<string>(value);
   const snapshotIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isStreamingUpdateRef = useRef(false);
 
   // Initialize event batcher for efficient API calls
   const { addEvent, flush } = useEventBatcher(sessionId || "");
+
+  // Code streaming for real-time AI code generation
+  const { isStreaming, currentFile, accumulatedContent } = useCodeStreaming({
+    sessionId: sessionId || "",
+    enabled: !!sessionId,
+    onCodeUpdate: (streamedFileName, delta) => {
+      // Only update if it's the current file
+      if (streamedFileName === fileName) {
+        isStreamingUpdateRef.current = true;
+        const currentContent = accumulatedContent.get(streamedFileName) || "";
+        onChange(currentContent + delta);
+      }
+    },
+    onStreamComplete: (streamedFileName, fullContent) => {
+      // Update with complete content
+      if (streamedFileName === fileName) {
+        isStreamingUpdateRef.current = true;
+        onChange(fullContent);
+        setTimeout(() => {
+          isStreamingUpdateRef.current = false;
+        }, 100);
+      }
+    },
+  });
 
   // Select language extension
   const getLanguageExtension = (): Extension => {
@@ -75,6 +101,9 @@ export function CodeEditor({
   // Record code change event (debounced)
   const recordCodeChange = (newValue: string) => {
     if (!sessionId) return; // Skip if no sessionId (e.g., in replay mode)
+
+    // Skip recording if this is a streaming update
+    if (isStreamingUpdateRef.current) return;
 
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
@@ -193,8 +222,14 @@ export function CodeEditor({
       {/* Test Button Header */}
       {showTestButton && (
         <div className="border-b border-border p-2 flex items-center justify-between bg-background">
-          <div className="text-xs text-text-tertiary">
+          <div className="flex items-center gap-2 text-xs text-text-tertiary">
             {fileName && <span className="font-mono" aria-label={`Editing file: ${fileName}`}>{fileName}</span>}
+            {isStreaming && currentFile === fileName && (
+              <div className="flex items-center gap-1 text-primary bg-primary/10 px-2 py-0.5 rounded">
+                <Radio className="h-3 w-3 animate-pulse" />
+                <span>AI Writing Code...</span>
+              </div>
+            )}
           </div>
           <Button
             onClick={runTests}

@@ -442,13 +442,29 @@ ${helpfulnessConfig.allowedTools.join(', ')}
     }
 
     try {
-      // Import Modal service dynamically
+      // Import services dynamically
       const { writeFile } = await import('../services/modal-production');
+      const { streamCodeGeneration } = await import('../services/code-streaming');
 
       // Get volume ID from session
       const volumeId = `vol-${this.config.sessionId}`;
 
-      // Write file to Modal
+      // Stream code generation to frontend in real-time (if enabled)
+      const fileName = filePath.split('/').pop() || filePath;
+      const enableStreaming = process.env.ENABLE_CODE_STREAMING !== 'false';
+
+      if (enableStreaming) {
+        // Stream code in chunks with typing effect
+        streamCodeGeneration(this.config.sessionId, fileName, content, {
+          chunkSize: 5, // 5 characters at a time
+          delayMs: 20, // 20ms between chunks
+        }).catch((err) => {
+          console.error('[CodingAgent] Code streaming error:', err);
+          // Don't fail the write operation if streaming fails
+        });
+      }
+
+      // Write file to Modal (happens immediately, streaming is for visual effect)
       await writeFile(volumeId, filePath, content);
 
       return {
