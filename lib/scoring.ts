@@ -124,7 +124,39 @@ export function calculateAICollaborationScore(
   }
 
   // Independence: decreasing trend is better
-  const independence = 75; // TODO: Calculate from session data
+  // Calculate based on interaction frequency and acceptance rate
+  // High independence = low reliance on AI suggestions
+  let independence = 75; // Default baseline
+
+  // Factor 1: Total interaction count (fewer is more independent)
+  const interactions = candidate.claudeInteractions || 0;
+  const timeAllocated = candidate.timeAllocated || 60;
+  const interactionsPerHour = interactions / (timeAllocated / 60);
+
+  // Ideal: 5-10 interactions per hour shows balanced usage
+  // <5 = very independent (90-100), 5-10 = independent (75-85), >15 = dependent (50-70)
+  if (interactionsPerHour < 5) {
+    independence = 90 + Math.min(10, (5 - interactionsPerHour) * 2);
+  } else if (interactionsPerHour <= 10) {
+    independence = 85 - ((interactionsPerHour - 5) / 5) * 10;
+  } else if (interactionsPerHour <= 15) {
+    independence = 75 - ((interactionsPerHour - 10) / 5) * 15;
+  } else {
+    independence = Math.max(40, 60 - (interactionsPerHour - 15) * 2);
+  }
+
+  // Factor 2: Acceptance rate (too high = over-reliant, balanced is better)
+  const acceptanceRate = (candidate.aiAcceptanceRate || 0) * 100;
+  if (acceptanceRate > 85) {
+    // Over-reliant on AI suggestions
+    independence -= 10;
+  } else if (acceptanceRate < 40) {
+    // Too dismissive, not collaborating well
+    independence -= 5;
+  }
+
+  // Ensure score is in valid range
+  independence = Math.max(0, Math.min(100, independence));
 
   const overall =
     promptQuality * 0.25 +
