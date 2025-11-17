@@ -19,12 +19,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { GeneratedProblem } from "@/types/problem";
-import type { EnhancedQuestionSeed } from "@/lib/mock-seeds-data";
+import type { EnhancedProblemSeed } from "@/types/seed";
 
 interface SeedPreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
-  seed: EnhancedQuestionSeed;
+  seed: EnhancedProblemSeed;
   tier: "free" | "pay_as_you_go" | "medium" | "enterprise";
   previewsRemaining: number;
   previewsLimit: number;
@@ -175,7 +175,7 @@ func TestEdgeCases(t *testing.T) {
 };
 
 // Mock generated problem (in production, this would call LLM API)
-const generateMockProblem = (seed: EnhancedQuestionSeed): GeneratedProblem => {
+const generateMockProblem = (seed: EnhancedProblemSeed): GeneratedProblem => {
   const language = 'typescript'; // Default language, could be from seed metadata
   const starterTemplate = generateStarterCodeTemplate(language, seed.title);
 
