@@ -188,9 +188,25 @@ export async function streamCodeGeneration(
   // Start streaming
   codeStreamManager.startStreaming(sessionId, fileName);
 
+  // Track cursor position
+  let currentLine = 1; // Lines start at 1
+  let currentColumn = 0; // Columns start at 0
+
   // Stream in chunks
   for (let i = 0; i < fullCode.length; i += chunkSize) {
     const chunk = fullCode.substring(i, Math.min(i + chunkSize, fullCode.length));
+
+    // Calculate position based on content streamed so far
+    // Count newlines in the chunk
+    for (let j = 0; j < chunk.length; j++) {
+      const char = chunk[j];
+      if (char === '\n') {
+        currentLine++;
+        currentColumn = 0;
+      } else {
+        currentColumn++;
+      }
+    }
 
     codeStreamManager.streamCodeDelta({
       sessionId,
@@ -198,8 +214,8 @@ export async function streamCodeGeneration(
       delta: chunk,
       type: 'delta',
       position: {
-        line: 0, // TODO: Calculate actual line/column
-        column: i,
+        line: currentLine,
+        column: currentColumn,
       },
     });
 

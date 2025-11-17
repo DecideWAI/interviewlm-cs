@@ -8,6 +8,7 @@
 import { z } from "zod";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
+import { alerting } from "@/lib/services/alerting";
 
 // Configuration
 const PADDLE_VENDOR_ID = process.env.PADDLE_VENDOR_ID;
@@ -316,6 +317,7 @@ async function handlePaymentFailed(
   try {
     const customData = JSON.parse(payload.passthrough || "{}");
     const organizationId = customData.organization_id;
+    const userId = customData.user_id;
 
     console.error("Payment failed:", {
       organizationId,
@@ -323,12 +325,65 @@ async function handlePaymentFailed(
       reason: payload.payment_failure_reason,
     });
 
-    // TODO: Send email notification to user about failed payment
-    // TODO: Log failed transaction
+    // Get organization and user details for notification
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      include: {
+        members: {
+          where: { role: "OWNER" },
+          include: { user: true },
+        },
+      },
+    });
+
+    if (!organization) {
+      console.error("[Paddle] Organization not found:", organizationId);
+      return {
+        success: false,
+        message: "Organization not found",
+      };
+    }
+
+    // Log failed transaction to database
+    await prisma.creditTransaction.create({
+      data: {
+        organizationId,
+        type: "PURCHASE",
+        amount: 0, // Failed payment - no credits
+        paddleOrderId: payload.order_id,
+        metadata: {
+          status: "FAILED",
+          failureReason: payload.payment_failure_reason,
+          paymentMethod: payload.payment_method,
+          attemptedAmount: payload.amount,
+          currency: payload.currency,
+        },
+      },
+    });
+
+    // Send critical alert to notify admins
+    await alerting.critical(
+      `Payment Failed: ${organization.name}`,
+      `Payment for order ${payload.order_id} failed`,
+      {
+        organizationId,
+        organizationName: organization.name,
+        orderId: payload.order_id,
+        amount: payload.amount,
+        currency: payload.currency,
+        failureReason: payload.payment_failure_reason,
+        paymentMethod: payload.payment_method,
+        userEmail: organization.members[0]?.user?.email,
+      }
+    );
+
+    // TODO: Send email to user via email service (Resend, SendGrid, etc.)
+    // This would require integrating an email service and creating email templates
+    // For now, the alerting service will send to Slack if configured
 
     return {
       success: true,
-      message: "Payment failure logged",
+      message: "Payment failure logged and notification sent",
     };
   } catch (error) {
     console.error("Error handling payment_failed:", error);
@@ -348,21 +403,64 @@ async function handleSubscriptionCreated(
   try {
     const customData = JSON.parse(payload.passthrough || "{}");
     const organizationId = customData.organization_id;
+    const planId = payload.subscription_plan_id;
 
     console.log("Subscription created:", {
       organizationId,
       subscriptionId: payload.subscription_id,
-      plan: payload.subscription_plan_id,
+      plan: planId,
     });
 
-    // TODO: Implement subscription management
-    // - Update organization plan
-    // - Set recurring credit allocation
-    // - Send welcome email
+    // Determine plan tier based on Paddle plan ID
+    const planMap: Record<string, "STARTUP" | "GROWTH" | "ENTERPRISE"> = {
+      [process.env.PADDLE_PLAN_STARTUP || "pri_startup"]: "STARTUP",
+      [process.env.PADDLE_PLAN_GROWTH || "pri_growth"]: "GROWTH",
+      [process.env.PADDLE_PLAN_ENTERPRISE || "pri_enterprise"]: "ENTERPRISE",
+    };
+    const plan = planMap[planId] || "STARTUP";
+
+    // Update organization plan
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        plan,
+        subscriptionStatus: "ACTIVE",
+        paddleSubscriptionId: payload.subscription_id,
+        billingInterval: payload.subscription_plan_billing_cycle || "MONTHLY",
+      },
+    });
+
+    // Get organization for notification
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      include: {
+        members: {
+          where: { role: "OWNER" },
+          include: { user: true },
+        },
+      },
+    });
+
+    // Send info alert
+    await alerting.info(
+      `New Subscription: ${organization?.name}`,
+      `${plan} subscription activated`,
+      {
+        organizationId,
+        organizationName: organization?.name,
+        subscriptionId: payload.subscription_id,
+        plan,
+        billingCycle: payload.subscription_plan_billing_cycle,
+        userEmail: organization?.members[0]?.user?.email,
+      }
+    );
+
+    // TODO: Send welcome email via email service
+    // TODO: Set up recurring credit allocation (if applicable)
 
     return {
       success: true,
-      message: "Subscription created",
+      message: "Subscription created and activated",
     };
   } catch (error) {
     console.error("Error handling subscription_created:", error);
@@ -382,21 +480,52 @@ async function handleSubscriptionCancelled(
   try {
     const customData = JSON.parse(payload.passthrough || "{}");
     const organizationId = customData.organization_id;
+    const cancellationEffectiveDate = payload.cancellation_effective_date
+      ? new Date(payload.cancellation_effective_date)
+      : new Date();
 
     console.log("Subscription cancelled:", {
       organizationId,
       subscriptionId: payload.subscription_id,
-      cancellationDate: payload.cancellation_effective_date,
+      cancellationDate: cancellationEffectiveDate,
     });
 
-    // TODO: Implement subscription cancellation
-    // - Update organization plan to FREE
-    // - Send cancellation confirmation email
-    // - Allow access until end of billing period
+    // Update organization subscription status
+    // Keep plan active until cancellation effective date
+    const organization = await prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        subscriptionStatus: "CANCELLED",
+        subscriptionEndsAt: cancellationEffectiveDate,
+      },
+      include: {
+        members: {
+          where: { role: "OWNER" },
+          include: { user: true },
+        },
+      },
+    });
+
+    // Send warning alert about cancellation
+    await alerting.warning(
+      `Subscription Cancelled: ${organization.name}`,
+      `Subscription will end on ${cancellationEffectiveDate.toLocaleDateString()}`,
+      {
+        organizationId,
+        organizationName: organization.name,
+        subscriptionId: payload.subscription_id,
+        plan: organization.plan,
+        cancellationDate: cancellationEffectiveDate.toISOString(),
+        userEmail: organization.members[0]?.user?.email,
+      }
+    );
+
+    // TODO: Send cancellation confirmation email to user
+    // TODO: Schedule job to downgrade to FREE plan at effective date
 
     return {
       success: true,
-      message: "Subscription cancelled",
+      message: "Subscription cancellation processed",
     };
   } catch (error) {
     console.error("Error handling subscription_cancelled:", error);
@@ -425,14 +554,77 @@ async function handleRefundCompleted(
       currency: payload.currency,
     });
 
-    // TODO: Implement refund logic
-    // - Deduct credits from organization (if not used)
-    // - Log refund transaction
-    // - Send refund confirmation email
+    // Find the original transaction to determine credits purchased
+    const originalTransaction = await prisma.creditTransaction.findFirst({
+      where: {
+        paddleOrderId: payload.order_id,
+        type: "PURCHASE",
+      },
+    });
+
+    if (!originalTransaction) {
+      console.error("[Paddle] Original transaction not found for refund:", payload.order_id);
+      return {
+        success: false,
+        message: "Original transaction not found",
+      };
+    }
+
+    // Create refund transaction
+    await prisma.creditTransaction.create({
+      data: {
+        organizationId,
+        type: "REFUND",
+        amount: -originalTransaction.amount, // Negative to deduct credits
+        paddleOrderId: payload.order_id,
+        metadata: {
+          refundAmount: refundAmount,
+          currency: payload.currency,
+          refundReason: payload.refund_reason,
+        },
+      },
+    });
+
+    // Update organization credits (deduct if not used)
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      include: {
+        members: {
+          where: { role: "OWNER" },
+          include: { user: true },
+        },
+      },
+    });
+
+    if (organization && organization.credits >= originalTransaction.amount) {
+      await prisma.organization.update({
+        where: { id: organizationId },
+        data: {
+          credits: { decrement: originalTransaction.amount },
+        },
+      });
+    }
+
+    // Send warning alert about refund
+    await alerting.warning(
+      `Refund Processed: ${organization?.name}`,
+      `Refunded ${refundAmount} ${payload.currency} for order ${payload.order_id}`,
+      {
+        organizationId,
+        organizationName: organization?.name,
+        orderId: payload.order_id,
+        refundAmount,
+        currency: payload.currency,
+        creditsDeducted: originalTransaction.amount,
+        userEmail: organization?.members[0]?.user?.email,
+      }
+    );
+
+    // TODO: Send refund confirmation email to user
 
     return {
       success: true,
-      message: "Refund processed",
+      message: "Refund processed and credits deducted",
     };
   } catch (error) {
     console.error("Error handling refund_completed:", error);

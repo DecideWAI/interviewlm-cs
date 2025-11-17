@@ -348,6 +348,25 @@ model CreditTransaction {
   @@map("credit_transactions")
 }
 
+model FailedJob {
+  id            String   @id @default(cuid())
+  jobId         String   @map("job_id")
+  queueName     String   @map("queue_name")
+  jobName       String   @map("job_name")
+  jobData       Json     @map("job_data")
+  error         Json     @map("error")
+  errorMessage  String?  @map("error_message")
+  errorStack    String?  @map("error_stack")
+  attemptsMade  Int      @map("attempts_made")
+  failedAt      DateTime @map("failed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([queueName])
+  @@index([jobName])
+  @@index([failedAt])
+  @@map("failed_jobs")
+}
+
 enum UserRole {
   USER
   ADMIN
