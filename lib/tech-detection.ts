@@ -313,18 +313,96 @@ export function checkCriticalTechViolation(
 }
 
 /**
+ * Code quality metrics from evaluation
+ */
+export interface CodeQualityMetrics {
+  testCoverage?: number; // 0-100
+  codeComplexity?: number; // Average cyclomatic complexity
+  linesOfCode?: number;
+  commentRatio?: number; // 0-1
+  duplicateCodeRatio?: number; // 0-1
+  maintainabilityIndex?: number; // 0-100
+}
+
+/**
+ * Technology score breakdown
+ */
+export interface TechnologyScoreBreakdown {
+  required: Record<string, number>; // Tech name -> score (0-100)
+  recommended: Record<string, number>;
+  optional: Record<string, number>;
+  detected: string[]; // All detected technologies
+  missing: string[]; // Required but not detected
+  extra: string[]; // Detected but not required
+}
+
+/**
+ * Technology score result
+ */
+export interface TechnologyScoreResult {
+  overallScore: number; // 0-100
+  breakdown: TechnologyScoreBreakdown;
+  proficiencyLevel: "beginner" | "intermediate" | "advanced" | "expert";
+}
+
+/**
  * Calculate technology scores (for evaluation)
  */
 export function calculateTechnologyScores(
   detectedTech: DetectedTech[],
   requirements: TechStackRequirements,
-  codeQualityMetrics: any // TODO: Define proper type
-): any {
-  // This will be implemented in backend evaluation
-  // For now, return a placeholder
+  codeQualityMetrics: CodeQualityMetrics
+): TechnologyScoreResult {
+  // This will be fully implemented in backend evaluation
+  // For now, return a basic implementation
+
+  const requiredScore: Record<string, number> = {};
+  const recommendedScore: Record<string, number> = {};
+  const optionalScore: Record<string, number> = {};
+
+  const detectedNames = detectedTech.map(t => t.name.toLowerCase());
+  const missing: string[] = [];
+
+  // Check required technologies
+  requirements.required.forEach(tech => {
+    const found = detectedNames.includes(tech.name.toLowerCase());
+    requiredScore[tech.name] = found ? 100 : 0;
+    if (!found) missing.push(tech.name);
+  });
+
+  // Check recommended technologies
+  requirements.recommended.forEach(tech => {
+    const found = detectedNames.includes(tech.name.toLowerCase());
+    recommendedScore[tech.name] = found ? 100 : 0;
+  });
+
+  // Check optional technologies
+  requirements.optional.forEach(tech => {
+    const found = detectedNames.includes(tech.name.toLowerCase());
+    optionalScore[tech.name] = found ? 100 : 0;
+  });
+
+  // Calculate overall score (weighted)
+  const requiredAvg = Object.values(requiredScore).reduce((a, b) => a + b, 0) /
+    Math.max(1, requirements.required.length);
+  const recommendedAvg = Object.values(recommendedScore).reduce((a, b) => a + b, 0) /
+    Math.max(1, requirements.recommended.length);
+
+  const overallScore = requiredAvg * 0.7 + recommendedAvg * 0.3;
+
   return {
-    overallScore: 85,
-    breakdown: {},
+    overallScore: Math.round(overallScore),
+    breakdown: {
+      required: requiredScore,
+      recommended: recommendedScore,
+      optional: optionalScore,
+      detected: detectedTech.map(t => t.name),
+      missing,
+      extra: [],
+    },
+    proficiencyLevel: overallScore >= 90 ? "expert" :
+                      overallScore >= 75 ? "advanced" :
+                      overallScore >= 60 ? "intermediate" : "beginner",
   };
 }
 
