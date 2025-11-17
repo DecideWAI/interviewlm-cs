@@ -369,13 +369,13 @@ function CandidateCard({ candidate }: { candidate: CandidateProfile }) {
 
         {/* Flags */}
         <div className="flex items-center gap-3">
-          {candidate.redFlags.length > 0 && (
+          {(candidate.redFlags?.length ?? 0) > 0 && (
             <div className="flex items-center gap-1 text-error">
               <AlertTriangle className="h-4 w-4" />
               <span className="text-xs font-medium">{candidate.redFlags.length} red</span>
             </div>
           )}
-          {candidate.greenFlags.length > 0 && (
+          {(candidate.greenFlags?.length ?? 0) > 0 && (
             <div className="flex items-center gap-1 text-success">
               <TrendingUp className="h-4 w-4" />
               <span className="text-xs font-medium">{candidate.greenFlags.length} green</span>

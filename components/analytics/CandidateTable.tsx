@@ -228,7 +228,7 @@ export function CandidateTable({ candidates }: CandidateTableProps) {
                   {/* Flags */}
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center gap-2">
-                      {candidate.redFlags.length > 0 && (
+                      {(candidate.redFlags?.length ?? 0) > 0 && (
                         <div className="flex items-center gap-1 text-error">
                           <AlertTriangle className="h-4 w-4" />
                           <span className="text-xs font-medium">
@@ -236,7 +236,7 @@ export function CandidateTable({ candidates }: CandidateTableProps) {
                           </span>
                         </div>
                       )}
-                      {candidate.greenFlags.length > 0 && (
+                      {(candidate.greenFlags?.length ?? 0) > 0 && (
                         <div className="flex items-center gap-1 text-success">
                           <ThumbsUp className="h-4 w-4" />
                           <span className="text-xs font-medium">
@@ -244,7 +244,7 @@ export function CandidateTable({ candidates }: CandidateTableProps) {
                           </span>
                         </div>
                       )}
-                      {candidate.redFlags.length === 0 && candidate.greenFlags.length === 0 && (
+                      {(candidate.redFlags?.length ?? 0) === 0 && (candidate.greenFlags?.length ?? 0) === 0 && (
                         <span className="text-text-muted text-xs">-</span>
                       )}
                     </div>
