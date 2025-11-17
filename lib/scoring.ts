@@ -306,8 +306,8 @@ export function detectGreenFlags(candidate: CandidateProfile): Flag[] {
     });
   }
 
-  const interactions = candidate.claudeInteractions || 0;
-  if (interactions >= 8 && interactions <= 15) {
+  const aiInteractions = candidate.claudeInteractions || 0;
+  if (aiInteractions >= 8 && aiInteractions <= 15) {
     flags.push({
       type: "ai_usage",
       description: "Balanced AI usage - Strategic consultation without over-reliance",
