@@ -10,6 +10,7 @@
 
 import { Queue, Job } from "bullmq";
 import { Redis } from "ioredis";
+import { alerting } from "@/lib/services/alerting";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -240,20 +241,21 @@ function isCriticalJob(queueName: string, jobName: string): boolean {
  */
 async function sendFailureAlert(dlqEntry: any): Promise<void> {
   try {
-    console.error("[DLQ] CRITICAL JOB FAILURE:", {
-      jobId: dlqEntry.jobId,
-      queue: dlqEntry.queueName,
-      jobName: dlqEntry.name,
-      error: dlqEntry.error.message,
-      timestamp: dlqEntry.timestamp,
-    });
-
-    // TODO: Integrate with alerting service (PagerDuty, Slack, email, etc.)
-    // await sendSlackAlert({
-    //   channel: '#alerts',
-    //   message: `🚨 Critical job failure in ${dlqEntry.queueName}`,
-    //   details: dlqEntry,
-    // });
+    // Send critical alert via alerting service
+    await alerting.critical(
+      `Critical Job Failure: ${dlqEntry.queueName}`,
+      `Job ${dlqEntry.jobId} (${dlqEntry.name}) failed after ${dlqEntry.attemptsMade} attempts`,
+      {
+        jobId: dlqEntry.jobId,
+        queue: dlqEntry.queueName,
+        jobName: dlqEntry.name,
+        error: dlqEntry.error.message,
+        errorStack: dlqEntry.error.stack,
+        attemptsMade: dlqEntry.attemptsMade,
+        timestamp: dlqEntry.timestamp,
+        failedAt: new Date(dlqEntry.failedAt).toISOString(),
+      }
+    );
   } catch (error) {
     console.error("[DLQ] Failed to send alert:", error);
   }
