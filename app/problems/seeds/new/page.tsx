@@ -107,30 +107,54 @@ export default function NewSeedPage() {
 
     setIsSaving(true);
 
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    try {
+      // Determine difficulty based on distribution
+      // Use the highest percentage as the primary difficulty
+      const difficulties = [
+        { level: "EASY", value: difficultyEasy },
+        { level: "MEDIUM", value: difficultyMedium },
+        { level: "HARD", value: difficultyHard },
+      ];
+      const primaryDifficulty = difficulties.reduce((max, curr) =>
+        curr.value > max.value ? curr : max
+      ).level;
 
-    // TODO: Save to API
-    console.log("Saving seed:", {
-      title,
-      description,
-      role,
-      seniority,
-      estimatedTime,
-      instructions,
-      topics,
-      tags,
-      difficultyDistribution: {
-        easy: difficultyEasy,
-        medium: difficultyMedium,
-        hard: difficultyHard,
-      },
-      examples: examples.filter((e) => e.trim() !== ""),
-      status,
-    });
+      // Prepare seed data for API
+      const seedData = {
+        title,
+        description,
+        difficulty: primaryDifficulty as "EASY" | "MEDIUM" | "HARD",
+        category: role, // Use role as category
+        tags: tags.filter((t) => t.trim() !== ""),
+        topics: topics.filter((t) => t.trim() !== ""),
+        language: "javascript", // Default language
+        instructions,
+        estimatedTime,
+        status,
+      };
 
-    setIsSaving(false);
-    router.push("/problems");
+      const response = await fetch("/api/seeds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(seedData),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to create seed");
+      }
+
+      const data = await response.json();
+      console.log("Seed created:", data.seed);
+
+      // Redirect to problems page
+      router.push("/problems");
+    } catch (error) {
+      console.error("Error saving seed:", error);
+      alert(error instanceof Error ? error.message : "Failed to create seed");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (

@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 // Update team member
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { memberId: string } }
+  { params }: { params: Promise<{ memberId: string }> }
 ) {
   try {
     // Check authentication
@@ -18,7 +18,7 @@ export async function PATCH(
       );
     }
 
-    const { memberId } = params;
+    const { memberId } = await params;
     const { role } = await req.json();
 
     if (!role || typeof role !== "string") {
@@ -131,7 +131,7 @@ export async function PATCH(
 // Delete team member
 export async function DELETE(
   req: NextRequest,
-  { params }: { params: { memberId: string } }
+  { params }: { params: Promise<{ memberId: string }> }
 ) {
   try {
     // Check authentication
@@ -143,7 +143,7 @@ export async function DELETE(
       );
     }
 
-    const { memberId } = params;
+    const { memberId } = await params;
 
     // Get current user
     const currentUser = await prisma.user.findUnique({

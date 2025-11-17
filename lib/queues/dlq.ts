@@ -10,6 +10,8 @@
 
 import { Queue, Job } from "bullmq";
 import { Redis } from "ioredis";
+import prisma from "@/lib/prisma";
+import { alerting } from "@/lib/services/alerting";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
@@ -198,28 +200,33 @@ export async function clearDeadLetterQueue(queueName: string): Promise<number> {
  */
 async function logFailedJob(dlqEntry: any): Promise<void> {
   try {
-    // Create a simple log table entry
-    // Note: You may want to add a FailedJob model to your Prisma schema
-    console.log("[DLQ] Failed job logged:", {
-      jobId: dlqEntry.jobId,
-      queue: dlqEntry.queueName,
-      error: dlqEntry.error.message,
+    // Store failed job in database for historical tracking and analysis
+    await prisma.failedJob.create({
+      data: {
+        jobId: dlqEntry.jobId,
+        queueName: dlqEntry.queueName,
+        jobName: dlqEntry.name,
+        jobData: dlqEntry.data || {},
+        error: {
+          message: dlqEntry.error?.message || 'Unknown error',
+          stack: dlqEntry.error?.stack,
+          ...dlqEntry.error,
+        },
+        errorMessage: dlqEntry.error?.message || 'Unknown error',
+        errorStack: dlqEntry.error?.stack,
+        attemptsMade: dlqEntry.attemptsMade,
+        failedAt: new Date(dlqEntry.timestamp),
+      },
     });
 
-    // TODO: Store in database if FailedJob model exists
-    // await prisma.failedJob.create({
-    //   data: {
-    //     jobId: dlqEntry.jobId,
-    //     queueName: dlqEntry.queueName,
-    //     jobName: dlqEntry.name,
-    //     jobData: dlqEntry.data,
-    //     error: dlqEntry.error,
-    //     attemptsMade: dlqEntry.attemptsMade,
-    //     failedAt: new Date(dlqEntry.timestamp),
-    //   },
-    // });
+    console.log("[DLQ] Failed job logged to database:", {
+      jobId: dlqEntry.jobId,
+      queue: dlqEntry.queueName,
+      error: dlqEntry.error?.message,
+    });
   } catch (error) {
     console.error("[DLQ] Failed to log to database:", error);
+    // Don't throw - we still want DLQ to work even if database logging fails
   }
 }
 
@@ -240,20 +247,21 @@ function isCriticalJob(queueName: string, jobName: string): boolean {
  */
 async function sendFailureAlert(dlqEntry: any): Promise<void> {
   try {
-    console.error("[DLQ] CRITICAL JOB FAILURE:", {
-      jobId: dlqEntry.jobId,
-      queue: dlqEntry.queueName,
-      jobName: dlqEntry.name,
-      error: dlqEntry.error.message,
-      timestamp: dlqEntry.timestamp,
-    });
-
-    // TODO: Integrate with alerting service (PagerDuty, Slack, email, etc.)
-    // await sendSlackAlert({
-    //   channel: '#alerts',
-    //   message: `🚨 Critical job failure in ${dlqEntry.queueName}`,
-    //   details: dlqEntry,
-    // });
+    // Send critical alert via alerting service
+    await alerting.critical(
+      `Critical Job Failure: ${dlqEntry.queueName}`,
+      `Job ${dlqEntry.jobId} (${dlqEntry.name}) failed after ${dlqEntry.attemptsMade} attempts`,
+      {
+        jobId: dlqEntry.jobId,
+        queue: dlqEntry.queueName,
+        jobName: dlqEntry.name,
+        error: dlqEntry.error.message,
+        errorStack: dlqEntry.error.stack,
+        attemptsMade: dlqEntry.attemptsMade,
+        timestamp: dlqEntry.timestamp,
+        failedAt: new Date(dlqEntry.failedAt).toISOString(),
+      }
+    );
   } catch (error) {
     console.error("[DLQ] Failed to send alert:", error);
   }

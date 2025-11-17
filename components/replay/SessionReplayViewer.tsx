@@ -72,36 +72,24 @@ export function SessionReplayViewer({
         setLoading(true);
         setError(null);
 
-        // TODO: Replace with actual API call
-        const response = await fetch(`/api/interview/${sessionId}/events?checkpoints=true`);
+        // Fetch session events and metadata from API
+        const response = await fetch(`/api/interview/${sessionId}/events`);
 
         if (!response.ok) {
           throw new Error('Failed to load session data');
         }
 
-        const data: SessionData = await response.json();
+        const apiData = await response.json();
 
-        // Mock data for development if API not ready
-        if (!data.sessionId) {
-          data.sessionId = sessionId;
-          data.candidateId = candidateId || 'unknown';
-          data.startTime = new Date();
-          data.endTime = new Date(Date.now() + 1800000); // 30 min session
-          data.metadata = {
-            totalDuration: 1800,
-            language: 'javascript',
-            problemTitle: 'Binary Search Implementation',
-          };
+        // Transform API response into SessionData format
+        const sessionData: SessionData = transformApiResponse(
+          apiData,
+          sessionId,
+          candidateId || 'unknown'
+        );
 
-          // Mock events
-          data.codeSnapshots = generateMockCodeSnapshots();
-          data.terminalEvents = generateMockTerminalEvents();
-          data.aiInteractions = generateMockAIInteractions();
-          data.keyMoments = generateMockKeyMoments();
-        }
-
-        setSessionData(data);
-        startTimeRef.current = data.startTime;
+        setSessionData(sessionData);
+        startTimeRef.current = sessionData.startTime;
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load session');
       } finally {
@@ -111,6 +99,96 @@ export function SessionReplayViewer({
 
     loadSessionData();
   }, [sessionId, candidateId]);
+
+  /**
+   * Transform API response into SessionData format
+   */
+  function transformApiResponse(
+    apiData: any,
+    sessionId: string,
+    candidateId: string
+  ): SessionData {
+    const sessionInfo = apiData.sessionInfo || {};
+    const events = apiData.events || [];
+
+    const startTime = sessionInfo.startTime ? new Date(sessionInfo.startTime) : new Date();
+    const endTime = sessionInfo.endTime ? new Date(sessionInfo.endTime) : new Date();
+
+    // Group events by type
+    const codeSnapshots: CodeSnapshot[] = [];
+    const terminalEvents: TerminalEvent[] = [];
+    const aiInteractions: AIInteraction[] = [];
+    const keyMoments: KeyMoment[] = [];
+
+    events.forEach((event: any) => {
+      const timestamp = new Date(event.timestamp);
+
+      switch (event.type) {
+        case 'code_snapshot':
+          codeSnapshots.push({
+            timestamp,
+            fileName: event.data.fileName || 'index.ts',
+            content: event.data.content || '',
+            language: event.data.language || 'typescript',
+          });
+          break;
+
+        case 'terminal_output':
+        case 'terminal_input':
+          terminalEvents.push({
+            timestamp,
+            output: event.data.output || event.data.input || '',
+            isCommand: event.type === 'terminal_input',
+          });
+          break;
+
+        case 'ai_interaction':
+          aiInteractions.push({
+            id: event.id,
+            timestamp,
+            role: event.data.role || 'user',
+            content: event.data.content || event.data.message || '',
+            tokens: event.data.tokens,
+            promptScore: event.data.promptScore,
+          });
+          break;
+
+        case 'test_run':
+          if (event.checkpoint) {
+            const passed = event.data.passed || 0;
+            const failed = event.data.failed || 0;
+            keyMoments.push({
+              id: event.id,
+              timestamp,
+              type: failed > 0 ? 'test_failed' : 'test_passed',
+              label: `Tests ${failed > 0 ? 'Failed' : 'Passed'}`,
+              description: `${passed} passed, ${failed} failed`,
+            });
+          }
+          break;
+      }
+    });
+
+    // Calculate total duration in seconds
+    const totalDuration = (endTime.getTime() - startTime.getTime()) / 1000;
+
+    return {
+      sessionId,
+      candidateId,
+      startTime,
+      endTime,
+      events,
+      codeSnapshots,
+      terminalEvents,
+      aiInteractions,
+      keyMoments,
+      metadata: {
+        totalDuration,
+        language: 'typescript',
+        problemTitle: 'Interview Problem',
+      },
+    };
+  }
 
   // Playback engine
   useEffect(() => {
@@ -387,109 +465,4 @@ export function SessionReplayViewer({
       />
     </div>
   );
-}
-
-// Mock data generators for development
-function generateMockCodeSnapshots(): CodeSnapshot[] {
-  const baseTime = Date.now();
-  return [
-    {
-      timestamp: new Date(baseTime),
-      fileName: 'binarySearch.js',
-      content: '// TODO: Implement binary search',
-      language: 'javascript',
-    },
-    {
-      timestamp: new Date(baseTime + 60000),
-      fileName: 'binarySearch.js',
-      content: `function binarySearch(arr, target) {
-  // TODO: Add implementation
-}`,
-      language: 'javascript',
-    },
-    {
-      timestamp: new Date(baseTime + 180000),
-      fileName: 'binarySearch.js',
-      content: `function binarySearch(arr, target) {
-  let left = 0;
-  let right = arr.length - 1;
-
-  while (left <= right) {
-    const mid = Math.floor((left + right) / 2);
-
-    if (arr[mid] === target) {
-      return mid;
-    } else if (arr[mid] < target) {
-      left = mid + 1;
-    } else {
-      right = mid - 1;
-    }
-  }
-
-  return -1;
-}`,
-      language: 'javascript',
-    },
-  ];
-}
-
-function generateMockTerminalEvents(): TerminalEvent[] {
-  const baseTime = Date.now();
-  return [
-    {
-      timestamp: new Date(baseTime + 5000),
-      output: 'npm test',
-      isCommand: true,
-    },
-    {
-      timestamp: new Date(baseTime + 6000),
-      output: 'Running tests...',
-      isCommand: false,
-    },
-    {
-      timestamp: new Date(baseTime + 7000),
-      output: 'FAIL: Binary search test failed',
-      isCommand: false,
-    },
-  ];
-}
-
-function generateMockAIInteractions(): AIInteraction[] {
-  const baseTime = Date.now();
-  return [
-    {
-      id: '1',
-      timestamp: new Date(baseTime + 30000),
-      role: 'user',
-      content: 'How do I implement binary search in JavaScript?',
-    },
-    {
-      id: '2',
-      timestamp: new Date(baseTime + 32000),
-      role: 'assistant',
-      content: 'Here\'s a binary search implementation:\n\n```javascript\nfunction binarySearch(arr, target) {\n  let left = 0;\n  let right = arr.length - 1;\n  \n  while (left <= right) {\n    const mid = Math.floor((left + right) / 2);\n    \n    if (arr[mid] === target) return mid;\n    else if (arr[mid] < target) left = mid + 1;\n    else right = mid - 1;\n  }\n  \n  return -1;\n}\n```',
-      tokens: 150,
-      promptScore: 0.85,
-    },
-  ];
-}
-
-function generateMockKeyMoments(): KeyMoment[] {
-  const baseTime = Date.now();
-  return [
-    {
-      id: '1',
-      timestamp: new Date(baseTime + 30000),
-      type: 'ai_interaction',
-      label: 'Asked about binary search',
-      description: 'Candidate requested help implementing binary search',
-    },
-    {
-      id: '2',
-      timestamp: new Date(baseTime + 180000),
-      type: 'test_passed',
-      label: 'Tests passed',
-      description: 'All test cases passed successfully',
-    },
-  ];
 }

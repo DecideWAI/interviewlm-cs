@@ -275,6 +275,23 @@ export async function POST(
       },
     });
 
+    // Queue async comprehensive evaluation
+    // This will re-analyze the session with the evaluation agent
+    // and update scores with evidence-based analysis
+    try {
+      const { publishEvaluationAnalyze } = await import('@/lib/queues/publishers');
+      await publishEvaluationAnalyze({
+        sessionId: sessionRecording.id,
+        candidateId: id,
+        timestamp: new Date(),
+        priority: 5, // Normal priority
+      });
+      console.log(`[Submit] Queued evaluation for session ${sessionRecording.id}`);
+    } catch (error) {
+      console.error('[Submit] Failed to queue evaluation:', error);
+      // Don't fail submission if queue fails
+    }
+
     // Record session_submit event
     await sessions.recordEvent(sessionRecording.id, {
       type: "session_submit",

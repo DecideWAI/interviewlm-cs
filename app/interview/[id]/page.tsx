@@ -342,17 +342,23 @@ export default function InterviewPage() {
   ]);
 
   // Show recovery dialog when recovered state is available
+  const dialogShownRef = useRef(false);
   useEffect(() => {
-    if (showRecoveryPrompt && recoveredState) {
+    if (showRecoveryPrompt && recoveredState && !dialogShownRef.current) {
+      dialogShownRef.current = true;
+
+      // Immediately clear the prompt state to prevent re-triggering
+      setShowRecoveryPrompt(false);
+
       showRecoveryDialog(recoveredState).then((shouldRestore) => {
         if (shouldRestore) {
           handleRestoreSession();
         } else {
           // User declined - clear saved state
           clearSessionState();
-          setShowRecoveryPrompt(false);
           setRecoveredState(null);
         }
+        dialogShownRef.current = false;
       });
     }
   }, [showRecoveryPrompt, recoveredState, showRecoveryDialog, handleRestoreSession, clearSessionState]);

@@ -442,13 +442,29 @@ ${helpfulnessConfig.allowedTools.join(', ')}
     }
 
     try {
-      // Import Modal service dynamically
+      // Import services dynamically
       const { writeFile } = await import('../services/modal-production');
+      const { streamCodeGeneration } = await import('../services/code-streaming');
 
       // Get volume ID from session
       const volumeId = `vol-${this.config.sessionId}`;
 
-      // Write file to Modal
+      // Stream code generation to frontend in real-time (if enabled)
+      const fileName = filePath.split('/').pop() || filePath;
+      const enableStreaming = process.env.ENABLE_CODE_STREAMING !== 'false';
+
+      if (enableStreaming) {
+        // Stream code in chunks with typing effect
+        streamCodeGeneration(this.config.sessionId, fileName, content, {
+          chunkSize: 5, // 5 characters at a time
+          delayMs: 20, // 20ms between chunks
+        }).catch((err) => {
+          console.error('[CodingAgent] Code streaming error:', err);
+          // Don't fail the write operation if streaming fails
+        });
+      }
+
+      // Write file to Modal (happens immediately, streaming is for visual effect)
       await writeFile(volumeId, filePath, content);
 
       return {
@@ -643,15 +659,35 @@ ${helpfulnessConfig.allowedTools.join(', ')}
   }
 
   private async toolRunTests(): Promise<unknown> {
-    // NOTE: Test running is handled separately via the run-tests API endpoint
-    // This tool just directs users to use the proper interface
-    return {
-      success: false,
-      error: 'Please use the "Run Tests" button in the interface to execute tests with proper validation and scoring.',
-      passed: 0,
-      total: 0,
-      testResults: [],
-    };
+    try {
+      // Import the test execution function
+      const { executeRunTests } = await import('../agent-tools/run-tests');
+
+      // Execute tests using the dedicated test runner
+      const result = await executeRunTests(
+        this.config.candidateId || '',
+        this.config.sessionId,
+        {}
+      );
+
+      return {
+        success: result.success,
+        passed: result.passed,
+        failed: result.failed,
+        total: result.total,
+        testResults: result.results,
+        error: result.error,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to run tests',
+        passed: 0,
+        failed: 0,
+        total: 0,
+        testResults: [],
+      };
+    }
   }
 }
 

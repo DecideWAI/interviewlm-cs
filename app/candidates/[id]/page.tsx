@@ -416,14 +416,14 @@ export default function CandidateDetailPage({ params }: CandidateDetailPageProps
           {/* Right Column - Flags & Timeline */}
           <div className="space-y-6">
             {/* Red Flags */}
-            {candidate.redFlags.length > 0 && (
+            {(candidate.redFlags?.length ?? 0) > 0 && (
               <div className="bg-error/5 border border-error/20 rounded-lg p-6">
                 <h3 className="text-lg font-semibold text-error mb-4 flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5" />
-                  Red Flags ({candidate.redFlags.length})
+                  Red Flags ({candidate.redFlags?.length ?? 0})
                 </h3>
                 <div className="space-y-3">
-                  {candidate.redFlags.map((flag, i) => (
+                  {candidate.redFlags?.map((flag, i) => (
                     <div key={i} className="p-3 bg-background-secondary rounded-lg">
                       <div className="flex items-start justify-between mb-1">
                         <Badge variant="error" className="capitalize">
@@ -443,14 +443,14 @@ export default function CandidateDetailPage({ params }: CandidateDetailPageProps
             )}
 
             {/* Green Flags */}
-            {candidate.greenFlags.length > 0 && (
+            {(candidate.greenFlags?.length ?? 0) > 0 && (
               <div className="bg-success/5 border border-success/20 rounded-lg p-6">
                 <h3 className="text-lg font-semibold text-success mb-4 flex items-center gap-2">
                   <ThumbsUp className="h-5 w-5" />
-                  Green Flags ({candidate.greenFlags.length})
+                  Green Flags ({candidate.greenFlags?.length ?? 0})
                 </h3>
                 <div className="space-y-3">
-                  {candidate.greenFlags.map((flag, i) => (
+                  {candidate.greenFlags?.map((flag, i) => (
                     <div key={i} className="p-3 bg-background-secondary rounded-lg">
                       <Badge variant="success" className="capitalize mb-2">
                         {flag.type.replace("_", " ")}

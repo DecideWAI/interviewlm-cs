@@ -114,6 +114,7 @@ export interface CodingAgentConfig extends AgentConfig {
   helpfulnessLevel: HelpfulnessLevel;
   workspaceRoot: string;
   problemStatement?: string;
+  candidateId?: string; // Required for test execution
 }
 
 /**

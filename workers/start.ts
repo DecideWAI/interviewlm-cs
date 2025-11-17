@@ -12,6 +12,7 @@
 
 import { startInterviewAgent } from "./interview-agent";
 import { startEvaluationAgent } from "./evaluation-agent";
+import { startQuestionGenerator } from "./question-generator";
 
 // Graceful shutdown handler
 let isShuttingDown = false;
@@ -92,6 +93,11 @@ async function startWorkers() {
     console.log("[Workers] Starting Evaluation Agent Worker...");
     startEvaluationAgent();
     console.log("[Workers] ✓ Evaluation Agent Worker started");
+
+    // Start Question Generator Worker
+    console.log("[Workers] Starting Question Generator Worker...");
+    startQuestionGenerator();
+    console.log("[Workers] ✓ Question Generator Worker started");
 
     console.log();
     console.log("=".repeat(60));

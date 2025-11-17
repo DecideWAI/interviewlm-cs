@@ -28,6 +28,7 @@ import type {
   SessionCompleteEventData,
 } from '../lib/types/events';
 import prisma from '../lib/prisma';
+import { proactiveAssistance } from '../lib/services/proactive-assistance';
 
 /**
  * Interview metrics tracked for each session
@@ -151,6 +152,9 @@ class InterviewAgentWorker {
   private async handleAIInteraction(data: AIInteractionEventData): Promise<void> {
     const { sessionId, candidateMessage, aiResponse, toolsUsed } = data;
 
+    // Track AI query for proactive assistance
+    proactiveAssistance.recordAIQuery(sessionId, candidateMessage);
+
     // Get current metrics
     const metrics = await this.getMetrics(sessionId);
 
@@ -190,6 +194,14 @@ class InterviewAgentWorker {
   private async handleCodeChanged(data: CodeChangedEventData): Promise<void> {
     const { sessionId, files, trigger } = data;
 
+    // Estimate lines changed (rough approximation)
+    const totalLines = Object.values(files).reduce((sum, content) => {
+      return sum + (content as string).split('\n').length;
+    }, 0);
+
+    // Track code change for proactive assistance
+    proactiveAssistance.recordCodeChange(sessionId, Math.max(1, Math.floor(totalLines / 10)));
+
     // Track code snapshot for evaluation later
     await prisma.codeSnapshot.create({
       data: {
@@ -207,6 +219,9 @@ class InterviewAgentWorker {
    */
   private async handleTestRun(data: TestRunEventData): Promise<void> {
     const { sessionId, passed, failed, total } = data;
+
+    // Track test run for proactive assistance
+    proactiveAssistance.recordTestRun(sessionId, passed, failed, total);
 
     const metrics = await this.getMetrics(sessionId);
 
