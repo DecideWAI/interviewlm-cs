@@ -189,6 +189,7 @@ export default function ProblemsPage() {
             Drafts ({stats.draftSeeds})
           </Badge>
         </div>
+        )}
 
         {/* Search & Filters Bar */}
         <div className="bg-background-secondary border border-border rounded-lg p-4">
@@ -308,7 +309,6 @@ export default function ProblemsPage() {
             </div>
           )}
         </div>
-        )}
       </div>
     </DashboardLayout>
   );
