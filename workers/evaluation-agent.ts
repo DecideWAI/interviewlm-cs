@@ -40,6 +40,13 @@ import {
   calculateComplexity,
   type CodeFile,
 } from '../lib/utils/code-analysis';
+import {
+  calculateConfidence,
+  detectBias,
+  generateFairnessReport,
+  type ConfidenceMetrics,
+  type BiasDetectionResult,
+} from '../lib/evaluation/confidence-and-bias';
 
 /**
  * Evaluation score for a single dimension
@@ -228,13 +235,30 @@ class EvaluationAgentWorker {
       communication.confidence
     );
 
-    // Detect biases
+    // Calculate confidence metrics
+    const confidenceMetrics = this.calculateConfidenceMetrics(recording);
+
+    // Detect biases with new comprehensive bias detection
+    const biasDetectionResult = this.detectBiasesComprehensive(recording, {
+      codeQuality,
+      problemSolving,
+      aiCollaboration,
+      communication,
+    });
+
+    // Legacy bias flags for backward compatibility
     const biasFlags = this.detectBiases(recording, {
       codeQuality,
       problemSolving,
       aiCollaboration,
       communication,
     });
+
+    // Generate fairness report
+    const fairnessReport = generateFairnessReport(
+      confidenceMetrics,
+      biasDetectionResult
+    );
 
     // Build evaluation result
     const result: EvaluationResult = {
@@ -249,6 +273,9 @@ class EvaluationAgentWorker {
       evaluatedAt: new Date(),
       model: AGENT_MODEL_RECOMMENDATIONS.evaluationAgent,
       biasFlags,
+      confidenceMetrics, // NEW
+      biasDetection: biasDetectionResult, // NEW
+      fairnessReport, // NEW
     };
 
       // Save evaluation to database
@@ -812,6 +839,68 @@ Respond with ONLY a number between 0-100.`,
     }
 
     return flags;
+  }
+
+  /**
+   * Calculate confidence metrics for evaluation
+   */
+  private calculateConfidenceMetrics(recording: SessionRecording): ConfidenceMetrics {
+    const codeSnapshots = recording.codeSnapshots || [];
+    const testResults = recording.testResults || [];
+    const claudeInteractions = recording.claudeInteractions || [];
+    const terminalCommands = recording.terminalCommands || [];
+
+    const sessionDurationMinutes = recording.duration / 60;
+
+    // Count unique AI interactions (not just all interactions)
+    const promptSamples = claudeInteractions.filter(
+      (i) => i.candidateMessage && i.candidateMessage.length > 0
+    ).length;
+
+    return calculateConfidence({
+      codeChangesCount: codeSnapshots.length,
+      testRunsCount: testResults.length,
+      aiInteractionsCount: claudeInteractions.length,
+      sessionDuration: sessionDurationMinutes,
+      promptSamples,
+      terminalCommandsCount: terminalCommands.length,
+    });
+  }
+
+  /**
+   * Comprehensive bias detection using new module
+   */
+  private detectBiasesComprehensive(
+    recording: SessionRecording,
+    scores: {
+      codeQuality: DimensionScore;
+      problemSolving: DimensionScore;
+      aiCollaboration: DimensionScore;
+      communication: DimensionScore;
+    }
+  ): BiasDetectionResult {
+    const testResults = recording.testResults || [];
+    const testsPassed = testResults.filter((t) => t.passed).length;
+    const testsTotal = testResults.length;
+
+    return detectBias({
+      scores: {
+        codeQuality: scores.codeQuality.score,
+        problemSolving: scores.problemSolving.score,
+        aiCollaboration: scores.aiCollaboration.score,
+        testing: scores.communication.score, // Using communication as testing proxy
+      },
+      evidence: {
+        codeQuality: scores.codeQuality.evidence.length,
+        problemSolving: scores.problemSolving.evidence.length,
+        aiCollaboration: scores.aiCollaboration.evidence.length,
+        testing: scores.communication.evidence.length,
+      },
+      aiInteractionCount: recording.claudeInteractions?.length || 0,
+      sessionDuration: recording.duration / 60,
+      testsPassed,
+      testsTotal,
+    });
   }
 
   /**
