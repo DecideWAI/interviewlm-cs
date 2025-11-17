@@ -389,7 +389,7 @@ class EvaluationAgentWorker {
 
     // Analyze test results for debugging approach
     const testResults = recording.testResults || [];
-    const debuggingScore = this.analyzeDebuggingApproach(testResults);
+    const testBasedScore = this.analyzeDebuggingApproach(testResults);
 
     if (testResults.length > 0) {
       evidence.push({
@@ -399,12 +399,76 @@ class EvaluationAgentWorker {
       });
     }
 
-    // Combine scores
-    const score = (iterationScore + debuggingScore) / 2;
-    const confidence = snapshots.length >= 3 && testResults.length >= 2 ? 0.8 : 0.5;
+    // NEW: Analyze terminal commands for debugging patterns
+    const { analyzeTerminalCommands } = await import('../lib/evaluation/terminal-analysis');
+
+    let terminalScore = 50; // Default neutral score
+    try {
+      // Get terminal events from session recording
+      const events = recording.events || [];
+      const terminalCommands = events
+        .filter((e: any) => e.type === 'terminal_input' || e.type === 'terminal_command')
+        .map((e: any) => ({
+          command: e.data?.command || e.data?.input || '',
+          output: e.data?.output || '',
+          exitCode: e.data?.exitCode || 0,
+          timestamp: new Date(e.timestamp),
+        }))
+        .filter((cmd) => cmd.command.trim().length > 0);
+
+      if (terminalCommands.length > 0) {
+        const terminalAnalysis = analyzeTerminalCommands(terminalCommands);
+
+        // Add evidence from terminal analysis
+        terminalAnalysis.evidence.slice(0, 5).forEach((e) => {
+          evidence.push({
+            type: 'metric',
+            description: `${e.command}: ${e.reasoning}`,
+            timestamp: e.timestamp,
+            value: e.category,
+          });
+        });
+
+        // Add pattern evidence
+        terminalAnalysis.patterns.forEach((pattern) => {
+          evidence.push({
+            type: 'metric',
+            description: `${pattern.pattern}: ${pattern.description} (${pattern.occurrences}x)`,
+            value: pattern.impact,
+          });
+        });
+
+        // Add terminal sub-scores
+        evidence.push({
+          type: 'metric',
+          description: `Systematic debugging: ${terminalAnalysis.systematicDebugging}/100`,
+          value: terminalAnalysis.systematicDebugging,
+        });
+
+        evidence.push({
+          type: 'metric',
+          description: `Tool proficiency: ${terminalAnalysis.toolProficiency}/100`,
+          value: terminalAnalysis.toolProficiency,
+        });
+
+        terminalScore = terminalAnalysis.score;
+      }
+    } catch (error) {
+      console.error('[Evaluation Agent] Terminal analysis error:', error);
+      // Continue with default terminal score
+    }
+
+    // Combine scores: iteration (30%), test-based (30%), terminal (40%)
+    const score = Math.round(
+      iterationScore * 0.3 +
+      testBasedScore * 0.3 +
+      terminalScore * 0.4
+    );
+
+    const confidence = snapshots.length >= 3 && testResults.length >= 2 ? 0.85 : 0.6;
 
     return {
-      score: Math.round(score),
+      score,
       confidence,
       evidence,
       breakdown: {
@@ -430,24 +494,79 @@ class EvaluationAgentWorker {
       };
     }
 
-    // Calculate average prompt quality (stored in database)
-    const promptQualities = interactions
-      .map((i: any) => i.promptQuality)
-      .filter((q) => q !== undefined && q !== null);
+    // Use new prompt analysis module for evidence-based scoring
+    const { analyzePrompts } = await import('../lib/evaluation/prompt-analysis');
 
-    const avgPromptQuality =
-      promptQualities.length > 0
-        ? promptQualities.reduce((sum, q) => sum + q, 0) / promptQualities.length
-        : 3;
+    try {
+      const promptAnalysis = await analyzePrompts(
+        interactions.map((i: any) => ({
+          id: i.id,
+          userMessage: i.userMessage,
+          assistantResponse: i.assistantResponse,
+          timestamp: new Date(i.timestamp),
+          toolsUsed: i.toolsUsed,
+        }))
+      );
 
-    // Convert 1-5 scale to 0-100
-    const promptQualityScore = ((avgPromptQuality - 1) / 4) * 100;
+      // Add evidence from prompt analysis
+      promptAnalysis.evidence.slice(0, 5).forEach((e) => {
+        evidence.push({
+          type: 'ai_interaction',
+          description: e.analysis,
+          timestamp: e.timestamp,
+          value: e.category,
+        });
+      });
 
-    evidence.push({
-      type: 'metric',
-      description: `Average prompt quality: ${avgPromptQuality.toFixed(1)}/5`,
-      value: avgPromptQuality,
-    });
+      // Add summary metrics
+      evidence.push({
+        type: 'metric',
+        description: `Prompt specificity: ${promptAnalysis.specificity}/100`,
+        value: promptAnalysis.specificity,
+      });
+
+      evidence.push({
+        type: 'metric',
+        description: `Prompt clarity: ${promptAnalysis.clarity}/100`,
+        value: promptAnalysis.clarity,
+      });
+
+      evidence.push({
+        type: 'metric',
+        description: `Technical depth: ${promptAnalysis.technicalDepth}/100`,
+        value: promptAnalysis.technicalDepth,
+      });
+
+      return {
+        score: promptAnalysis.score,
+        confidence: interactions.length >= 5 ? 0.9 : 0.6,
+        evidence,
+        breakdown: {
+          specificity: promptAnalysis.specificity,
+          clarity: promptAnalysis.clarity,
+          technicalDepth: promptAnalysis.technicalDepth,
+          iterationQuality: promptAnalysis.iterationQuality,
+        },
+      };
+    } catch (error) {
+      console.error('[Evaluation Agent] Prompt analysis error:', error);
+
+      // Fallback to simple scoring if analysis fails
+      const avgPromptQuality = 3; // Neutral
+      const promptQualityScore = ((avgPromptQuality - 1) / 4) * 100;
+
+      evidence.push({
+        type: 'metric',
+        description: 'Prompt analysis unavailable, using fallback scoring',
+        value: promptQualityScore,
+      });
+
+      return {
+        score: Math.round(promptQualityScore),
+        confidence: 0.3, // Low confidence for fallback
+        evidence,
+      };
+    }
 
     // AI usage effectiveness: Did they use AI appropriately?
     const metrics = recording.metrics as any;
