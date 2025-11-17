@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AssessmentWizard } from "@/components/assessment/AssessmentWizard";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
@@ -10,9 +10,38 @@ import { AssessmentConfig } from "@/types/assessment";
 export default function NewAssessmentPage() {
   const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
+  const [userTier, setUserTier] = useState<"free" | "small" | "medium" | "large" | "enterprise">("medium");
+  const [isLoadingTier, setIsLoadingTier] = useState(true);
 
-  // TODO: Get user's actual tier from auth/subscription context
-  const userTier = "medium"; // Mock tier for now
+  // Fetch user's organization plan to determine tier
+  useEffect(() => {
+    async function fetchUserTier() {
+      try {
+        const response = await fetch("/api/organization/current");
+        if (response.ok) {
+          const data = await response.json();
+          const plan = data.organization?.plan || "GROWTH";
+
+          // Map organization plan to assessment tier
+          const tierMap: Record<string, "free" | "small" | "medium" | "large" | "enterprise"> = {
+            FREE: "free",
+            STARTUP: "small",
+            GROWTH: "medium",
+            ENTERPRISE: "large",
+          };
+          setUserTier(tierMap[plan] || "medium");
+        }
+      } catch (error) {
+        console.error("Error fetching user tier:", error);
+        // Default to medium on error (GROWTH plan)
+        setUserTier("medium");
+      } finally {
+        setIsLoadingTier(false);
+      }
+    }
+
+    fetchUserTier();
+  }, []);
 
   const handleComplete = async (config: AssessmentConfig) => {
     setIsSaving(true);

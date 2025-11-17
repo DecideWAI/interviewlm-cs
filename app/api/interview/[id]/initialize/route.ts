@@ -4,6 +4,51 @@ import { modalService as modal, questionService as questions, sessionService as 
 import { getSession } from "@/lib/auth-helpers";
 
 /**
+ * Generate default starter code template based on language
+ */
+function generateDefaultStarterCode(language: string, problemTitle: string): string {
+  const templates: Record<string, string> = {
+    javascript: `/**
+ * ${problemTitle}
+ */
+
+export function solution(input) {
+  // Implement your solution here
+  return null;
+}
+`,
+    typescript: `/**
+ * ${problemTitle}
+ */
+
+export function solution(input: any): any {
+  // Implement your solution here
+  return null;
+}
+`,
+    python: `"""
+${problemTitle}
+"""
+
+def solution(input):
+    """Implement your solution here"""
+    pass
+`,
+    go: `package main
+
+// ${problemTitle}
+
+func solution(input interface{}) interface{} {
+    // Implement your solution here
+    return nil
+}
+`,
+  };
+
+  return templates[language] || templates.javascript;
+}
+
+/**
  * POST /api/interview/[id]/initialize
  * Initialize interview session with question, Modal sandbox, and file structure
  */
@@ -199,17 +244,51 @@ module.exports = longestPalindrome;`,
       volumeId = volume.id;
 
       // Write starter files to volume
-      // TODO: starterCode should be parsed as JSON array of {fileName, content}
-      const starterFiles = [
-        {
-          path: `solution.${question.language === "python" ? "py" : "js"}`,
-          content: typeof question.starterCode === 'string' ? question.starterCode : JSON.stringify(question.starterCode || ''),
-        },
-        {
-          path: "README.md",
-          content: `# ${question.title}\n\n${question.description}\n\n## Instructions\n\n1. Implement your solution in the solution file\n2. Run tests with \`npm test\` (or \`pytest\` for Python)\n3. Use Claude AI for help if needed\n\nGood luck!`,
-        },
-      ];
+      // Parse starterCode - supports both string and array of {fileName, content} formats
+      let starterFiles: Array<{ path: string; content: string }> = [];
+
+      if (question.starterCode) {
+        try {
+          // Try to parse as JSON array first
+          const parsed = typeof question.starterCode === 'string'
+            ? JSON.parse(question.starterCode)
+            : question.starterCode;
+
+          if (Array.isArray(parsed)) {
+            // Format: [{fileName: 'solution.js', content: '...'}]
+            starterFiles = parsed.map((file: any) => ({
+              path: file.fileName || file.path || 'solution.js',
+              content: file.content || '',
+            }));
+          } else if (typeof parsed === 'object' && parsed.content) {
+            // Format: {fileName: 'solution.js', content: '...'}
+            starterFiles = [{
+              path: parsed.fileName || parsed.path || `solution.${question.language === 'python' ? 'py' : 'js'}`,
+              content: parsed.content,
+            }];
+          } else {
+            throw new Error('Invalid format');
+          }
+        } catch {
+          // Fallback: treat as plain string content
+          starterFiles = [{
+            path: `solution.${question.language === 'python' ? 'py' : 'js'}`,
+            content: question.starterCode,
+          }];
+        }
+      } else {
+        // No starter code provided - use default template
+        starterFiles = [{
+          path: `solution.${question.language === 'python' ? 'py' : 'js'}`,
+          content: generateDefaultStarterCode(question.language, question.title),
+        }];
+      }
+
+      // Always include README
+      starterFiles.push({
+        path: "README.md",
+        content: `# ${question.title}\n\n${question.description}\n\n## Instructions\n\n1. Implement your solution in the starter file\n2. Run tests with \`npm test\` (or \`pytest\` for Python)\n3. Use Claude AI for help if needed\n\nGood luck!`,
+      });
 
       for (const file of starterFiles) {
         await modal.writeFile(volumeId, file.path, file.content);

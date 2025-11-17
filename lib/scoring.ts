@@ -124,7 +124,38 @@ export function calculateAICollaborationScore(
   }
 
   // Independence: decreasing trend is better
-  const independence = 75; // TODO: Calculate from session data
+  // Calculate based on interaction frequency and acceptance rate
+  // High independence = low reliance on AI suggestions
+  let independence = 75; // Default baseline
+
+  // Factor 1: Total interaction count (fewer is more independent)
+  // Reuse interactions and timeAllocated variables from above
+  const interactionsPerHour = interactions / (timeAllocated / 60);
+
+  // Ideal: 5-10 interactions per hour shows balanced usage
+  // <5 = very independent (90-100), 5-10 = independent (75-85), >15 = dependent (50-70)
+  if (interactionsPerHour < 5) {
+    independence = 90 + Math.min(10, (5 - interactionsPerHour) * 2);
+  } else if (interactionsPerHour <= 10) {
+    independence = 85 - ((interactionsPerHour - 5) / 5) * 10;
+  } else if (interactionsPerHour <= 15) {
+    independence = 75 - ((interactionsPerHour - 10) / 5) * 15;
+  } else {
+    independence = Math.max(40, 60 - (interactionsPerHour - 15) * 2);
+  }
+
+  // Factor 2: Acceptance rate (too high = over-reliant, balanced is better)
+  // Reuse acceptanceRate variable from above
+  if (acceptanceRate > 85) {
+    // Over-reliant on AI suggestions
+    independence -= 10;
+  } else if (acceptanceRate < 40) {
+    // Too dismissive, not collaborating well
+    independence -= 5;
+  }
+
+  // Ensure score is in valid range
+  independence = Math.max(0, Math.min(100, independence));
 
   const overall =
     promptQuality * 0.25 +
@@ -274,8 +305,8 @@ export function detectGreenFlags(candidate: CandidateProfile): Flag[] {
     });
   }
 
-  const interactions = candidate.claudeInteractions || 0;
-  if (interactions >= 8 && interactions <= 15) {
+  const aiInteractions = candidate.claudeInteractions || 0;
+  if (aiInteractions >= 8 && aiInteractions <= 15) {
     flags.push({
       type: "ai_usage",
       description: "Balanced AI usage - Strategic consultation without over-reliance",
@@ -312,8 +343,8 @@ export function generateHiringRecommendation(
   percentileRank: number = 50
 ): HiringRecommendation {
   const score = candidate.overallScore || 0;
-  const redFlags = candidate.redFlags.length;
-  const greenFlags = candidate.greenFlags.length;
+  const redFlags = candidate.redFlags?.length ?? 0;
+  const greenFlags = candidate.greenFlags?.length ?? 0;
 
   // Determine decision
   let decision: HiringRecommendation["decision"];

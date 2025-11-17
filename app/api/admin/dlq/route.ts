@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth-helpers";
+import { isAdmin } from "@/lib/auth/admin";
 import {
   getDeadLetterJobs,
   getDeadLetterStats,
@@ -23,8 +24,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // TODO: Check if user is admin
-    // For now, just check if authenticated
+    // Check if user is admin
+    const userIsAdmin = await isAdmin();
+    if (!userIsAdmin) {
+      return NextResponse.json(
+        { error: "Forbidden - Admin access required" },
+        { status: 403 }
+      );
+    }
 
     const { searchParams } = new URL(request.url);
     const queueName = searchParams.get("queue");
@@ -77,7 +84,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // TODO: Check if user is admin
+    // Check if user is admin
+    const userIsAdmin = await isAdmin();
+    if (!userIsAdmin) {
+      return NextResponse.json(
+        { error: "Forbidden - Admin access required" },
+        { status: 403 }
+      );
+    }
 
     const body = await request.json();
     const { action, queue, jobId } = body;

@@ -629,3 +629,87 @@ export async function regenerateQuestion(
     );
   }
 }
+
+/**
+ * Generate question from seed for cache warming (used by background worker)
+ */
+export async function generateQuestionFromSeed(params: {
+  seed: {
+    title: string;
+    description: string;
+    instructions?: string;
+    topics: string[];
+    difficulty: string;
+    category: string;
+    tags: string[];
+    starterCode?: string;
+    estimatedTime: number;
+  };
+  language: string;
+  difficulty: string;
+}): Promise<any> {
+  // Build a seed-based generation prompt
+  const systemPrompt = `You are an expert at creating coding interview questions.
+
+Generate a high-quality coding question based on this seed template:
+
+Title: ${params.seed.title}
+Description: ${params.seed.description}
+${params.seed.instructions ? `Instructions: ${params.seed.instructions}` : ''}
+Topics: ${params.seed.topics.join(', ')}
+Difficulty: ${params.difficulty}
+Category: ${params.seed.category}
+Language: ${params.language}
+Estimated Time: ${params.seed.estimatedTime} minutes
+
+Create a UNIQUE variation of this question. Do not reuse the exact same example.
+
+Return a JSON object with this structure:
+{
+  "title": "Question title",
+  "description": "Detailed problem description",
+  "examples": [
+    {"input": "example input", "output": "expected output", "explanation": "why"}
+  ],
+  "constraints": ["constraint 1", "constraint 2"],
+  "hints": ["hint 1", "hint 2"],
+  "testCases": [
+    {"name": "test_basic", "input": {...}, "expectedOutput": ..., "hidden": false}
+  ],
+  "starterCode": "function solution() {...}",
+  "difficulty": "${params.difficulty}",
+  "estimatedTime": ${params.seed.estimatedTime}
+}`;
+
+  const response = await getChatCompletion(
+    [
+      {
+        role: "user",
+        content: "Generate a coding question based on the seed template.",
+      },
+    ],
+    systemPrompt,
+    "claude-3-5-sonnet-20241022"
+  );
+
+  const content = response.content[0];
+  if (content.type !== "text") {
+    throw new Error("Invalid response from Claude");
+  }
+
+  // Parse JSON response
+  let jsonText = content.text.trim();
+  if (jsonText.startsWith("```json")) {
+    jsonText = jsonText.replace(/```json\s*|\s*```/g, "");
+  } else if (jsonText.startsWith("```")) {
+    jsonText = jsonText.replace(/```\s*|\s*```/g, "");
+  }
+
+  const questionData = JSON.parse(jsonText);
+
+  return {
+    ...questionData,
+    language: params.language,
+    seed: params.seed,
+  };
+}

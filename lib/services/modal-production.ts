@@ -487,17 +487,7 @@ export async function runCommand(
   command: string,
   workingDir: string = "/"
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  console.warn(`[Modal] runCommand called but not implemented for production. Use executeCode instead.`);
-
-  // Simple built-in commands
-  if (command.trim() === "pwd") {
-    return {
-      stdout: `/workspace${workingDir}\n`,
-      stderr: "",
-      exitCode: 0,
-    };
-  }
-
+  // Handle built-in commands locally for performance
   if (command.trim() === "clear" || command.trim() === "cls") {
     return {
       stdout: "\x1b[2J\x1b[H",
@@ -506,11 +496,66 @@ export async function runCommand(
     };
   }
 
-  return {
-    stdout: "",
-    stderr: "Command execution in terminal is not yet implemented. Use the code editor and test runner.\n",
-    exitCode: 1,
-  };
+  // Get Modal execute_command endpoint URL
+  const executeCommandUrl = process.env.MODAL_EXECUTE_COMMAND_URL;
+
+  if (!executeCommandUrl) {
+    console.warn("[Modal] MODAL_EXECUTE_COMMAND_URL not configured");
+    // Fallback for simple commands
+    if (command.trim() === "pwd") {
+      return {
+        stdout: `/workspace${workingDir}\n`,
+        stderr: "",
+        exitCode: 0,
+      };
+    }
+    return {
+      stdout: "",
+      stderr: "Terminal execution not configured. Please set MODAL_EXECUTE_COMMAND_URL.\n",
+      exitCode: 1,
+    };
+  }
+
+  try {
+    const response = await fetch(executeCommandUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        sessionId,
+        command,
+        workingDir,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Modal API returned ${response.status}: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+
+    if (!result.success) {
+      return {
+        stdout: "",
+        stderr: result.error || "Command execution failed",
+        exitCode: result.exitCode || 1,
+      };
+    }
+
+    return {
+      stdout: result.stdout || "",
+      stderr: result.stderr || "",
+      exitCode: result.exitCode || 0,
+    };
+  } catch (error) {
+    console.error("[Modal] runCommand error:", error);
+    return {
+      stdout: "",
+      stderr: error instanceof Error ? error.message : "Unknown error executing command",
+      exitCode: 1,
+    };
+  }
 }
 
 // ============================================================================

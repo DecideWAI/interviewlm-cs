@@ -110,6 +110,9 @@ export async function GET(
         let fullResponse = "";
         let inputTokens = 0;
         let outputTokens = 0;
+        const toolsUsed: string[] = [];
+        const filesModified: string[] = [];
+        const toolBlocks: Array<{ id: string; name: string; input: any }> = [];
 
         try {
           // Stream from Claude API
@@ -136,11 +139,32 @@ export async function GET(
                 const data = JSON.stringify({ delta: text });
                 controller.enqueue(encoder.encode(`event: content\ndata: ${data}\n\n`));
               }
+            } else if (event.type === "content_block_start") {
+              // Track tool use blocks
+              if (event.content_block.type === "tool_use") {
+                const toolBlock = {
+                  id: event.content_block.id,
+                  name: event.content_block.name,
+                  input: event.content_block.input,
+                };
+                toolBlocks.push(toolBlock);
+                toolsUsed.push(toolBlock.name);
+              }
             } else if (event.type === "message_start") {
               inputTokens = event.message.usage.input_tokens;
             } else if (event.type === "message_delta") {
               // @ts-ignore - usage exists on MessageDeltaEvent but not on Delta type
               outputTokens = event.usage?.output_tokens || 0;
+            }
+          }
+
+          // Extract file modifications from tool blocks
+          for (const tool of toolBlocks) {
+            if (tool.name === "Write" || tool.name === "Edit") {
+              const filePath = tool.input?.file_path || tool.input?.path;
+              if (filePath && !filesModified.includes(filePath)) {
+                filesModified.push(filePath);
+              }
             }
           }
 
@@ -184,8 +208,8 @@ export async function GET(
             timestamp: new Date(),
             candidateMessage: message,
             aiResponse: fullResponse,
-            toolsUsed: [], // TODO: Extract from tool use when implemented
-            filesModified: [], // TODO: Track file modifications
+            toolsUsed, // Tools used in this interaction (empty if no tool use)
+            filesModified, // Files modified by Write/Edit tools
           }).catch((error) => {
             // Log error but don't fail the request
             console.error('Failed to publish AI interaction event:', error);

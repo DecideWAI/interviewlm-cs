@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
@@ -23,8 +23,9 @@ import {
   Target,
   AlertCircle,
   CheckCircle2,
+  Loader2,
 } from "lucide-react";
-import { MOCK_PROBLEM_SEEDS } from "@/lib/mock-seeds-data";
+import { EnhancedProblemSeed } from "@/types/seed";
 import { ROLES, SENIORITY_LEVELS } from "@/lib/assessment-config";
 import { cn } from "@/lib/utils";
 import { SeedPreviewModal } from "@/components/problems/SeedPreviewModal";
@@ -34,9 +35,9 @@ export default function SeedDetailPage() {
   const router = useRouter();
   const seedId = params.id as string;
 
-  // Find seed (in production, fetch from API)
-  const seed = MOCK_PROBLEM_SEEDS.find((s) => s.id === seedId);
-
+  const [seed, setSeed] = useState<EnhancedProblemSeed | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
 
@@ -45,15 +46,55 @@ export default function SeedDetailPage() {
   const mockPreviewsRemaining = 45;
   const mockPreviewsLimit = 50;
 
-  if (!seed) {
+  useEffect(() => {
+    fetchSeed();
+  }, [seedId]);
+
+  const fetchSeed = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const response = await fetch(`/api/seeds/${seedId}`);
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          setError('Seed not found');
+        } else {
+          throw new Error('Failed to fetch seed');
+        }
+        return;
+      }
+
+      const data = await response.json();
+      setSeed(data.seed);
+    } catch (err) {
+      console.error('Error fetching seed:', err);
+      setError(err instanceof Error ? err.message : 'Failed to load seed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-[calc(100vh-200px)]">
+          <Loader2 className="h-12 w-12 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (error || !seed) {
     return (
       <DashboardLayout>
         <div className="p-8">
           <div className="bg-background-secondary border border-border rounded-lg p-12 text-center">
             <AlertCircle className="h-12 w-12 text-text-muted mx-auto mb-3 opacity-50" />
-            <p className="text-text-secondary mb-1">Seed not found</p>
+            <p className="text-text-secondary mb-1">{error || 'Seed not found'}</p>
             <p className="text-sm text-text-tertiary mb-4">
-              The seed you're looking for doesn't exist
+              The seed you're looking for doesn't exist or you don't have access
             </p>
             <Link href="/problems">
               <Button variant="outline">
@@ -93,17 +134,7 @@ export default function SeedDetailPage() {
     }
   };
 
-  const getRoleLabel = () => {
-    if (seed.role === "any") return "Any Role";
-    return ROLES[seed.role]?.name || seed.role;
-  };
-
-  const getSeniorityLabel = () => {
-    if (seed.seniority === "any") return "Any Level";
-    return SENIORITY_LEVELS[seed.seniority]?.name || seed.seniority;
-  };
-
-  const getScoreColor = (score?: number) => {
+  const getScoreColor = (score?: number | null) => {
     if (!score) return "text-text-muted";
     if (score >= 80) return "text-success";
     if (score >= 60) return "text-warning";
@@ -172,27 +203,26 @@ export default function SeedDetailPage() {
 
           <div className="bg-background-secondary border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
-              <Target className="h-4 w-4 text-info" />
-              <p className="text-xs text-text-tertiary">Completion</p>
+              <Target className="h-4 w-4 text-primary" />
+              <p className="text-xs text-text-tertiary">Difficulty</p>
             </div>
-            <p className="text-2xl font-bold text-info">
-              {seed.avgCompletionRate ? Math.round(seed.avgCompletionRate * 100) : "-"}%
-            </p>
-            <p className="text-xs text-text-muted mt-1">completion rate</p>
+            <Badge
+              variant={
+                seed.difficulty === 'EASY' ? 'success' :
+                seed.difficulty === 'HARD' ? 'error' : 'warning'
+              }
+              className="text-sm"
+            >
+              {seed.difficulty}
+            </Badge>
           </div>
 
           <div className="bg-background-secondary border border-border rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
-              <Star className="h-4 w-4 text-warning" />
-              <p className="text-xs text-text-tertiary">Rating</p>
+              <Sparkles className="h-4 w-4 text-info" />
+              <p className="text-xs text-text-tertiary">Category</p>
             </div>
-            <div className="flex items-center gap-1">
-              <p className="text-2xl font-bold text-warning">
-                {seed.rating?.toFixed(1) || "-"}
-              </p>
-              {seed.rating && <Star className="h-4 w-4 fill-warning text-warning" />}
-            </div>
-            <p className="text-xs text-text-muted mt-1">out of 5.0</p>
+            <p className="text-sm font-medium text-text-primary capitalize">{seed.category}</p>
           </div>
 
           <div className="bg-background-secondary border border-border rounded-lg p-4">
@@ -249,113 +279,47 @@ export default function SeedDetailPage() {
             {/* Overview Tab */}
             {activeTab === "overview" && (
               <div className="space-y-6">
-                <div className="grid grid-cols-2 gap-6">
+                {seed.tags && seed.tags.length > 0 && (
                   <div>
-                    <p className="text-sm text-text-tertiary mb-2">Target Role</p>
-                    <Badge variant="default" className="capitalize">
-                      {getRoleLabel()}
-                    </Badge>
-                  </div>
-
-                  <div>
-                    <p className="text-sm text-text-tertiary mb-2">Target Seniority</p>
-                    <Badge variant="default" className="capitalize">
-                      {getSeniorityLabel()}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-sm text-text-tertiary mb-2">Tags</p>
-                  <div className="flex flex-wrap gap-2">
-                    {seed.tags.map((tag, idx) => (
-                      <Badge key={idx} variant="default">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-sm text-text-tertiary mb-2">Topics Assessed</p>
-                  <div className="flex flex-wrap gap-2">
-                    {seed.topics?.map((topic, idx) => (
-                      <Badge key={idx} variant="primary">
-                        {topic}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <p className="text-sm text-text-tertiary mb-3">Difficulty Distribution</p>
-                  <div className="space-y-3">
-                    {seed.difficultyDistribution && (
-                      <>
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-text-tertiary">Easy</span>
-                            <span className="text-xs font-medium text-success">
-                              {seed.difficultyDistribution.easy}%
-                            </span>
-                          </div>
-                          <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-success rounded-full"
-                              style={{ width: `${seed.difficultyDistribution.easy}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-text-tertiary">Medium</span>
-                            <span className="text-xs font-medium text-warning">
-                              {seed.difficultyDistribution.medium}%
-                            </span>
-                          </div>
-                          <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-warning rounded-full"
-                              style={{ width: `${seed.difficultyDistribution.medium}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-text-tertiary">Hard</span>
-                            <span className="text-xs font-medium text-error">
-                              {seed.difficultyDistribution.hard}%
-                            </span>
-                          </div>
-                          <div className="h-2 bg-background-tertiary rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-error rounded-full"
-                              style={{ width: `${seed.difficultyDistribution.hard}%` }}
-                            />
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-
-                {seed.examples && seed.examples.length > 0 && (
-                  <div>
-                    <p className="text-sm text-text-tertiary mb-2">Examples</p>
-                    <div className="space-y-2">
-                      {seed.examples.map((example, idx) => (
-                        <div
-                          key={idx}
-                          className="bg-background-tertiary border border-border rounded p-3 font-mono text-sm text-text-secondary"
-                        >
-                          {example}
-                        </div>
+                    <p className="text-sm text-text-tertiary mb-2">Tags</p>
+                    <div className="flex flex-wrap gap-2">
+                      {seed.tags.map((tag, idx) => (
+                        <Badge key={idx} variant="default">
+                          {tag}
+                        </Badge>
                       ))}
                     </div>
                   </div>
                 )}
+
+                {seed.topics && seed.topics.length > 0 && (
+                  <div>
+                    <p className="text-sm text-text-tertiary mb-2">Topics Assessed</p>
+                    <div className="flex flex-wrap gap-2">
+                      {seed.topics.map((topic, idx) => (
+                        <Badge key={idx} variant="primary">
+                          {topic}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-6">
+                  <div>
+                    <p className="text-sm text-text-tertiary mb-2">Language</p>
+                    <Badge variant="default" className="capitalize">
+                      {seed.language}
+                    </Badge>
+                  </div>
+
+                  <div>
+                    <p className="text-sm text-text-tertiary mb-2">Category</p>
+                    <Badge variant="default" className="capitalize">
+                      {seed.category}
+                    </Badge>
+                  </div>
+                </div>
 
                 <div>
                   <p className="text-sm text-text-tertiary mb-2">Metadata</p>
@@ -376,14 +340,6 @@ export default function SeedDetailPage() {
                         {new Date(seed.updatedAt).toLocaleDateString()}
                       </span>
                     </div>
-                    {seed.lastPreviewedAt && (
-                      <div>
-                        <span className="text-text-tertiary">Last previewed:</span>
-                        <span className="ml-2 text-text-primary">
-                          {new Date(seed.lastPreviewedAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
@@ -394,13 +350,21 @@ export default function SeedDetailPage() {
               <div className="space-y-4">
                 <div>
                   <h3 className="text-sm font-semibold text-text-primary mb-3">
-                    LLM Instructions
+                    LLM Instructions for Question Generation
                   </h3>
-                  <div className="bg-background-tertiary border border-border rounded-lg p-4">
-                    <pre className="text-sm text-text-secondary whitespace-pre-wrap font-mono">
-                      {seed.instructions}
-                    </pre>
-                  </div>
+                  {seed.instructions ? (
+                    <div className="bg-background-tertiary border border-border rounded-lg p-4">
+                      <pre className="text-sm text-text-secondary whitespace-pre-wrap font-mono">
+                        {seed.instructions}
+                      </pre>
+                    </div>
+                  ) : (
+                    <div className="bg-background-tertiary border border-border rounded-lg p-6 text-center">
+                      <p className="text-sm text-text-tertiary">
+                        No instructions provided for this seed
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
