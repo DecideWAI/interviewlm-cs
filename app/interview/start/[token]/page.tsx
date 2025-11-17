@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -53,7 +53,8 @@ interface CandidateData {
   sessionId?: string;
 }
 
-export default function CandidateLandingPage({ params }: { params: { token: string } }) {
+export default function CandidateLandingPage({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = use(params);
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<CandidateData | null>(null);
@@ -66,7 +67,7 @@ export default function CandidateLandingPage({ params }: { params: { token: stri
 
   const fetchCandidateData = async () => {
     try {
-      const response = await fetch(`/api/interview/validate/${params.token}`);
+      const response = await fetch(`/api/interview/validate/${token}`);
 
       if (response.ok) {
         const json = await response.json();
@@ -86,7 +87,7 @@ export default function CandidateLandingPage({ params }: { params: { token: stri
     setStarting(true);
 
     try {
-      const response = await fetch(`/api/interview/start/${params.token}`, {
+      const response = await fetch(`/api/interview/start/${token}`, {
         method: "POST",
       });
 

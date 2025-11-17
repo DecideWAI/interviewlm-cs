@@ -10,7 +10,7 @@ import { detectRedFlags, detectGreenFlags } from "@/lib/scoring";
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const session = await getSession();
@@ -22,7 +22,7 @@ export async function GET(
       );
     }
 
-    const { id } = params;
+    const { id } = await params;
 
     // Get user's organization
     const userOrg = await prisma.organizationMember.findFirst({

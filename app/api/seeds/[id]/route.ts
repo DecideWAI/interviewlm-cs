@@ -153,6 +153,7 @@ export async function PUT(
       );
     }
 
+
     // Check if seed exists and belongs to org
     const existingSeed = await prisma.problemSeed.findUnique({
       where: { id },
@@ -245,6 +246,7 @@ export async function DELETE(
         { status: 403 }
       );
     }
+
 
     // Check if seed exists and belongs to org
     const existingSeed = await prisma.problemSeed.findUnique({
