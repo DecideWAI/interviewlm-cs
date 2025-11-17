@@ -921,11 +921,41 @@ Respond with ONLY a number between 0-100.`,
 
     if (!session) return null;
 
+    // Get question details from candidate
+    const candidate = await prisma.candidate.findUnique({
+      where: { id: session.candidateId },
+      include: {
+        assessment: {
+          include: {
+            questions: {
+              include: { seed: true },
+              take: 1, // Get first question for now
+            },
+          },
+        },
+      },
+    });
+
+    const question = candidate?.assessment?.questions?.[0];
+
+    // Map difficulty string to number for IRT
+    const difficultyMap: Record<string, number> = {
+      'EASY': 3,
+      'MEDIUM': 5,
+      'HARD': 7,
+    };
+
+    const questionDifficulty = question?.difficulty
+      ? difficultyMap[question.difficulty] || 5
+      : 5;
+
+    const questionTopic = question?.seed?.category || 'general';
+
     // Build SessionRecording object
     const recording: SessionRecording = {
       sessionId: session.id,
       candidateId: session.candidateId,
-      questionId: '', // TODO: Get from assessment
+      questionId: question?.id || '',
       startTime: session.startedAt || new Date(),
       endTime: session.endedAt || new Date(),
       duration: session.duration || 0,
@@ -956,8 +986,8 @@ Respond with ONLY a number between 0-100.`,
         output: c.output,
         exitCode: c.exitCode,
       })),
-      questionDifficulty: 5, // TODO: Get from question
-      questionTopic: 'general', // TODO: Get from question
+      questionDifficulty,
+      questionTopic,
     };
 
     // Attach metrics
