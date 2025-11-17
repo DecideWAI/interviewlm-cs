@@ -312,8 +312,8 @@ export function generateHiringRecommendation(
   percentileRank: number = 50
 ): HiringRecommendation {
   const score = candidate.overallScore || 0;
-  const redFlags = candidate.redFlags.length;
-  const greenFlags = candidate.greenFlags.length;
+  const redFlags = candidate.redFlags?.length ?? 0;
+  const greenFlags = candidate.greenFlags?.length ?? 0;
 
   // Determine decision
   let decision: HiringRecommendation["decision"];
