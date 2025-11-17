@@ -6,9 +6,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/auth.config';
+import { auth } from '@/auth';
 import prisma from '@/lib/prisma';
+import { cookies } from 'next/headers';
 import { z } from 'zod';
 
 // Validation schema for seed updates
@@ -33,28 +33,44 @@ const updateSeedSchema = z.object({
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const { id } = await params;
+    const session = await auth();
 
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-    });
+    // Get active organization from cookie
+    const cookieStore = await cookies();
+    const activeOrgId = cookieStore.get('active_organization_id')?.value;
 
-    if (!user?.activeOrganizationId) {
+    if (!activeOrgId) {
       return NextResponse.json(
         { error: 'No active organization' },
         { status: 400 }
       );
     }
 
+    // Verify user has access to this organization
+    const membership = await prisma.organizationMember.findFirst({
+      where: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+      },
+    });
+
+    if (!membership) {
+      return NextResponse.json(
+        { error: 'Access to organization denied' },
+        { status: 403 }
+      );
+    }
+
     const seed = await prisma.problemSeed.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         parentSeed: {
           select: {
@@ -80,7 +96,7 @@ export async function GET(
     // Check access: must be org's seed or system seed
     if (
       !seed.isSystemSeed &&
-      seed.organizationId !== user.activeOrganizationId
+      seed.organizationId !== activeOrgId
     ) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
@@ -101,29 +117,45 @@ export async function GET(
  */
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const { id } = await params;
+    const session = await auth();
 
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-    });
+    // Get active organization from cookie
+    const cookieStore = await cookies();
+    const activeOrgId = cookieStore.get('active_organization_id')?.value;
 
-    if (!user?.activeOrganizationId) {
+    if (!activeOrgId) {
       return NextResponse.json(
         { error: 'No active organization' },
         { status: 400 }
       );
     }
 
+    // Verify user has access to this organization
+    const membership = await prisma.organizationMember.findFirst({
+      where: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+      },
+    });
+
+    if (!membership) {
+      return NextResponse.json(
+        { error: 'Access to organization denied' },
+        { status: 403 }
+      );
+    }
+
     // Check if seed exists and belongs to org
     const existingSeed = await prisma.problemSeed.findUnique({
-      where: { id: params.id },
+      where: { id },
     });
 
     if (!existingSeed) {
@@ -139,7 +171,7 @@ export async function PUT(
     }
 
     // Must belong to user's organization
-    if (existingSeed.organizationId !== user.activeOrganizationId) {
+    if (existingSeed.organizationId !== activeOrgId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -148,7 +180,7 @@ export async function PUT(
 
     // Update the seed
     const updatedSeed = await prisma.problemSeed.update({
-      where: { id: params.id },
+      where: { id },
       data: validatedData,
     });
 
@@ -178,29 +210,45 @@ export async function PUT(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const { id } = await params;
+    const session = await auth();
 
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-    });
+    // Get active organization from cookie
+    const cookieStore = await cookies();
+    const activeOrgId = cookieStore.get('active_organization_id')?.value;
 
-    if (!user?.activeOrganizationId) {
+    if (!activeOrgId) {
       return NextResponse.json(
         { error: 'No active organization' },
         { status: 400 }
       );
     }
 
+    // Verify user has access to this organization
+    const membership = await prisma.organizationMember.findFirst({
+      where: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+      },
+    });
+
+    if (!membership) {
+      return NextResponse.json(
+        { error: 'Access to organization denied' },
+        { status: 403 }
+      );
+    }
+
     // Check if seed exists and belongs to org
     const existingSeed = await prisma.problemSeed.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         questions: true, // Check if used in assessments
       },
@@ -219,14 +267,14 @@ export async function DELETE(
     }
 
     // Must belong to user's organization
-    if (existingSeed.organizationId !== user.activeOrganizationId) {
+    if (existingSeed.organizationId !== activeOrgId) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
     // If used in assessments, archive instead of delete
     if (existingSeed.questions && existingSeed.questions.length > 0) {
       const archivedSeed = await prisma.problemSeed.update({
-        where: { id: params.id },
+        where: { id },
         data: { status: 'archived' },
       });
 
@@ -239,7 +287,7 @@ export async function DELETE(
 
     // Safe to delete
     await prisma.problemSeed.delete({
-      where: { id: params.id },
+      where: { id },
     });
 
     return NextResponse.json({

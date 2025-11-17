@@ -67,7 +67,7 @@ export default function SeedDetailPage() {
       }
 
       const data = await response.json();
-      setSeed(data);
+      setSeed(data.seed);
     } catch (err) {
       console.error('Error fetching seed:', err);
       setError(err instanceof Error ? err.message : 'Failed to load seed');

@@ -5,9 +5,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/auth.config';
+import { auth } from '@/auth';
 import prisma from '@/lib/prisma';
+import { cookies } from 'next/headers';
 import { z } from 'zod';
 
 // Validation schema for seed creation
@@ -33,22 +33,35 @@ const createSeedSchema = z.object({
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
 
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get user's active organization
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-      include: { activeOrganization: true },
-    });
+    // Get active organization from cookie
+    const cookieStore = await cookies();
+    const activeOrgId = cookieStore.get('active_organization_id')?.value;
 
-    if (!user?.activeOrganizationId) {
+    if (!activeOrgId) {
       return NextResponse.json(
         { error: 'No active organization' },
         { status: 400 }
+      );
+    }
+
+    // Verify user has access to this organization
+    const membership = await prisma.organizationMember.findFirst({
+      where: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+      },
+    });
+
+    if (!membership) {
+      return NextResponse.json(
+        { error: 'Access to organization denied' },
+        { status: 403 }
       );
     }
 
@@ -60,7 +73,7 @@ export async function GET(request: NextRequest) {
     // Build filter conditions
     const where: any = {
       OR: [
-        { organizationId: user.activeOrganizationId },
+        { organizationId: activeOrgId },
         ...(includeSystem ? [{ isSystemSeed: true }] : []),
       ],
     };
@@ -118,22 +131,35 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
+    const session = await auth();
 
     if (!session?.user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get user's active organization
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email! },
-      include: { activeOrganization: true },
-    });
+    // Get active organization from cookie
+    const cookieStore = await cookies();
+    const activeOrgId = cookieStore.get('active_organization_id')?.value;
 
-    if (!user?.activeOrganizationId) {
+    if (!activeOrgId) {
       return NextResponse.json(
         { error: 'No active organization' },
         { status: 400 }
+      );
+    }
+
+    // Verify user has access to this organization
+    const membership = await prisma.organizationMember.findFirst({
+      where: {
+        userId: session.user.id,
+        organizationId: activeOrgId,
+      },
+    });
+
+    if (!membership) {
+      return NextResponse.json(
+        { error: 'Access to organization denied' },
+        { status: 403 }
       );
     }
 
@@ -182,7 +208,7 @@ export async function POST(request: NextRequest) {
     // Create the seed
     const newSeed = await prisma.problemSeed.create({
       data: {
-        organizationId: user.activeOrganizationId,
+        organizationId: activeOrgId,
         title: seedData.title,
         description: seedData.description,
         difficulty: seedData.difficulty,
@@ -195,7 +221,7 @@ export async function POST(request: NextRequest) {
         instructions: seedData.instructions,
         estimatedTime: seedData.estimatedTime,
         status: seedData.status,
-        createdBy: user.id,
+        createdBy: session.user.id,
         parentSeedId: validatedData.parentSeedId,
         isSystemSeed: false, // User-created seeds are never system seeds
       },
