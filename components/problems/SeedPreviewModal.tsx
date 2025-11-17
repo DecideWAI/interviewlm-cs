@@ -30,8 +30,155 @@ interface SeedPreviewModalProps {
   previewsLimit: number;
 }
 
+/**
+ * Generate language-specific starter code template
+ */
+const generateStarterCodeTemplate = (language: string, problemTitle: string) => {
+  const templates: Record<string, { main: string; test: string; extensions: { main: string; test: string } }> = {
+    typescript: {
+      main: `/**
+ * ${problemTitle}
+ *
+ * Implement the solution below using TypeScript.
+ * Use Claude Code AI to help you write clean, efficient code.
+ */
+
+export function solution(input: any): any {
+  // Implement your solution here
+  return null;
+}
+`,
+      test: `import { solution } from "./index";
+
+describe("${problemTitle}", () => {
+  it("should handle basic input", () => {
+    const result = solution({ test: "data" });
+    expect(result).toBeDefined();
+  });
+
+  it("should handle edge cases", () => {
+    const result = solution(null);
+    expect(result).toBeDefined();
+  });
+});
+`,
+      extensions: { main: 'ts', test: 'test.ts' },
+    },
+    javascript: {
+      main: `/**
+ * ${problemTitle}
+ *
+ * Implement the solution below using JavaScript.
+ * Use Claude Code AI to help you write clean, efficient code.
+ */
+
+export function solution(input) {
+  // Implement your solution here
+  return null;
+}
+`,
+      test: `import { solution } from "./index.js";
+
+describe("${problemTitle}", () => {
+  it("should handle basic input", () => {
+    const result = solution({ test: "data" });
+    expect(result).toBeDefined();
+  });
+
+  it("should handle edge cases", () => {
+    const result = solution(null);
+    expect(result).toBeDefined();
+  });
+});
+`,
+      extensions: { main: 'js', test: 'test.js' },
+    },
+    python: {
+      main: `"""
+${problemTitle}
+
+Implement the solution below using Python.
+Use Claude Code AI to help you write clean, efficient code.
+"""
+
+def solution(input_data):
+    """
+    Implement your solution here
+
+    Args:
+        input_data: The input to process
+
+    Returns:
+        The solution output
+    """
+    pass
+`,
+      test: `import pytest
+from index import solution
+
+def test_basic_input():
+    """Test basic functionality"""
+    result = solution({"test": "data"})
+    assert result is not None
+
+def test_edge_cases():
+    """Test edge cases"""
+    result = solution(None)
+    assert result is not None
+`,
+      extensions: { main: 'py', test: 'test_index.py' },
+    },
+    go: {
+      main: `package main
+
+// ${problemTitle}
+//
+// Implement the solution below using Go.
+// Use Claude Code AI to help you write clean, efficient code.
+
+func solution(input interface{}) interface{} {
+    // Implement your solution here
+    return nil
+}
+`,
+      test: `package main
+
+import (
+    "testing"
+)
+
+func TestBasicInput(t *testing.T) {
+    result := solution(map[string]string{"test": "data"})
+    if result == nil {
+        t.Error("Expected non-nil result")
+    }
+}
+
+func TestEdgeCases(t *testing.T) {
+    result := solution(nil)
+    if result == nil {
+        t.Error("Expected non-nil result")
+    }
+}
+`,
+      extensions: { main: 'go', test: 'index_test.go' },
+    },
+  };
+
+  const template = templates[language] || templates.typescript;
+  return {
+    main: template.main,
+    test: template.test,
+    mainFile: `index.${template.extensions.main}`,
+    testFile: `index.${template.extensions.test}`,
+  };
+};
+
 // Mock generated problem (in production, this would call LLM API)
 const generateMockProblem = (seed: EnhancedQuestionSeed): GeneratedProblem => {
+  const language = 'typescript'; // Default language, could be from seed metadata
+  const starterTemplate = generateStarterCodeTemplate(language, seed.title);
+
   return {
     id: `problem-${Date.now()}`,
     seedId: seed.id,
@@ -46,15 +193,15 @@ const generateMockProblem = (seed: EnhancedQuestionSeed): GeneratedProblem => {
     ],
     difficulty: "medium", // Could be derived from difficultyDistribution
     estimatedTime: seed.estimatedTime,
-    language: "typescript",
+    language: language,
     starterCode: [
       {
-        fileName: "index.ts",
-        content: `// TODO: Implement your solution here\n\nexport function solution(input: string): string {\n  // Your code here\n  return "";\n}\n`,
+        fileName: starterTemplate.mainFile,
+        content: starterTemplate.main,
       },
       {
-        fileName: "index.test.ts",
-        content: `import { solution } from "./index";\n\ndescribe("Solution", () => {\n  it("should pass basic test", () => {\n    expect(solution("test")).toBeDefined();\n  });\n});\n`,
+        fileName: starterTemplate.testFile,
+        content: starterTemplate.test,
       },
     ],
     testCases: [
