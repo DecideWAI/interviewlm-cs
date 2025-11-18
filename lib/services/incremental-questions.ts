@@ -143,7 +143,7 @@ export class IncrementalQuestionGenerator {
     // Validate tech stack in generated question
     this.validateTechStackInQuestion(questionData, requiredTech);
 
-    // Create question in database
+    // Create question in database with difficulty assessment
     const nextQuestionOrder = context.previousQuestions.length + 1;
     const question = await prisma.generatedQuestion.create({
       data: {
@@ -153,12 +153,13 @@ export class IncrementalQuestionGenerator {
         title: questionData.title,
         description: questionData.description,
         difficulty: this.determineDifficulty(progressAnalysis, nextQuestionOrder),
-        language: requiredTech.languages[0] || 'typescript',
+        language: requiredTech.languages[0]?.name || 'typescript',
         requirements: questionData.requirements || [],
         estimatedTime: questionData.estimatedTime || 20,
         starterCode: questionData.starterCode || { files: [] },
         testCases: questionData.testCases || [],
         status: "PENDING",
+        difficultyAssessment: questionData.difficultyAssessment || null,
       },
     });
 
@@ -180,6 +181,13 @@ export class IncrementalQuestionGenerator {
     seniority: SeniorityLevel;
   }): Promise<GeneratedQuestion> {
     const { candidateId, seedId, baseProblem, requiredTech, seniority } = params;
+
+    // Generate baseline difficulty assessment
+    const baselineDifficultyAssessment = this.generateBaselineDifficultyAssessment(
+      baseProblem,
+      requiredTech,
+      seniority
+    );
 
     // Create first question directly from base problem
     const question = await prisma.generatedQuestion.create({
@@ -210,11 +218,55 @@ export class IncrementalQuestionGenerator {
         },
         testCases: [], // Will be populated by Claude in first question
         status: "PENDING",
+        difficultyAssessment: baselineDifficultyAssessment,
       },
     });
 
     console.log(`Generated first question "${question.title}" for candidate ${candidateId}`);
     return question;
+  }
+
+  /**
+   * Generate baseline difficulty assessment for first question
+   * This establishes the baseline for all subsequent questions
+   */
+  private generateBaselineDifficultyAssessment(
+    baseProblem: BaseProblem,
+    requiredTech: RequiredTechStack,
+    seniority: SeniorityLevel
+  ): any {
+    // Estimate lines of code based on estimated time
+    const linesOfCodeExpected = Math.floor(baseProblem.estimatedTime * 3); // ~3 lines per minute for substantial problems
+
+    // Calculate tech stack complexity
+    const techStackComplexity =
+      1 +
+      Math.min(requiredTech.frameworks.length, 2) +
+      Math.min(requiredTech.databases.length, 2);
+
+    // Base difficulty score: substantial problems should be 5-6
+    const baseDifficultyScore = 5.5;
+
+    return {
+      difficultyScore: baseDifficultyScore,
+      complexityFactors: {
+        linesOfCodeExpected,
+        conceptsRequired: [
+          `${requiredTech.frameworks[0]?.name || 'framework'} fundamentals`,
+          `${requiredTech.databases[0]?.name || 'database'} operations`,
+          'error handling',
+          'basic architecture',
+        ],
+        techStackComplexity,
+        timeEstimate: baseProblem.estimatedTime,
+        prerequisiteKnowledge: [
+          `${requiredTech.languages[0]?.name || 'programming'} proficiency`,
+          `${requiredTech.frameworks[0]?.name || 'framework'} basics`,
+        ],
+      },
+      justification: `This is the baseline problem for a ${seniority} developer. It requires implementing a substantial feature (${baseProblem.estimatedTime} min) using ${requiredTech.frameworks[0]?.name || 'the specified framework'} and ${requiredTech.databases[0]?.name || 'database'}. Estimated ${linesOfCodeExpected} lines of code with ${techStackComplexity}/5 tech stack complexity.`,
+      relativeToBaseline: 1.0, // By definition, the baseline is 1.0
+    };
   }
 
   /**
@@ -425,9 +477,9 @@ ${actionGuidance}
   "estimatedTime": ${Math.min(25, timeRemaining - 5)},
   "starterCode": [
     {
-      "fileName": "main.${requiredTech.languages[0] === 'python' ? 'py' : requiredTech.languages[0] === 'go' ? 'go' : 'ts'}",
+      "fileName": "main.${requiredTech.languages[0]?.name === 'python' ? 'py' : requiredTech.languages[0]?.name === 'go' ? 'go' : 'ts'}",
       "content": "// Brief starter code or TODO comments guiding implementation",
-      "language": "${requiredTech.languages[0]}"
+      "language": "${requiredTech.languages[0]?.name}"
     }
   ],
   "testCases": [
@@ -438,8 +490,31 @@ ${actionGuidance}
       "hidden": false,
       "description": "What this test validates"
     }
-  ]
+  ],
+  "difficultyAssessment": {
+    "difficultyScore": 5.5,
+    "complexityFactors": {
+      "linesOfCodeExpected": 50,
+      "conceptsRequired": ["async programming", "error handling", "API design"],
+      "techStackComplexity": 3,
+      "timeEstimate": 20,
+      "prerequisiteKnowledge": ["${requiredTech.frameworks[0]?.name} basics", "database operations"]
+    },
+    "justification": "This question requires understanding of X, Y, and Z. It builds on Q1 by adding caching complexity...",
+    "relativeToBaseline": ${previousQuestions.length === 0 ? '1.0' : progressAnalysis.recommendedAction === 'extend' ? '1.3' : progressAnalysis.recommendedAction === 'simplify' ? '0.7' : '1.0'}
+  }
 }
+
+**CRITICAL: Difficulty Assessment Instructions:**
+1. **difficultyScore**: Rate 1-10 where 1=trivial, 10=extremely complex
+   - Consider: lines of code, concepts, time needed, prerequisites
+   - Q1 (baseline) should typically be 5-6 for substantial problems
+2. **relativeToBaseline**: How hard is this compared to Q1?
+   - 0.5 = half as difficult, 1.0 = same, 2.0 = twice as hard
+   - This MUST reflect actual complexity, not just question number
+   - Example: If Q2 is simpler cleanup task, use 0.7 even though it's Q2
+3. **justification**: Explain your difficulty rating with specific reasoning
+4. Be HONEST about difficulty - don't inflate scores just because it's a later question
 
 Return ONLY the JSON object, no additional text or markdown formatting.`;
   }

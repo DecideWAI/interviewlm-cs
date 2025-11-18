@@ -3,9 +3,16 @@
 ## Overview
 This document tracks the implementation of the incremental question generation system, where seeds are generic guidelines and questions build incrementally based on candidate progress.
 
-## ✅ Completed (Phases 1-3)
+## ✅ Completed (Phases 1-4)
 
-### Latest Updates (Phase 3) ✓
+### Latest Updates (Phase 4) ✓
+- **🎯 LLM-Based Difficulty Calibration**: Dynamic weight adjustment eliminates luck factor
+- **Baseline-Relative Scoring**: All questions normalized to Q1 baseline difficulty
+- **Multi-Factor Analysis**: LLM assesses LOC, concepts, tech complexity, time
+- **Fair Scoring**: Questions weighted by actual complexity, not just position
+- **Transparency**: Each question includes difficulty justification and breakdown
+
+### Previous Updates (Phase 3) ✓
 - **Tech Priority System**: RequiredTech now supports critical/required/recommended levels
 - **Question Count Limits**: Min 2, max 5 questions with 70% expertise threshold
 - **Progressive Scoring**: Later questions weighted more (Q1: 1.0x → Q5: 2.5x)
@@ -14,22 +21,27 @@ This document tracks the implementation of the incremental question generation s
 
 ### 1. Database & Types ✓
 - **Updated Prisma Schema** (`prisma/schema.prisma`)
-  - Added `seedType` field ('legacy' | 'incremental')
-  - Added `domain` field (e.g., 'e-commerce', 'fintech')
-  - Added `requiredTech` JSON field for tech stack requirements
-  - Added `baseProblem` JSON field for starting problem
-  - Added `progressionHints` JSON field for adaptive difficulty
-  - Added `seniorityExpectations` JSON field for seniority-specific expectations
+  - ProblemSeed model:
+    - Added `seedType` field ('legacy' | 'incremental')
+    - Added `domain` field (e.g., 'e-commerce', 'fintech')
+    - Added `requiredTech` JSON field for tech stack requirements
+    - Added `baseProblem` JSON field for starting problem
+    - Added `progressionHints` JSON field for adaptive difficulty
+    - Added `seniorityExpectations` JSON field for seniority-specific expectations
+  - GeneratedQuestion model:
+    - **NEW**: Added `difficultyAssessment` JSON field for LLM calibration
 
-- **Created Migration** (`prisma/migrations/20251118000000_add_incremental_seed_fields/migration.sql`)
-  - SQL migration to add new fields with proper types
-  - Includes documentation comments
+- **Created Migrations**
+  - `20251118000000_add_incremental_seed_fields/migration.sql` - Seed fields
+  - `20251118120000_add_difficulty_assessment_to_questions/migration.sql` - Difficulty calibration
 
 - **Updated TypeScript Types** (`types/seed.ts`)
-  - Added `RequiredTechStack` interface
+  - Added `RequiredTechStack` interface with TechSpec[] (priority-based)
   - Added `BaseProblem` interface
   - Added `ProgressionHints` interface
   - Added `SeniorityExpectations` interface
+  - **NEW**: Added `DifficultyAssessment` interface with complexity factors
+  - **NEW**: Added `QuestionGenerationResponse` with difficulty metadata
   - Extended `EnhancedProblemSeed` with new fields
 
 ### 2. Core Services ✓
@@ -41,6 +53,9 @@ This document tracks the implementation of the incremental question generation s
   - ✓ Handles first question (base problem) vs follow-up questions
   - ✓ Adjusts difficulty based on performance (extend/maintain/simplify)
   - ✓ Time-aware generation (considers remaining time)
+  - ✓ **NEW: Requests difficulty assessment** from LLM with detailed instructions
+  - ✓ **NEW: Generates baseline difficulty** for Q1 (establishes relativeToBaseline = 1.0)
+  - ✓ **NEW: Stores difficulty metadata** with each generated question
 
 - **TechStackValidator** (`lib/services/tech-stack-validator.ts`)
   - ✓ Validates language usage (file extensions, syntax patterns)
@@ -49,6 +64,14 @@ This document tracks the implementation of the incremental question generation s
   - ✓ Detects tools (config files, test frameworks)
   - ✓ Generates compliance reports with violations
   - ✓ Calculates compliance scores
+
+- **ProgressiveScoringCalculator** (`lib/services/progressive-scoring.ts`) ✓
+  - ✓ **NEW: Dynamic weight calculation** based on difficulty assessment
+  - ✓ Baseline establishment from Q1 (relativeToBaseline = 1.0)
+  - ✓ Difficulty multiplier: `finalWeight = baseWeight × difficultyMultiplier`
+  - ✓ Clamps multiplier to 0.5x - 2.0x for safety
+  - ✓ Detailed score breakdown with difficulty metadata
+  - ✓ Backward compatible (works without difficulty assessment)
 
 ### 3. API Updates ✓
 - **Question Generation Endpoint** (`app/api/interview/[id]/questions/route.ts`)
