@@ -3,7 +3,14 @@
 ## Overview
 This document tracks the implementation of the incremental question generation system, where seeds are generic guidelines and questions build incrementally based on candidate progress.
 
-## ✅ Completed (Phase 1-2)
+## ✅ Completed (Phases 1-3)
+
+### Latest Updates (Phase 3) ✓
+- **Tech Priority System**: RequiredTech now supports critical/required/recommended levels
+- **Question Count Limits**: Min 2, max 5 questions with 70% expertise threshold
+- **Progressive Scoring**: Later questions weighted more (Q1: 1.0x → Q5: 2.5x)
+- **Critical-Only Enforcement**: Only "critical" tech violations block candidates
+- **Type Safety**: Full type compatibility with TechSpec throughout codebase
 
 ### 1. Database & Types ✓
 - **Updated Prisma Schema** (`prisma/schema.prisma`)
@@ -137,16 +144,26 @@ This document tracks the implementation of the incremental question generation s
   "description": "Build a scalable microservices backend for an e-commerce platform",
   "seedType": "incremental",
   "requiredTech": {
-    "languages": ["python"],
-    "frameworks": ["fastapi"],
-    "databases": ["mongodb", "redis"],
-    "tools": ["docker", "pytest"]
+    "languages": [
+      { "name": "python", "priority": "critical", "version": ">=3.10" }
+    ],
+    "frameworks": [
+      { "name": "fastapi", "priority": "critical" }
+    ],
+    "databases": [
+      { "name": "mongodb", "priority": "required" },
+      { "name": "redis", "priority": "recommended" }
+    ],
+    "tools": [
+      { "name": "docker", "priority": "recommended" },
+      { "name": "pytest", "priority": "required" }
+    ]
   },
   "baseProblem": {
     "title": "Create Product API Endpoints",
-    "description": "Implement CRUD operations for products using FastAPI and MongoDB",
+    "description": "Implement CRUD operations for products using FastAPI and MongoDB. This is a substantial problem that should take 20-25 minutes.",
     "starterCode": "from fastapi import FastAPI\nfrom motor.motor_asyncio import AsyncIOMotorClient\n\napp = FastAPI()\n# TODO: Implement product endpoints",
-    "estimatedTime": 20
+    "estimatedTime": 25
   },
   "progressionHints": {
     "extensionTopics": ["caching", "rate-limiting", "authentication", "search"],
@@ -161,6 +178,11 @@ This document tracks the implementation of the incremental question generation s
   }
 }
 ```
+
+**Tech Priority Levels:**
+- **critical**: MUST use or assessment fails (errors block candidate)
+- **required**: Should use, flagged in evaluation (warnings only)
+- **recommended**: Optional, bonus points if used (warnings only)
 
 ## 🚀 Next Steps
 

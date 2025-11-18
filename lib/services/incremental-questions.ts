@@ -93,6 +93,16 @@ export class IncrementalQuestionGenerator {
       });
     }
 
+    // Check if we should generate another question
+    const shouldContinue = this.shouldGenerateNextQuestion(
+      context.previousQuestions.length,
+      context.previousPerformance
+    );
+
+    if (!shouldContinue.continue) {
+      throw new Error(shouldContinue.reason);
+    }
+
     // Analyze candidate's progress
     const progressAnalysis = this.analyzeProgress(
       context.previousPerformance,
@@ -180,21 +190,21 @@ export class IncrementalQuestionGenerator {
         title: baseProblem.title,
         description: baseProblem.description,
         difficulty: this.getInitialDifficulty(seniority),
-        language: requiredTech.languages[0] || 'typescript',
+        language: requiredTech.languages[0]?.name || 'typescript',
         requirements: [
-          `Use ${requiredTech.languages.join(' or ')}`,
-          `Implement with ${requiredTech.frameworks.join(', ')}`,
+          `Use ${requiredTech.languages.map(l => l.name).join(' or ')}`,
+          `Implement with ${requiredTech.frameworks.map(f => f.name).join(', ')}`,
           ...requiredTech.databases.length > 0
-            ? [`Use ${requiredTech.databases.join(' and/or ')} for data storage`]
+            ? [`Use ${requiredTech.databases.map(d => d.name).join(' and/or ')} for data storage`]
             : [],
         ],
         estimatedTime: baseProblem.estimatedTime,
         starterCode: {
           files: [
             {
-              fileName: this.getMainFileName(requiredTech.languages[0]),
+              fileName: this.getMainFileName(requiredTech.languages[0]?.name || 'typescript'),
               content: baseProblem.starterCode,
-              language: requiredTech.languages[0],
+              language: requiredTech.languages[0]?.name || 'typescript',
             },
           ],
         },
@@ -269,6 +279,49 @@ export class IncrementalQuestionGenerator {
       techCompliance: true, // Will be determined by TechStackValidator
       recommendedAction,
     };
+  }
+
+  /**
+   * Determine if we should generate another question
+   * Based on question count limits and performance thresholds
+   */
+  private shouldGenerateNextQuestion(
+    currentQuestionCount: number,
+    performanceHistory: PerformanceMetrics[]
+  ): { continue: boolean; reason?: string } {
+    // Configuration
+    const MIN_QUESTIONS = 2;
+    const MAX_QUESTIONS = 5;
+    const EXPERTISE_THRESHOLD = 0.7; // Need 70% on current question to advance
+
+    // Check max questions limit
+    if (currentQuestionCount >= MAX_QUESTIONS) {
+      return {
+        continue: false,
+        reason: `Maximum questions reached (${MAX_QUESTIONS}). Assessment complete.`,
+      };
+    }
+
+    // If we haven't reached minimum, continue
+    if (currentQuestionCount < MIN_QUESTIONS) {
+      return { continue: true };
+    }
+
+    // After minimum questions, check if candidate is performing well enough to continue
+    if (performanceHistory.length > 0) {
+      const lastPerformance = performanceHistory[performanceHistory.length - 1];
+
+      // If candidate is struggling (below threshold), stop generating more questions
+      if (lastPerformance.score < EXPERTISE_THRESHOLD) {
+        return {
+          continue: false,
+          reason: `Candidate performance (${(lastPerformance.score * 100).toFixed(0)}%) below expertise threshold (${(EXPERTISE_THRESHOLD * 100).toFixed(0)}%). Stopping at ${currentQuestionCount} questions.`,
+        };
+      }
+    }
+
+    // Continue if performing well and haven't hit max
+    return { continue: true };
   }
 
   /**
