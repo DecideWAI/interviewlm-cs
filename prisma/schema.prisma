@@ -166,6 +166,14 @@ model ProblemSeed {
   parentSeedId      String?              @map("parent_seed_id") // For cloned seeds (copy-on-write)
   isSystemSeed      Boolean              @default(false) @map("is_system_seed") // True for default system seeds
 
+  // NEW: Incremental question generation fields
+  seedType          String               @default("legacy") @map("seed_type") // "legacy" or "incremental"
+  domain            String?              // e.g., "e-commerce", "social-media", "fintech"
+  requiredTech      Json?                @map("required_tech") // { languages: [], frameworks: [], databases: [], tools: [] }
+  baseProblem       Json?                @map("base_problem") // { title, description, starterCode, estimatedTime }
+  progressionHints  Json?                @map("progression_hints") // { extensionTopics: [], simplificationTopics: [] }
+  seniorityExpectations Json?            @map("seniority_expectations") // { junior: [], mid: [], senior: [], staff: [], principal: [] }
+
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
   questions         AssessmentQuestion[]

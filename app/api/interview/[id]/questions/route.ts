@@ -4,6 +4,8 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import Anthropic from "@anthropic-ai/sdk";
 import { GeneratedProblem } from "@/types/problem";
+import { incrementalQuestionGenerator } from "@/lib/services/incremental-questions";
+import type { RequiredTechStack } from "@/types/seed";
 
 // Request validation schema for generating next question
 const generateQuestionSchema = z.object({
@@ -207,41 +209,106 @@ export async function POST(
       }
     }
 
-    // Generate next question using LLM
-    const nextQuestionOrder = candidate.generatedQuestions.length;
-    const difficulty = determineNextDifficulty(
-      candidate.generatedQuestions,
-      previousPerformance
-    );
+    // Check if assessment uses an incremental seed
+    const assessmentQuestionSeeds = candidate.assessment.questions;
+    let seedId: string | undefined;
+    let seed: any = null;
 
-    const generatedProblem = await generateProblemWithLLM(
-      candidate.assessment.role,
-      candidate.assessment.seniority,
-      difficulty,
-      candidate.generatedQuestions
-    );
+    if (assessmentQuestionSeeds.length > 0) {
+      seedId = assessmentQuestionSeeds[0].problemSeedId || undefined;
+      if (seedId) {
+        seed = await prisma.problemSeed.findUnique({
+          where: { id: seedId },
+        });
+      }
+    }
 
-    // Save generated question
-    const newQuestion = await prisma.generatedQuestion.create({
-      data: {
+    let newQuestion: any;
+
+    // Use incremental generator if seed is incremental type
+    if (seed && seed.seedType === 'incremental') {
+      console.log(`Using incremental question generator for seed ${seedId}`);
+
+      // Build performance metrics array
+      const performanceMetrics = previousPerformance
+        ? candidate.generatedQuestions
+            .filter((q: any) => q.status === 'COMPLETED')
+            .map((q: any) => ({
+              questionId: q.id,
+              score: q.score || 0,
+              timeSpent: q.completedAt && q.startedAt
+                ? (q.completedAt.getTime() - q.startedAt.getTime()) / (1000 * 60)
+                : 0,
+              testsPassedRatio: previousPerformance.testsPassedRatio || 0,
+            }))
+        : [];
+
+      // Add current performance if provided
+      if (previousPerformance) {
+        performanceMetrics.push({
+          questionId: previousPerformance.questionId,
+          score: previousPerformance.score / 100, // Convert to 0-1 scale
+          timeSpent: previousPerformance.timeSpent,
+          testsPassedRatio: previousPerformance.testsPassedRatio,
+        });
+      }
+
+      // Calculate time remaining (assume 60 min default if not specified)
+      const assessmentDuration = candidate.assessment.duration || 60; // minutes
+      const timeElapsed = candidate.startedAt
+        ? (Date.now() - candidate.startedAt.getTime()) / (1000 * 60)
+        : 0;
+      const timeRemaining = Math.max(0, (assessmentDuration - timeElapsed) * 60); // seconds
+
+      // Generate incremental question
+      newQuestion = await incrementalQuestionGenerator.generateNextQuestion({
         candidateId: id,
-        order: nextQuestionOrder,
-        title: generatedProblem.title,
-        description: generatedProblem.description,
+        seedId: seedId!,
+        seniority: candidate.assessment.seniority.toLowerCase() as any,
+        previousQuestions: candidate.generatedQuestions,
+        previousPerformance: performanceMetrics,
+        timeRemaining,
+      });
+    } else {
+      // Use legacy LLM generation
+      console.log('Using legacy question generator');
+
+      const nextQuestionOrder = candidate.generatedQuestions.length;
+      const difficulty = determineNextDifficulty(
+        candidate.generatedQuestions,
+        previousPerformance
+      );
+
+      const generatedProblem = await generateProblemWithLLM(
+        candidate.assessment.role,
+        candidate.assessment.seniority,
         difficulty,
-        language: generatedProblem.language,
-        requirements: generatedProblem.requirements,
-        estimatedTime: generatedProblem.estimatedTime,
-        starterCode: generatedProblem.starterCode as any,
-        testCases: generatedProblem.testCases as any,
-        status: "PENDING",
-      },
-    });
+        candidate.generatedQuestions
+      );
+
+      // Save generated question
+      newQuestion = await prisma.generatedQuestion.create({
+        data: {
+          candidateId: id,
+          order: nextQuestionOrder,
+          title: generatedProblem.title,
+          description: generatedProblem.description,
+          difficulty,
+          language: generatedProblem.language,
+          requirements: generatedProblem.requirements,
+          estimatedTime: generatedProblem.estimatedTime,
+          starterCode: generatedProblem.starterCode as any,
+          testCases: generatedProblem.testCases as any,
+          status: "PENDING",
+        },
+      });
+    }
 
     return NextResponse.json(
       {
         question: formatQuestion(newQuestion),
-        questionNumber: nextQuestionOrder + 1,
+        questionNumber: newQuestion.order,
+        isIncremental: seed?.seedType === 'incremental',
       },
       { status: 200 }
     );
