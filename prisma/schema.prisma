@@ -309,24 +309,28 @@ model TestResult {
 }
 
 model GeneratedQuestion {
-  id             String         @id @default(cuid())
-  candidateId    String         @map("candidate_id")
-  questionSeedId String?        @map("question_seed_id")
-  order          Int
-  title          String
-  description    String
-  difficulty     Difficulty
-  language       String         @default("typescript")
-  requirements   String[]       @default([])
-  estimatedTime  Int            @map("estimated_time")
-  starterCode    Json           @map("starter_code")
-  testCases      Json           @map("test_cases")
-  status         QuestionStatus @default(PENDING)
-  startedAt      DateTime?      @map("started_at")
-  completedAt    DateTime?      @map("completed_at")
-  score          Float?
-  createdAt      DateTime       @default(now()) @map("created_at")
-  candidate      Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id                    String         @id @default(cuid())
+  candidateId           String         @map("candidate_id")
+  questionSeedId        String?        @map("question_seed_id")
+  order                 Int
+  title                 String
+  description           String
+  difficulty            Difficulty
+  language              String         @default("typescript")
+  requirements          String[]       @default([])
+  estimatedTime         Int            @map("estimated_time")
+  starterCode           Json           @map("starter_code")
+  testCases             Json           @map("test_cases")
+  status                QuestionStatus @default(PENDING)
+  startedAt             DateTime?      @map("started_at")
+  completedAt           DateTime?      @map("completed_at")
+  score                 Float?
+  createdAt             DateTime       @default(now()) @map("created_at")
+
+  // NEW: LLM difficulty assessment for fair scoring
+  difficultyAssessment  Json?          @map("difficulty_assessment")
+
+  candidate             Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@index([candidateId, order])
   @@map("generated_questions")

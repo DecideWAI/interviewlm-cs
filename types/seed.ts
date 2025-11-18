@@ -66,6 +66,46 @@ export interface ProgressiveScoringConfig {
 }
 
 /**
+ * LLM-generated difficulty assessment metadata
+ * Ensures consistent scoring across dynamically generated questions
+ */
+export interface DifficultyAssessment {
+  difficultyScore: number; // 1-10 scale (1=trivial, 10=extremely complex)
+  complexityFactors: {
+    linesOfCodeExpected: number; // Estimated lines of code
+    conceptsRequired: string[]; // Key concepts tested
+    techStackComplexity: number; // 1-5, based on number and complexity of tech
+    timeEstimate: number; // Minutes expected
+    prerequisiteKnowledge: string[]; // What candidate should know
+  };
+  justification: string; // LLM explains why this difficulty rating
+  relativeToBaseline: number; // Comparison to Q1 baseline (0.5=half as hard, 2.0=twice as hard)
+}
+
+/**
+ * Enhanced question generation response with difficulty metadata
+ */
+export interface QuestionGenerationResponse {
+  title: string;
+  description: string;
+  requirements: string[];
+  estimatedTime: number;
+  starterCode: Array<{
+    fileName: string;
+    content: string;
+    language: string;
+  }>;
+  testCases: Array<{
+    name: string;
+    input: any;
+    expectedOutput: any;
+    hidden: boolean;
+    description: string;
+  }>;
+  difficultyAssessment: DifficultyAssessment;
+}
+
+/**
  * Progression strategy for adaptive question generation
  */
 export interface ProgressionHints {
