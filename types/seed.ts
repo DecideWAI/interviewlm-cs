@@ -10,23 +10,59 @@ export type SeedStatus = 'active' | 'draft' | 'archived';
 export type SeedType = 'legacy' | 'incremental';
 
 /**
+ * Tech priority levels for enforcement
+ * - critical: MUST use or assessment fails
+ * - required: Should use, flagged in evaluation but not blocking
+ * - recommended: Optional, bonus points if used
+ */
+export type TechPriority = 'critical' | 'required' | 'recommended';
+
+/**
+ * Technology specification with priority
+ */
+export interface TechSpec {
+  name: string;
+  priority: TechPriority;
+  version?: string; // e.g., ">=3.10", "^18.0.0"
+}
+
+/**
  * Required technology stack for incremental assessments
  */
 export interface RequiredTechStack {
-  languages: string[]; // e.g., ["python", "typescript"]
-  frameworks: string[]; // e.g., ["fastapi", "react"]
-  databases: string[]; // e.g., ["mongodb", "redis", "postgresql"]
-  tools?: string[]; // e.g., ["docker", "pytest"]
+  languages: TechSpec[]; // e.g., [{ name: "python", priority: "critical", version: ">=3.10" }]
+  frameworks: TechSpec[]; // e.g., [{ name: "fastapi", priority: "critical" }]
+  databases: TechSpec[]; // e.g., [{ name: "mongodb", priority: "required" }]
+  tools?: TechSpec[]; // e.g., [{ name: "docker", priority: "recommended" }]
+}
+
+/**
+ * Question count configuration for progressive difficulty
+ */
+export interface QuestionCountConfig {
+  minQuestions: number; // Minimum questions (default: 2)
+  maxQuestions: number; // Maximum questions (default: 5)
+  targetAverage: number; // Target average (default: 3)
 }
 
 /**
  * Base problem that starts the incremental assessment
+ * Should be substantial (20-30 minutes)
  */
 export interface BaseProblem {
   title: string;
   description: string;
   starterCode: string;
-  estimatedTime: number; // minutes
+  estimatedTime: number; // minutes (recommended: 20-30 for substantial problems)
+}
+
+/**
+ * Progressive scoring configuration
+ * Later questions weighted more heavily to reward expertise growth
+ */
+export interface ProgressiveScoringConfig {
+  questionWeights: number[]; // e.g., [1.0, 1.2, 1.5, 2.0, 2.5] - multipliers per question
+  expertiseThreshold: number; // Score needed to advance (0-1, default: 0.7)
 }
 
 /**

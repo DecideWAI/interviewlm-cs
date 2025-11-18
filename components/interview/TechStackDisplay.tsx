@@ -204,10 +204,10 @@ export function IncrementalTechStackDisplay({
 
   // Flatten all technologies
   const allTech = [
-    ...requiredTech.languages.map((t) => ({ name: t, category: 'Language' })),
-    ...requiredTech.frameworks.map((t) => ({ name: t, category: 'Framework' })),
-    ...requiredTech.databases.map((t) => ({ name: t, category: 'Database' })),
-    ...(requiredTech.tools || []).map((t) => ({ name: t, category: 'Tool' })),
+    ...requiredTech.languages.map((t) => ({ name: t.name, priority: t.priority, category: 'Language' })),
+    ...requiredTech.frameworks.map((t) => ({ name: t.name, priority: t.priority, category: 'Framework' })),
+    ...requiredTech.databases.map((t) => ({ name: t.name, priority: t.priority, category: 'Database' })),
+    ...(requiredTech.tools || []).map((t) => ({ name: t.name, priority: t.priority, category: 'Tool' })),
   ];
 
   // Determine overall status
@@ -321,9 +321,9 @@ export function IncrementalTechStackDisplay({
  */
 export function TechStackBadges({ requiredTech }: { requiredTech: RequiredTechStack }) {
   const allTech = [
-    ...requiredTech.languages,
-    ...requiredTech.frameworks,
-    ...requiredTech.databases,
+    ...requiredTech.languages.map(t => t.name),
+    ...requiredTech.frameworks.map(t => t.name),
+    ...requiredTech.databases.map(t => t.name),
   ];
 
   return (

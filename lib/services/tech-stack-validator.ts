@@ -88,58 +88,63 @@ export class TechStackValidator {
     const violations: TechViolation[] = [];
 
     // Validate languages
-    const languageCompliant = requiredTech.languages.some((lang) =>
-      detectedTech.languages.includes(lang.toLowerCase())
-    );
-    if (!languageCompliant) {
-      violations.push({
-        type: 'language',
-        expected: requiredTech.languages.join(' or '),
-        detected: false,
-        severity: 'error',
-        message: `Expected to use ${requiredTech.languages.join(' or ')}, but detected: ${detectedTech.languages.join(', ') || 'none'}`,
-      });
+    for (const langSpec of requiredTech.languages) {
+      const detected = detectedTech.languages.includes(langSpec.name.toLowerCase());
+      if (!detected) {
+        // Only critical tech violations are errors, others are warnings
+        const severity = langSpec.priority === 'critical' ? 'error' : 'warning';
+        violations.push({
+          type: 'language',
+          expected: langSpec.name,
+          detected: false,
+          severity,
+          message: `${langSpec.priority === 'critical' ? 'CRITICAL' : 'Expected'}: Use ${langSpec.name}${langSpec.version ? ` ${langSpec.version}` : ''}`,
+        });
+      }
     }
 
     // Validate frameworks
-    for (const framework of requiredTech.frameworks) {
-      const detected = this.detectFramework(codeSnapshots, framework);
+    for (const frameworkSpec of requiredTech.frameworks) {
+      const detected = this.detectFramework(codeSnapshots, frameworkSpec.name);
       if (!detected) {
+        const severity = frameworkSpec.priority === 'critical' ? 'error' : 'warning';
         violations.push({
           type: 'framework',
-          expected: framework,
+          expected: frameworkSpec.name,
           detected: false,
-          severity: 'warning',
-          message: `Expected to use ${framework} framework`,
+          severity,
+          message: `${frameworkSpec.priority === 'critical' ? 'CRITICAL' : 'Expected'}: Use ${frameworkSpec.name} framework`,
         });
       }
     }
 
     // Validate databases
-    for (const database of requiredTech.databases) {
-      const detected = this.detectDatabase(codeSnapshots, database);
+    for (const databaseSpec of requiredTech.databases) {
+      const detected = this.detectDatabase(codeSnapshots, databaseSpec.name);
       if (!detected) {
+        const severity = databaseSpec.priority === 'critical' ? 'error' : 'warning';
         violations.push({
           type: 'database',
-          expected: database,
+          expected: databaseSpec.name,
           detected: false,
-          severity: 'warning',
-          message: `Expected to use ${database} database`,
+          severity,
+          message: `${databaseSpec.priority === 'critical' ? 'CRITICAL' : 'Expected'}: Use ${databaseSpec.name} database`,
         });
       }
     }
 
-    // Validate tools (optional, less strict)
+    // Validate tools (optional)
     if (requiredTech.tools) {
-      for (const tool of requiredTech.tools) {
-        const detected = this.detectTool(codeSnapshots, tool);
+      for (const toolSpec of requiredTech.tools) {
+        const detected = this.detectTool(codeSnapshots, toolSpec.name);
         if (!detected) {
+          const severity = toolSpec.priority === 'critical' ? 'error' : 'warning';
           violations.push({
             type: 'tool',
-            expected: tool,
+            expected: toolSpec.name,
             detected: false,
-            severity: 'warning',
-            message: `Recommended to use ${tool}`,
+            severity,
+            message: `${toolSpec.priority === 'recommended' ? 'Recommended' : 'Expected'}: Use ${toolSpec.name}`,
           });
         }
       }
