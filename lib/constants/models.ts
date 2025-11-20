@@ -26,37 +26,37 @@ export interface ModelConfig {
  * Pricing as of November 2025
  */
 export const CLAUDE_MODELS: Record<ClaudeModel, ModelConfig> = {
-  'claude-sonnet-4.5': {
-    id: 'claude-sonnet-4.5',
+  'claude-sonnet-4-5-20250929': {
+    id: 'claude-sonnet-4-5-20250929',
     name: 'Claude Sonnet 4.5',
     inputPricePerMToken: 3.0,
     outputPricePerMToken: 15.0,
     maxTokens: 8192,
     contextWindow: 200000,
-    description: 'Balanced performance and cost',
+    description: 'Our smartest model for complex agents and coding',
     useCase: 'Coding Agent, Evaluation Agent',
   },
 
-  'claude-opus-4': {
-    id: 'claude-opus-4',
-    name: 'Claude Opus 4',
+  'claude-haiku-4-5-20251001': {
+    id: 'claude-haiku-4-5-20251001',
+    name: 'Claude Haiku 4.5',
+    inputPricePerMToken: 1.0,
+    outputPricePerMToken: 5.0,
+    maxTokens: 8192,
+    contextWindow: 200000,
+    description: 'Our fastest model with near-frontier intelligence',
+    useCase: 'Coding Agent (fast responses), Interview Agent',
+  },
+
+  'claude-opus-4-1-20250805': {
+    id: 'claude-opus-4-1-20250805',
+    name: 'Claude Opus 4.1',
     inputPricePerMToken: 15.0,
     outputPricePerMToken: 75.0,
     maxTokens: 8192,
     contextWindow: 200000,
-    description: 'Highest intelligence, most expensive',
+    description: 'Exceptional model for specialized reasoning tasks',
     useCase: 'Complex orchestration (rarely needed for InterviewLM)',
-  },
-
-  'claude-haiku-4.5': {
-    id: 'claude-haiku-4.5',
-    name: 'Claude Haiku 4.5',
-    inputPricePerMToken: 0.8,
-    outputPricePerMToken: 4.0,
-    maxTokens: 8192,
-    contextWindow: 200000,
-    description: 'Fast and cost-effective',
-    useCase: 'Interview Agent (simple monitoring tasks)',
   },
 };
 
@@ -64,9 +64,9 @@ export const CLAUDE_MODELS: Record<ClaudeModel, ModelConfig> = {
  * Recommended models for each agent type
  */
 export const AGENT_MODEL_RECOMMENDATIONS = {
-  codingAgent: 'claude-sonnet-4.5' as ClaudeModel,
-  interviewAgent: 'claude-haiku-4.5' as ClaudeModel,
-  evaluationAgent: 'claude-sonnet-4.5' as ClaudeModel,
+  codingAgent: 'claude-haiku-4-5-20251001' as ClaudeModel,
+  interviewAgent: 'claude-haiku-4-5-20251001' as ClaudeModel,
+  evaluationAgent: 'claude-sonnet-4-5-20250929' as ClaudeModel,
 } as const;
 
 /**

@@ -10,7 +10,7 @@ import { AssessmentConfig } from "@/types/assessment";
 export default function NewAssessmentPage() {
   const router = useRouter();
   const [isSaving, setIsSaving] = useState(false);
-  const [userTier, setUserTier] = useState<"free" | "small" | "medium" | "large" | "enterprise">("medium");
+  const [userTier, setUserTier] = useState<"payg" | "small" | "medium" | "large" | "enterprise">("medium");
   const [isLoadingTier, setIsLoadingTier] = useState(true);
 
   // Fetch user's organization plan to determine tier
@@ -23,8 +23,8 @@ export default function NewAssessmentPage() {
           const plan = data.organization?.plan || "GROWTH";
 
           // Map organization plan to assessment tier
-          const tierMap: Record<string, "free" | "small" | "medium" | "large" | "enterprise"> = {
-            FREE: "free",
+          const tierMap: Record<string, "payg" | "small" | "medium" | "large" | "enterprise"> = {
+            FREE: "payg",
             STARTUP: "small",
             GROWTH: "medium",
             ENTERPRISE: "large",

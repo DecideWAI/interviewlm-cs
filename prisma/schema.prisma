@@ -68,20 +68,27 @@ model VerificationToken {
 }
 
 model Organization {
-  id                 String               @id @default(cuid())
-  name               String
-  slug               String               @unique
-  description        String?
-  image              String?
-  plan               Plan                 @default(FREE)
-  createdAt          DateTime             @default(now()) @map("created_at")
-  updatedAt          DateTime             @updatedAt @map("updated_at")
-  credits            Int                  @default(0)
-  assessments        Assessment[]
-  candidates         Candidate[]
-  creditTransactions CreditTransaction[]
-  members            OrganizationMember[]
-  problemSeeds       ProblemSeed[]
+  id                   String               @id @default(cuid())
+  name                 String
+  slug                 String               @unique
+  description          String?
+  image                String?
+  plan                 Plan                 @default(FREE)
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  credits              Int                  @default(0)
+
+  // Subscription fields
+  subscriptionStatus   String?              @map("subscription_status")
+  paddleSubscriptionId String?              @unique @map("paddle_subscription_id")
+  billingInterval      String?              @map("billing_interval")
+  subscriptionEndsAt   DateTime?            @map("subscription_ends_at")
+
+  assessments          Assessment[]
+  candidates           Candidate[]
+  creditTransactions   CreditTransaction[]
+  members              OrganizationMember[]
+  problemSeeds         ProblemSeed[]
 
   @@map("organizations")
 }
@@ -165,6 +172,14 @@ model ProblemSeed {
   avgCandidateScore Float?               @map("avg_candidate_score") // Average candidate score (0-100)
   parentSeedId      String?              @map("parent_seed_id") // For cloned seeds (copy-on-write)
   isSystemSeed      Boolean              @default(false) @map("is_system_seed") // True for default system seeds
+
+  // NEW: Incremental question generation fields
+  seedType          String               @default("legacy") @map("seed_type") // "legacy" or "incremental"
+  domain            String?              // e.g., "e-commerce", "social-media", "fintech"
+  requiredTech      Json?                @map("required_tech") // { languages: [], frameworks: [], databases: [], tools: [] }
+  baseProblem       Json?                @map("base_problem") // { title, description, starterCode, estimatedTime }
+  progressionHints  Json?                @map("progression_hints") // { extensionTopics: [], simplificationTopics: [] }
+  seniorityExpectations Json?            @map("seniority_expectations") // { junior: [], mid: [], senior: [], staff: [], principal: [] }
 
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
@@ -301,24 +316,28 @@ model TestResult {
 }
 
 model GeneratedQuestion {
-  id             String         @id @default(cuid())
-  candidateId    String         @map("candidate_id")
-  questionSeedId String?        @map("question_seed_id")
-  order          Int
-  title          String
-  description    String
-  difficulty     Difficulty
-  language       String         @default("typescript")
-  requirements   String[]       @default([])
-  estimatedTime  Int            @map("estimated_time")
-  starterCode    Json           @map("starter_code")
-  testCases      Json           @map("test_cases")
-  status         QuestionStatus @default(PENDING)
-  startedAt      DateTime?      @map("started_at")
-  completedAt    DateTime?      @map("completed_at")
-  score          Float?
-  createdAt      DateTime       @default(now()) @map("created_at")
-  candidate      Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  id                    String         @id @default(cuid())
+  candidateId           String         @map("candidate_id")
+  questionSeedId        String?        @map("question_seed_id")
+  order                 Int
+  title                 String
+  description           String
+  difficulty            Difficulty
+  language              String         @default("typescript")
+  requirements          String[]       @default([])
+  estimatedTime         Int            @map("estimated_time")
+  starterCode           Json           @map("starter_code")
+  testCases             Json           @map("test_cases")
+  status                QuestionStatus @default(PENDING)
+  startedAt             DateTime?      @map("started_at")
+  completedAt           DateTime?      @map("completed_at")
+  score                 Float?
+  createdAt             DateTime       @default(now()) @map("created_at")
+
+  // NEW: LLM difficulty assessment for fair scoring
+  difficultyAssessment  Json?          @map("difficulty_assessment")
+
+  candidate             Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@index([candidateId, order])
   @@map("generated_questions")
