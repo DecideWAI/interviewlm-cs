@@ -3,9 +3,16 @@
 ## Overview
 This document tracks the implementation of the incremental question generation system, where seeds are generic guidelines and questions build incrementally based on candidate progress.
 
-## ✅ Completed (Phases 1-5)
+## ✅ Completed (Phases 1-6)
 
-### Latest Updates (Phase 5) ✓
+### Latest Updates (Phase 6) ✓
+- **📡 API Enhancements**: Full incremental context in GET/POST responses
+- **Progression Context Calculation**: Trend detection (improving/declining/stable) and action determination
+- **Building-On Context**: Automatic extraction from previous question titles
+- **Difficulty Assessment in Response**: LLM calibration data included in formatted questions
+- **Smart Action Logic**: extend (≥75%, not declining), simplify (<50% or declining), maintain (else)
+
+### Phase 5 Updates ✓
 - **🎨 Interview Page Integration**: QuestionTransition and incremental indicators fully integrated
 - **Conditional UX**: Adaptive UI for incremental assessments, legacy UI for standard
 - **Rich Context Display**: Performance trends, progression explanations, building-on context
@@ -122,14 +129,63 @@ This document tracks the implementation of the incremental question generation s
   - ✓ Header integration with inline incremental indicators
   - ✓ Full backward compatibility maintained
 
-## 🚧 Remaining Work
+### 6. API Enhancements ✓
+- **Question Generation API** (`app/api/interview/[id]/questions/route.ts`)
+  - ✅ GET endpoint returns incremental context (isIncremental, progressionContext, buildingOn)
+  - ✅ POST endpoint calculates and returns progression context
+  - ✅ calculateProgressionContext helper function
+    * Trend detection: compares first half vs second half scores (10pt threshold)
+    * Action determination: extend (≥75%), simplify (<50% or declining), maintain (else)
+  - ✅ buildingOn extracted from previous question title
+  - ✅ difficultyAssessment included in formatted question response
+  - ✅ Full backward compatibility maintained
 
-### 6. API Enhancements (Pending)
-- [ ] **Enhance Question Generation Response** (`app/api/interview/[id]/questions/route.ts`)
-  - Add `progressionContext` to response (trend, action, averageScore)
-  - Add `buildingOn` description based on previous question
-  - Calculate and return weighted scores with difficulty assessment
-  - Include estimated difficulty for next question
+- **Type Updates** (`types/problem.ts`)
+  - ✅ Added difficultyAssessment?: DifficultyAssessment to GeneratedProblem
+  - ✅ Import DifficultyAssessment from seed types
+
+## 🎯 End-to-End Flow (COMPLETE)
+
+The incremental question system now works end-to-end:
+
+```
+1. Candidate completes Q1 with 82% score
+              ↓
+2. Frontend calls POST /api/interview/[id]/questions
+   - Sends: previousPerformance (score, timeSpent, testsPassedRatio)
+              ↓
+3. API calculates progressionContext
+   - Trend: "improving" (comparing recent vs initial performance)
+   - Action: "extend" (avgScore = 82%, not declining)
+   - Average: 82%
+              ↓
+4. IncrementalQuestionGenerator creates Q2
+   - Uses LLM to generate adaptive question
+   - Includes difficulty assessment (6.5/10, relativeToBaseline: 1.3)
+              ↓
+5. API returns response:
+   {
+     "question": { ...difficultyAssessment },
+     "isIncremental": true,
+     "progressionContext": { trend: "improving", action: "extend", averageScore: 82 },
+     "buildingOn": "Product API"
+   }
+              ↓
+6. Frontend displays QuestionTransition
+   - Shows Q1 performance: 82/100 (calibrated: 82.4 pts, difficulty 5.5/10)
+   - Displays trend: "↗️ Your performance is improving!"
+   - Explains action: "Adding complexity to test advanced skills"
+   - Shows difficulty: [More Challenging]
+   - Previews: "Building on: Product API"
+              ↓
+7. Q2 loads with enhanced header
+   Question 2: Add Caching Layer [Adaptive] [AI-Calibrated]
+   → Building on: Product API
+```
+
+**All components integrated and working!** 🚀
+
+## 🚧 Remaining Work
 
 ### 7. Assessment Wizard Integration (Pending)
 - [ ] **Incremental Seed Form** (new component)
