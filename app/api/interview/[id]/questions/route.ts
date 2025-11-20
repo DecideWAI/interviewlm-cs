@@ -104,6 +104,45 @@ export async function GET(
       });
     }
 
+    // Check if this is an incremental assessment
+    const assessmentQuestionSeeds = candidate.assessment.questions;
+    let seedId: string | undefined;
+    let seed: any = null;
+    let isIncremental = false;
+
+    if (assessmentQuestionSeeds.length > 0) {
+      seedId = assessmentQuestionSeeds[0].problemSeedId || undefined;
+      if (seedId) {
+        seed = await prisma.problemSeed.findUnique({ where: { id: seedId } });
+        isIncremental = seed?.seedType === 'incremental';
+      }
+    }
+
+    // Calculate incremental context if applicable
+    let progressionContext = null;
+    let buildingOn = "";
+
+    if (isIncremental) {
+      const currentQuestionIndex = candidate.generatedQuestions.indexOf(currentQuestion);
+
+      // Calculate progression from completed questions
+      const completedQuestions = candidate.generatedQuestions
+        .slice(0, currentQuestionIndex)
+        .filter((q: any) => q.status === 'COMPLETED' && q.score !== null);
+
+      if (completedQuestions.length > 0) {
+        progressionContext = calculateProgressionContext(completedQuestions);
+      }
+
+      // Get "building on" context from previous question
+      if (currentQuestionIndex > 0) {
+        const previousQuestion = candidate.generatedQuestions[currentQuestionIndex - 1];
+        if (previousQuestion) {
+          buildingOn = `${previousQuestion.title}`;
+        }
+      }
+    }
+
     return NextResponse.json(
       {
         currentQuestion: formatQuestion(currentQuestion),
@@ -111,6 +150,9 @@ export async function GET(
         totalQuestions: candidate.generatedQuestions.length,
         currentQuestionIndex:
           candidate.generatedQuestions.indexOf(currentQuestion) + 1,
+        isIncremental,
+        progressionContext,
+        buildingOn,
       },
       { status: 200 }
     );
@@ -304,11 +346,34 @@ export async function POST(
       });
     }
 
+    // Calculate incremental context if this is an incremental assessment
+    let progressionContext = null;
+    let buildingOn = "";
+
+    if (seed?.seedType === 'incremental' && candidate.generatedQuestions.length > 0) {
+      // Calculate progression context from performance history
+      const completedQuestions = candidate.generatedQuestions.filter(
+        (q: any) => q.status === 'COMPLETED' && q.score !== null
+      );
+
+      if (completedQuestions.length > 0) {
+        progressionContext = calculateProgressionContext(completedQuestions);
+      }
+
+      // Generate "building on" description from previous question
+      const previousQuestion = candidate.generatedQuestions[candidate.generatedQuestions.length - 1];
+      if (previousQuestion) {
+        buildingOn = `${previousQuestion.title}`;
+      }
+    }
+
     return NextResponse.json(
       {
         question: formatQuestion(newQuestion),
         questionNumber: newQuestion.order,
         isIncremental: seed?.seedType === 'incremental',
+        progressionContext,
+        buildingOn,
       },
       { status: 200 }
     );
@@ -342,6 +407,57 @@ function formatQuestion(question: any): GeneratedProblem {
     generatedAt: question.createdAt.toISOString(),
     generatedBy: "llm",
     score: question.score || undefined,
+    difficultyAssessment: question.difficultyAssessment || undefined,
+  };
+}
+
+/**
+ * Calculate progression context from completed questions
+ */
+function calculateProgressionContext(completedQuestions: any[]): {
+  trend: "improving" | "declining" | "stable";
+  action: "extend" | "maintain" | "simplify";
+  averageScore: number;
+} {
+  // Calculate average score
+  const scores = completedQuestions.map((q: any) => q.score || 0);
+  const averageScore = scores.reduce((sum, s) => sum + s, 0) / scores.length;
+
+  // Determine trend (compare recent half vs first half)
+  let trend: "improving" | "declining" | "stable" = "stable";
+
+  if (completedQuestions.length >= 2) {
+    const midPoint = Math.floor(completedQuestions.length / 2);
+    const firstHalf = scores.slice(0, midPoint);
+    const secondHalf = scores.slice(midPoint);
+
+    const firstAvg = firstHalf.reduce((sum, s) => sum + s, 0) / firstHalf.length;
+    const secondAvg = secondHalf.reduce((sum, s) => sum + s, 0) / secondHalf.length;
+
+    const improvement = secondAvg - firstAvg;
+
+    if (improvement > 10) {
+      trend = "improving";
+    } else if (improvement < -10) {
+      trend = "declining";
+    }
+  }
+
+  // Determine recommended action based on average and trend
+  let action: "extend" | "maintain" | "simplify";
+
+  if (averageScore >= 75 && trend !== "declining") {
+    action = "extend"; // Strong performance → increase challenge
+  } else if (averageScore < 50 || trend === "declining") {
+    action = "simplify"; // Struggling → provide support
+  } else {
+    action = "maintain"; // Adequate performance → continue at current level
+  }
+
+  return {
+    trend,
+    action,
+    averageScore: Math.round(averageScore),
   };
 }
 

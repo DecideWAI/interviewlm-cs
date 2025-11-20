@@ -2,6 +2,8 @@
  * Generated problem types for problem seeds
  */
 
+import type { DifficultyAssessment } from './seed';
+
 export type DifficultyLevel = "easy" | "medium" | "hard";
 
 export interface TestCase {
@@ -30,4 +32,5 @@ export interface GeneratedProblem {
   generatedAt: string;
   generatedBy: string; // "llm" | user ID
   score?: number; // If used in assessment and scored
+  difficultyAssessment?: DifficultyAssessment; // LLM-generated difficulty calibration
 }
