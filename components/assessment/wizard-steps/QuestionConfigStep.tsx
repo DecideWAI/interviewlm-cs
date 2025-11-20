@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Plus, Trash2, Sparkles, Lock } from "lucide-react";
+import { FileText, Plus, Trash2, Sparkles, Lock, Zap } from "lucide-react";
+import { IncrementalSeedForm } from "../IncrementalSeedForm";
 
 interface QuestionConfigStepProps {
   config: Partial<AssessmentConfig>;
@@ -75,18 +76,29 @@ export function QuestionConfigStep({
     <div className="space-y-6">
       <Tabs
         defaultValue="template"
-        value={config.useTemplate ? "template" : "custom"}
-        onValueChange={(value) => onUpdate({ useTemplate: value === "template" })}
+        value={config.useTemplate ? "template" : config.useIncremental ? "incremental" : "custom"}
+        onValueChange={(value) => onUpdate({
+          useTemplate: value === "template",
+          useIncremental: value === "incremental"
+        })}
       >
-        <TabsList className="w-full">
-          <TabsTrigger value="template" className="flex-1">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="template">
             <FileText className="h-4 w-4 mr-2" />
             Use Template
             <Badge variant="success" className="ml-2 text-xs">
               Recommended
             </Badge>
           </TabsTrigger>
-          <TabsTrigger value="custom" className="flex-1" disabled={!canAddCustomQuestions}>
+          <TabsTrigger value="incremental" disabled={!canAddCustomQuestions}>
+            <Zap className="h-4 w-4 mr-2" />
+            Adaptive Assessment
+            <Badge variant="primary" className="ml-2 text-xs">
+              AI-Powered
+            </Badge>
+            {!canAddCustomQuestions && <Lock className="h-3 w-3 ml-2" />}
+          </TabsTrigger>
+          <TabsTrigger value="custom" disabled={!canAddCustomQuestions}>
             <Sparkles className="h-4 w-4 mr-2" />
             Custom Questions
             {!canAddCustomQuestions && <Lock className="h-3 w-3 ml-2" />}
@@ -157,6 +169,50 @@ export function QuestionConfigStep({
                 and evaluation criteria optimized for the selected role and level.
               </p>
             </div>
+          )}
+        </TabsContent>
+
+        {/* Adaptive Assessment */}
+        <TabsContent value="incremental" className="space-y-4 mt-4">
+          {!canAddCustomQuestions ? (
+            <div className="p-8 text-center border border-warning/20 rounded-lg bg-warning/5">
+              <Lock className="h-12 w-12 mx-auto mb-3 text-warning" />
+              <h4 className="font-medium text-text-primary mb-2">
+                Adaptive Assessments Require Upgrade
+              </h4>
+              <p className="text-sm text-text-secondary mb-4">
+                AI-powered adaptive assessments are available in Medium Pack and higher tiers.
+              </p>
+              <Button variant="primary" size="sm">
+                Upgrade to Medium Pack
+              </Button>
+            </div>
+          ) : (
+            <>
+              {errors.incrementalConfig && (
+                <p className="text-sm text-error">{errors.incrementalConfig}</p>
+              )}
+
+              <IncrementalSeedForm
+                config={config.incrementalConfig || {}}
+                onUpdate={(updates) => onUpdate({ incrementalConfig: updates })}
+                errors={errors}
+              />
+
+              <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+                <h4 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
+                  <Zap className="h-4 w-4 text-primary" />
+                  How Adaptive Assessments Work
+                </h4>
+                <ul className="space-y-1 text-sm text-text-secondary">
+                  <li>• Start with a base problem to establish baseline performance</li>
+                  <li>• AI analyzes candidate progress and adapts difficulty dynamically</li>
+                  <li>• Questions build incrementally on previous work</li>
+                  <li>• 2-5 questions generated based on 70% expertise threshold</li>
+                  <li>• Fair scoring with LLM-based difficulty calibration</li>
+                </ul>
+              </div>
+            </>
           )}
         </TabsContent>
 
