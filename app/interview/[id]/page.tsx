@@ -475,7 +475,7 @@ export default function InterviewPage() {
         body: JSON.stringify({
           code,
           language: sessionData.question.language,
-          testCases: sessionData.question.testCases,
+          questionId: sessionData.question.id, // Critical fix: add questionId
           fileName: selectedFile?.name,
         }),
       });

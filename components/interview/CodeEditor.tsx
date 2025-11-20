@@ -272,12 +272,19 @@ export function CodeEditor({
             {testResult.error || testResult.failed > 0 ? (
               <>
                 <XCircle className="h-4 w-4 text-error" aria-hidden="true" />
-                <span className="font-semibold text-error">Tests Failed</span>
+                <span className="font-semibold text-error">
+                  {testResult.error ? "Error Running Tests" : `${testResult.failed} Test${testResult.failed !== 1 ? 's' : ''} Failed`}
+                </span>
+              </>
+            ) : testResult.total === 0 ? (
+              <>
+                <XCircle className="h-4 w-4 text-warning" aria-hidden="true" />
+                <span className="font-semibold text-warning">No Tests Run</span>
               </>
             ) : (
               <>
                 <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
-                <span className="font-semibold text-success">All Tests Passed</span>
+                <span className="font-semibold text-success">All Tests Passed!</span>
               </>
             )}
             <span className="text-text-tertiary ml-auto">
@@ -309,35 +316,35 @@ export function CodeEditor({
             value={value}
             height="auto"
             theme={vscodeDark}
-          extensions={extensions}
-          onChange={handleChange}
-          readOnly={readOnly}
-          basicSetup={{
-            lineNumbers: true,
-            highlightActiveLineGutter: true,
-            highlightSpecialChars: true,
-            history: true,
-            foldGutter: true,
-            drawSelection: true,
-            dropCursor: true,
-            allowMultipleSelections: true,
-            indentOnInput: true,
-            syntaxHighlighting: true,
-            bracketMatching: true,
-            closeBrackets: true,
-            autocompletion: true,
-            rectangularSelection: true,
-            crosshairCursor: true,
-            highlightActiveLine: true,
-            highlightSelectionMatches: true,
-            closeBracketsKeymap: true,
-            searchKeymap: true,
-            foldKeymap: true,
-            completionKeymap: true,
-            lintKeymap: true,
-          }}
-          className="text-sm"
-        />
+            extensions={extensions}
+            onChange={handleChange}
+            readOnly={readOnly}
+            basicSetup={{
+              lineNumbers: true,
+              highlightActiveLineGutter: true,
+              highlightSpecialChars: true,
+              history: true,
+              foldGutter: true,
+              drawSelection: true,
+              dropCursor: true,
+              allowMultipleSelections: true,
+              indentOnInput: true,
+              syntaxHighlighting: true,
+              bracketMatching: true,
+              closeBrackets: true,
+              autocompletion: true,
+              rectangularSelection: true,
+              crosshairCursor: true,
+              highlightActiveLine: true,
+              highlightSelectionMatches: true,
+              closeBracketsKeymap: true,
+              searchKeymap: true,
+              foldKeymap: true,
+              completionKeymap: true,
+              lintKeymap: true,
+            }}
+            className="text-sm"
+          />
         </div>
       </div>
     </div>

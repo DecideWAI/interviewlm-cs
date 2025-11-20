@@ -3,6 +3,12 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { modalService as modal, sessionService as sessions } from "@/lib/services";
+import Anthropic from "@anthropic-ai/sdk";
+
+// Initialize Anthropic client
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || "",
+});
 
 // Request validation schema
 const runTestsRequestSchema = z.object({
@@ -107,17 +113,46 @@ export async function POST(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Fetch test cases from database if not provided in request
+    // Fetch question details for AI evaluation or test cases
+    let questionDetails = null;
     let resolvedTestCases = testCases;
-    if (!resolvedTestCases && questionId) {
-      const question = await prisma.generatedQuestion.findUnique({
+
+    if (questionId) {
+      questionDetails = await prisma.generatedQuestion.findUnique({
         where: { id: questionId },
-        select: { testCases: true },
+        select: {
+          title: true,
+          description: true,
+          requirements: true,
+          difficulty: true,
+          testCases: true
+        },
       });
 
-      if (question && Array.isArray(question.testCases)) {
-        // Transform test cases from database format
-        resolvedTestCases = question.testCases.map((tc: any) => {
+      // For backend questions, use AI evaluation instead of tests
+      const isBackendQuestion = questionDetails?.requirements?.some((req: string) =>
+        req.toLowerCase().includes('api') ||
+        req.toLowerCase().includes('endpoint') ||
+        req.toLowerCase().includes('rest') ||
+        req.toLowerCase().includes('http') ||
+        req.toLowerCase().includes('auth')
+      ) || false;
+
+      if (isBackendQuestion && questionDetails) {
+        console.log('[RunTests] Detected backend question, using AI evaluation');
+        return await evaluateWithAI({
+          id,
+          code,
+          language,
+          fileName,
+          questionDetails,
+          sessionRecording: candidate.sessionRecording,
+        });
+      }
+
+      // For traditional algorithm questions, use test cases
+      if (questionDetails && Array.isArray(questionDetails.testCases)) {
+        resolvedTestCases = questionDetails.testCases.map((tc: any) => {
           const expectedValue = tc.expectedOutput || tc.expected;
           return {
             name: tc.name || "",
@@ -129,7 +164,7 @@ export async function POST(
       }
     }
 
-    // Validate that we have test cases
+    // Validate that we have test cases for traditional problems
     if (!resolvedTestCases || resolvedTestCases.length === 0) {
       return NextResponse.json(
         { error: "No test cases found for this question" },
@@ -238,6 +273,157 @@ export async function POST(
     return NextResponse.json(
       {
         error: "Internal server error",
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * AI-based code evaluation for real-world scenarios
+ */
+async function evaluateWithAI(params: {
+  id: string;
+  code: string;
+  language: string;
+  fileName: string | undefined;
+  questionDetails: any;
+  sessionRecording: any;
+}) {
+  const { id, code, language, fileName, questionDetails, sessionRecording } = params;
+
+  try {
+    console.log('[AI Evaluation] Starting evaluation for:', questionDetails.title);
+
+    // Create or get session recording
+    let recording = sessionRecording;
+    if (!recording) {
+      recording = await prisma.sessionRecording.create({
+        data: {
+          candidateId: id,
+          status: "ACTIVE",
+        },
+      });
+    }
+
+    const evaluationStart = Date.now();
+
+    // Use Claude to evaluate the code
+    const evaluation = await anthropic.messages.create({
+      model: "claude-sonnet-4-5-20250929",
+      max_tokens: 2048,
+      messages: [{
+        role: "user",
+        content: `Evaluate this backend code implementation:
+
+**Task:** ${questionDetails.title}
+**Difficulty:** ${questionDetails.difficulty}
+
+**Requirements:**
+${questionDetails.requirements.join('\n- ')}
+
+**Candidate's Code:**
+\`\`\`${language}
+${code}
+\`\`\`
+
+Evaluate on a scale of 0-10 for each criterion:
+1. **Requirement Coverage**: Does it implement all requirements?
+2. **Code Quality**: Clean, readable, maintainable code?
+3. **Security**: Proper validation, authentication, error handling?
+4. **Best Practices**: Follows ${language} and backend conventions?
+5. **Completeness**: Production-ready or needs major work?
+
+Return ONLY valid JSON (no markdown):
+{
+  "scores": {
+    "requirements": 0-10,
+    "quality": 0-10,
+    "security": 0-10,
+    "practices": 0-10,
+    "completeness": 0-10
+  },
+  "overallScore": 0-100,
+  "passed": boolean (true if overallScore >= 70),
+  "feedback": "Detailed feedback on what to improve",
+  "strengths": ["strength 1", "strength 2"],
+  "improvements": ["improvement 1", "improvement 2"]
+}`
+      }]
+    });
+
+    const evaluationTime = Date.now() - evaluationStart;
+
+    // Parse AI response
+    const content = evaluation.content[0];
+    let aiResult: {
+      scores: Record<string, number>;
+      overallScore: number;
+      passed: boolean;
+      feedback: string;
+      strengths: string[];
+      improvements: string[];
+    };
+
+    if (content.type === "text") {
+      // Extract JSON from response (handle markdown code blocks)
+      const text = content.text;
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        aiResult = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error("AI response did not contain valid JSON");
+      }
+    } else {
+      throw new Error("Unexpected content type from AI");
+    }
+
+    console.log('[AI Evaluation] Result:', aiResult.overallScore, '/', 100);
+
+    // Record code snapshot
+    await prisma.codeSnapshot.create({
+      data: {
+        sessionId: recording.id,
+        fileId: fileName || "main",
+        fileName: fileName || "main",
+        language,
+        contentHash: hashCode(code),
+        fullContent: code,
+      },
+    });
+
+    // Record AI evaluation as test results
+    const criteriaResults = Object.entries(aiResult.scores).map(([criterion, score]: [string, any]) => ({
+      name: criterion,
+      passed: score >= 7,
+      output: `Score: ${score}/10`,
+      expectedOutput: "7/10 or higher",
+      duration: evaluationTime / Object.keys(aiResult.scores).length,
+    }));
+
+    // Return formatted response compatible with existing UI
+    return NextResponse.json({
+      passed: criteriaResults.filter(r => r.passed).length,
+      failed: criteriaResults.filter(r => !r.passed).length,
+      total: criteriaResults.length,
+      results: criteriaResults,
+      executionTime: evaluationTime,
+      // Additional AI feedback
+      aiEvaluation: {
+        overallScore: aiResult.overallScore,
+        passed: aiResult.passed,
+        feedback: aiResult.feedback,
+        strengths: aiResult.strengths,
+        improvements: aiResult.improvements,
+      },
+    }, { status: 200 });
+
+  } catch (error) {
+    console.error('[AI Evaluation] Error:', error);
+    return NextResponse.json(
+      {
+        error: "AI evaluation failed",
         message: error instanceof Error ? error.message : "Unknown error",
       },
       { status: 500 }
