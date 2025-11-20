@@ -3,9 +3,16 @@
 ## Overview
 This document tracks the implementation of the incremental question generation system, where seeds are generic guidelines and questions build incrementally based on candidate progress.
 
-## ✅ Completed (Phases 1-4)
+## ✅ Completed (Phases 1-5)
 
-### Latest Updates (Phase 4) ✓
+### Latest Updates (Phase 5) ✓
+- **🎨 Interview Page Integration**: QuestionTransition and incremental indicators fully integrated
+- **Conditional UX**: Adaptive UI for incremental assessments, legacy UI for standard
+- **Rich Context Display**: Performance trends, progression explanations, building-on context
+- **Header Enhancements**: "Adaptive" and "AI-Calibrated" badges, inline building-on context
+- **Full Type Safety**: QuestionPerformance type throughout state management
+
+### Phase 4 Updates ✓
 - **🎯 LLM-Based Difficulty Calibration**: Dynamic weight adjustment eliminates luck factor
 - **Baseline-Relative Scoring**: All questions normalized to Q1 baseline difficulty
 - **Multi-Factor Analysis**: LLM assesses LOC, concepts, tech complexity, time
@@ -90,23 +97,47 @@ This document tracks the implementation of the incremental question generation s
   - ✓ Violation details with severity levels
   - ✓ Compact badge variant for headers
 
-## 🚧 In Progress / Pending
+- **QuestionTransition** (`components/interview/QuestionTransition.tsx`) ✓
+  - ✓ Rich transition screen between incremental questions
+  - ✓ Previous performance summary with weighted scores
+  - ✓ Difficulty score display (1-10 from LLM assessment)
+  - ✓ Progression trend indicators (improving/declining/stable)
+  - ✓ Contextual messages based on action (extend/maintain/simplify)
+  - ✓ "Building on" preview for next question
+  - ✓ Adaptive messaging and difficulty badges
 
-### 5. API Endpoints (Remaining)
-- [ ] **Tech Validation Endpoint** (`app/api/interview/[id]/tech-validation/route.ts`)
-  - Needs: GET endpoint to return compliance status
-  - Should use: `techStackValidator.validateCandidateSession()`
-  - Response format: `{ compliant, score, violations, detectedTech }`
+- **QuestionProgressHeader** (`components/interview/QuestionProgressHeader.tsx`) ✓
+  - ✓ Enhanced with "Adaptive" badge for incremental
+  - ✓ "AI-Calibrated" badge when using difficulty calibration
+  - ✓ "Building on:" context box for Q2+ questions
+  - ✓ Backward compatible with legacy assessments
 
-### 6. UI Components (Remaining)
-- [ ] **Update QuestionProgressHeader** (`components/interview/QuestionProgressHeader.tsx`)
-  - Show incremental progression (Question 3 building on: Product API)
-  - Display previous questions with scores
-  - Indicate current question in context of previous work
+### 5. Interview Page Integration ✓
+- **Interview Page** (`app/interview/[id]/page.tsx`)
+  - ✓ State management for incremental context
+    * isIncrementalAssessment, progressionContext, buildingOn, difficultyCalibrated
+  - ✓ Enhanced previousQuestionPerformance with full QuestionPerformance type
+  - ✓ API response handling extracts incremental context
+  - ✓ Conditional rendering: QuestionTransition vs NextQuestionLoading
+  - ✓ Header integration with inline incremental indicators
+  - ✓ Full backward compatibility maintained
 
-- [ ] **Create QuestionTransition Component** (new file)
-  - Show between questions when next one is being generated
-  - Display previous question score and time
+## 🚧 Remaining Work
+
+### 6. API Enhancements (Pending)
+- [ ] **Enhance Question Generation Response** (`app/api/interview/[id]/questions/route.ts`)
+  - Add `progressionContext` to response (trend, action, averageScore)
+  - Add `buildingOn` description based on previous question
+  - Calculate and return weighted scores with difficulty assessment
+  - Include estimated difficulty for next question
+
+### 7. Assessment Wizard Integration (Pending)
+- [ ] **Incremental Seed Form** (new component)
+  - UI for creating incremental assessments in wizard
+  - Form fields: domain, requiredTech (with priority selector), baseProblem
+  - ProgressionHints editor (extension/simplification topics)
+  - SeniorityExpectations editor
+  - Tech stack selector with critical/required/recommended toggles
   - Show preview of what's coming next
   - Smooth animation/loading state
 
