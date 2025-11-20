@@ -337,12 +337,16 @@ module.exports = longestPalindrome;`,
 
     // Transform test cases to match ProblemPanel interface
     const transformedTestCases = Array.isArray(question.testCases)
-      ? question.testCases.map((tc: any) => ({
-          name: tc.name || "",
-          input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
-          expectedOutput: typeof tc.expected === 'object' ? JSON.stringify(tc.expected) : String(tc.expected),
-          hidden: tc.hidden || false,
-        }))
+      ? question.testCases.map((tc: any) => {
+          // Handle both 'expected' and 'expectedOutput' field names for backwards compatibility
+          const expectedValue = tc.expectedOutput || tc.expected;
+          return {
+            name: tc.name || "",
+            input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
+            expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
+            hidden: tc.hidden || false,
+          };
+        })
       : [];
 
     // Return initialization data
@@ -355,7 +359,7 @@ module.exports = longestPalindrome;`,
         title: question.title,
         description: question.description,
         difficulty: question.difficulty,
-        language: question.language,
+        language: question.language.toLowerCase(),
         starterCode: question.starterCode,
         testCases: transformedTestCases,
       },

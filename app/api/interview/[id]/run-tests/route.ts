@@ -17,7 +17,7 @@ const runTestsRequestSchema = z.object({
       expectedOutput: z.string(),
       hidden: z.boolean().optional(),
     })
-  ),
+  ).optional(), // Make testCases optional - will fetch from DB if not provided
   fileName: z.string().optional(),
   questionId: z.string().optional(),
 });
@@ -61,9 +61,12 @@ export async function POST(
 
     // Parse and validate request body
     const body = await request.json();
+    console.log("[RunTests] Request body:", JSON.stringify(body, null, 2));
+
     const validationResult = runTestsRequestSchema.safeParse(body);
 
     if (!validationResult.success) {
+      console.error("[RunTests] Validation error:", JSON.stringify(validationResult.error.errors, null, 2));
       return NextResponse.json(
         { error: "Invalid request", details: validationResult.error.errors },
         { status: 400 }
@@ -95,9 +98,43 @@ export async function POST(
       );
     }
 
-    // Check authorization
-    if (candidate.organization.members.length === 0) {
+    // Check authorization (user must be member of candidate's organization)
+    // OR candidate is interviewing themselves (candidate.email === session.user.email)
+    const isOrgMember = candidate.organization.members.length > 0;
+    const isSelfInterview = candidate.email === session.user.email;
+
+    if (!isOrgMember && !isSelfInterview) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // Fetch test cases from database if not provided in request
+    let resolvedTestCases = testCases;
+    if (!resolvedTestCases && questionId) {
+      const question = await prisma.generatedQuestion.findUnique({
+        where: { id: questionId },
+        select: { testCases: true },
+      });
+
+      if (question && Array.isArray(question.testCases)) {
+        // Transform test cases from database format
+        resolvedTestCases = question.testCases.map((tc: any) => {
+          const expectedValue = tc.expectedOutput || tc.expected;
+          return {
+            name: tc.name || "",
+            input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
+            expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
+            hidden: tc.hidden || false,
+          };
+        });
+      }
+    }
+
+    // Validate that we have test cases
+    if (!resolvedTestCases || resolvedTestCases.length === 0) {
+      return NextResponse.json(
+        { error: "No test cases found for this question" },
+        { status: 400 }
+      );
     }
 
     // Get or create session recording
@@ -130,7 +167,7 @@ export async function POST(
     await sessions.recordEvent(sessionRecording.id, {
       type: "test_run_start",
       data: {
-        testCount: testCases.length,
+        testCount: resolvedTestCases.length,
         language,
         fileName: fileToWrite,
         timestamp: new Date().toISOString(),
@@ -141,7 +178,7 @@ export async function POST(
     const executionResult = await modal.executeCode(
       id, // session ID (candidate ID)
       code,
-      testCases.map(tc => ({
+      resolvedTestCases.map(tc => ({
         name: tc.name,
         input: tc.input,
         expected: tc.expectedOutput,
@@ -188,7 +225,7 @@ export async function POST(
         name: tr.name,
         passed: tr.passed,
         actualOutput: tr.output,
-        expectedOutput: testCases.find(tc => tc.name === tr.name)?.expectedOutput || "",
+        expectedOutput: resolvedTestCases.find(tc => tc.name === tr.name)?.expectedOutput || "",
         error: tr.error,
         duration: tr.duration,
       })),

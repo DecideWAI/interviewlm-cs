@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select } from "@/components/ui/select";
 import { Sparkles, Plus, X, AlertCircle, Check } from "lucide-react";
 import type { TechSpec, TechPriority } from "@/types/seed";
 
@@ -222,17 +222,13 @@ export function IncrementalSeedForm({ config, onUpdate, errors = {} }: Increment
           <div className="flex gap-2">
             <Select
               value={newTech.type}
-              onValueChange={(value) => setNewTech({ ...newTech, type: value })}
+              onChange={(e) => setNewTech({ ...newTech, type: e.target.value })}
+              className="w-32"
             >
-              <SelectTrigger className="w-32">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="languages">Language</SelectItem>
-                <SelectItem value="frameworks">Framework</SelectItem>
-                <SelectItem value="databases">Database</SelectItem>
-                <SelectItem value="tools">Tool</SelectItem>
-              </SelectContent>
+              <option value="languages">Language</option>
+              <option value="frameworks">Framework</option>
+              <option value="databases">Database</option>
+              <option value="tools">Tool</option>
             </Select>
 
             <Input
@@ -250,16 +246,12 @@ export function IncrementalSeedForm({ config, onUpdate, errors = {} }: Increment
 
             <Select
               value={newTech.priority}
-              onValueChange={(value) => setNewTech({ ...newTech, priority: value as TechPriority })}
+              onChange={(e) => setNewTech({ ...newTech, priority: e.target.value as TechPriority })}
+              className="w-36"
             >
-              <SelectTrigger className="w-36">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="critical">🔴 Critical</SelectItem>
-                <SelectItem value="required">🟡 Required</SelectItem>
-                <SelectItem value="recommended">🟢 Recommended</SelectItem>
-              </SelectContent>
+              <option value="critical">🔴 Critical</option>
+              <option value="required">🟡 Required</option>
+              <option value="recommended">🟢 Recommended</option>
             </Select>
 
             <Button onClick={handleAddTech} variant="outline" size="sm">

@@ -79,7 +79,11 @@ export async function POST(
     }
 
     // Check authorization (user must be member of candidate's organization)
-    if (candidate.organization.members.length === 0) {
+    // OR candidate is interviewing themselves (candidate.email === session.user.email)
+    const isOrgMember = candidate.organization.members.length > 0;
+    const isSelfInterview = candidate.email === session.user.email;
+
+    if (!isOrgMember && !isSelfInterview) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -191,8 +195,24 @@ export async function POST(
       },
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Chat agent API error:", error);
+
+    // Check if it's an overload error
+    const isOverloaded = error?.status === 529 ||
+                        error?.message?.includes('overloaded') ||
+                        error?.message?.includes('Overloaded');
+
+    if (isOverloaded) {
+      return NextResponse.json(
+        {
+          error: "Service temporarily overloaded",
+          message: "Claude AI is experiencing high demand. Please try again in a few seconds.",
+        },
+        { status: 503 }
+      );
+    }
+
     return NextResponse.json(
       {
         error: "Internal server error",

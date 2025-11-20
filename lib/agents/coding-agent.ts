@@ -70,8 +70,8 @@ export class CodingAgent {
     // Build system prompt with security constraints
     const systemPrompt = this.buildSystemPrompt();
 
-    // Call Claude API with tool use
-    const response = await this.client.messages.create({
+    // Call Claude API with tool use (with retry for overload errors)
+    const response = await this.callClaudeWithRetry({
       model: this.config.model || AGENT_MODEL_RECOMMENDATIONS.codingAgent,
       max_tokens: 4096,
       system: systemPrompt,
@@ -123,8 +123,8 @@ export class CodingAgent {
           ],
         });
 
-        // Get final response after tool use
-        const followUp = await this.client.messages.create({
+        // Get final response after tool use (with retry)
+        const followUp = await this.callClaudeWithRetry({
           model: this.config.model || AGENT_MODEL_RECOMMENDATIONS.codingAgent,
           max_tokens: 4096,
           system: systemPrompt,
@@ -180,6 +180,42 @@ export class CodingAgent {
   clearConversation(): void {
     this.conversation = [];
     this.toolCallCount = 0;
+  }
+
+  /**
+   * Call Claude API with exponential backoff retry for overload errors
+   */
+  private async callClaudeWithRetry(
+    params: Anthropic.Messages.MessageCreateParams,
+    maxRetries = 3
+  ): Promise<Anthropic.Messages.Message> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await this.client.messages.create(params);
+      } catch (error: any) {
+        lastError = error;
+
+        // Check if it's a retryable error (529 overload or 503)
+        const isOverloaded = error?.status === 529 ||
+                            error?.message?.includes('overloaded') ||
+                            error?.message?.includes('Overloaded') ||
+                            error?.status === 503;
+
+        if (!isOverloaded || attempt === maxRetries - 1) {
+          // Not retryable or last attempt - throw the error
+          throw error;
+        }
+
+        // Exponential backoff: 2s, 4s, 8s
+        const delayMs = Math.pow(2, attempt + 1) * 1000;
+        console.log(`[CodingAgent] Claude API overloaded, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+
+    throw lastError || new Error('Max retries exceeded');
   }
 
   /**

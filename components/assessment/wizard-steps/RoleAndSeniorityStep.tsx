@@ -22,23 +22,27 @@ export function RoleAndSeniorityStep({
   userTier,
 }: RoleAndSeniorityStepProps) {
   const handleRoleSelect = (role: Role) => {
-    onUpdate({ role });
+    const updates: Partial<AssessmentConfig> = { role };
 
     // Auto-update duration if role and seniority are both selected
     if (config.seniority) {
       const recommendedDuration = getRecommendedDuration(role, config.seniority);
-      onUpdate({ role, duration: recommendedDuration });
+      updates.duration = recommendedDuration;
     }
+
+    onUpdate(updates);
   };
 
   const handleSenioritySelect = (seniority: SeniorityLevel) => {
-    onUpdate({ seniority });
+    const updates: Partial<AssessmentConfig> = { seniority };
 
     // Auto-update duration if role and seniority are both selected
     if (config.role) {
       const recommendedDuration = getRecommendedDuration(config.role, seniority);
-      onUpdate({ seniority, duration: recommendedDuration });
+      updates.duration = recommendedDuration;
     }
+
+    onUpdate(updates);
   };
 
   const getIconComponent = (iconName: string): LucideIcon => {
@@ -63,14 +67,14 @@ export function RoleAndSeniorityStep({
             return (
               <button
                 key={role.id}
+                type="button"
                 onClick={() => isAvailable && handleRoleSelect(role.id)}
                 disabled={!isAvailable}
                 className={`
                   p-4 rounded-lg border-2 text-left transition-all
-                  ${
-                    isSelected
-                      ? "border-primary bg-primary/5"
-                      : isAvailable
+                  ${isSelected
+                    ? "border-primary bg-primary/5"
+                    : isAvailable
                       ? "border-border hover:border-border-secondary hover:bg-background-tertiary"
                       : "border-border opacity-50 cursor-not-allowed"
                   }
@@ -133,13 +137,13 @@ export function RoleAndSeniorityStep({
             return (
               <button
                 key={level.id}
+                type="button"
                 onClick={() => handleSenioritySelect(level.id)}
                 className={`
                   w-full p-4 rounded-lg border-2 text-left transition-all
-                  ${
-                    isSelected
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-border-secondary hover:bg-background-tertiary"
+                  ${isSelected
+                    ? "border-primary bg-primary/5"
+                    : "border-border hover:border-border-secondary hover:bg-background-tertiary"
                   }
                 `}
               >

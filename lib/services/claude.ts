@@ -80,6 +80,7 @@ function getAnthropicClient(): Anthropic {
 /**
  * Calculate estimated cost based on token usage
  * Claude Sonnet 4.5 pricing: $3/MTok input, $15/MTok output
+ * Claude Haiku 4.5 pricing: $1/MTok input, $5/MTok output
  */
 function calculateCost(inputTokens: number, outputTokens: number): number {
   const INPUT_COST_PER_MILLION = 3.0;
