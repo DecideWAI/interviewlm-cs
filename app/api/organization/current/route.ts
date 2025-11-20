@@ -27,8 +27,6 @@ export async function GET(request: NextRequest) {
             name: true,
             plan: true,
             credits: true,
-            subscriptionStatus: true,
-            billingInterval: true,
             createdAt: true,
           },
         },

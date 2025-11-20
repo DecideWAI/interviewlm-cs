@@ -13,6 +13,8 @@ import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/
 import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
 import { QuestionCompletionCard } from "@/components/interview/QuestionCompletionCard";
 import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
+import { QuestionTransition } from "@/components/interview/QuestionTransition";
+import type { QuestionPerformance } from "@/components/interview/QuestionTransition";
 import { resetConversation } from "@/lib/chat-resilience";
 import { useSessionRecovery, useSessionRecoveryDialog, SessionState } from "@/hooks/useSessionRecovery";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
@@ -107,10 +109,17 @@ export default function InterviewPage() {
   const [questionTimeElapsed, setQuestionTimeElapsed] = useState(0);
   const [isLoadingNextQuestion, setIsLoadingNextQuestion] = useState(false);
   const [showCompletionCard, setShowCompletionCard] = useState(false);
-  const [previousQuestionPerformance, setPreviousQuestionPerformance] = useState<{
-    score: number;
-    timeSpent: number;
+  const [previousQuestionPerformance, setPreviousQuestionPerformance] = useState<QuestionPerformance | null>(null);
+
+  // Incremental assessment state
+  const [isIncrementalAssessment, setIsIncrementalAssessment] = useState(false);
+  const [progressionContext, setProgressionContext] = useState<{
+    trend: "improving" | "declining" | "stable";
+    action: "extend" | "maintain" | "simplify";
+    averageScore: number;
   } | null>(null);
+  const [buildingOn, setBuildingOn] = useState<string>("");
+  const [difficultyCalibrated, setDifficultyCalibrated] = useState(false);
 
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -607,8 +616,14 @@ export default function InterviewPage() {
       const testsPassedRatio = testResults.total > 0 ? testResults.passed / testResults.total : 0;
       const score = Math.round(testsPassedRatio * 100); // Simple score calculation
 
-      // Store performance for loading screen
-      setPreviousQuestionPerformance({ score, timeSpent });
+      // Store performance for loading screen (full context for incremental)
+      setPreviousQuestionPerformance({
+        questionNumber: currentQuestionIndex + 1,
+        title: sessionData.question.title,
+        rawScore: score,
+        timeSpent,
+        testsPassedRatio,
+      });
 
       // Call API to generate next question
       const response = await fetch(`/api/interview/${candidateId}/questions`, {
@@ -637,6 +652,20 @@ export default function InterviewPage() {
         alert("All questions completed! Ready to submit your assessment.");
         await handleSubmit();
         return;
+      }
+
+      // Update incremental assessment context from API response
+      if (data.isIncremental !== undefined) {
+        setIsIncrementalAssessment(data.isIncremental);
+      }
+      if (data.progressionContext) {
+        setProgressionContext(data.progressionContext);
+      }
+      if (data.buildingOn) {
+        setBuildingOn(data.buildingOn);
+      }
+      if (data.question.difficultyAssessment) {
+        setDifficultyCalibrated(true);
       }
 
       // Update session with new question
@@ -767,18 +796,34 @@ export default function InterviewPage() {
     <div className="h-screen flex flex-col bg-background">
       {/* Loading Next Question Overlay */}
       {isLoadingNextQuestion && (
-        <NextQuestionLoading
-          previousScore={previousQuestionPerformance?.score}
-          previousTime={previousQuestionPerformance?.timeSpent}
-          nextDifficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
-          nextQuestionNumber={currentQuestionIndex + 2}
-        />
+        <>
+          {isIncrementalAssessment && previousQuestionPerformance ? (
+            <QuestionTransition
+              previousPerformance={previousQuestionPerformance}
+              nextQuestionNumber={currentQuestionIndex + 2}
+              progressionContext={progressionContext ?? undefined}
+              estimatedDifficulty={
+                progressionContext?.action === "extend" ? "harder" :
+                progressionContext?.action === "simplify" ? "easier" :
+                "similar"
+              }
+              buildingOn={buildingOn}
+            />
+          ) : (
+            <NextQuestionLoading
+              previousScore={previousQuestionPerformance?.rawScore}
+              previousTime={previousQuestionPerformance?.timeSpent}
+              nextDifficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
+              nextQuestionNumber={currentQuestionIndex + 2}
+            />
+          )}
+        </>
       )}
 
       {/* Compact Header */}
       <div className="border-b border-border bg-background-secondary px-4 py-2.5">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-sm font-semibold text-text-primary">
               Question {currentQuestionIndex + 1}/{totalQuestions}: {sessionData.question.title}
             </h1>
@@ -794,6 +839,23 @@ export default function InterviewPage() {
             >
               {sessionData.question.difficulty}
             </Badge>
+
+            {/* Incremental Assessment Indicators */}
+            {isIncrementalAssessment && (
+              <Badge variant="primary" className="text-xs">
+                Adaptive
+              </Badge>
+            )}
+            {difficultyCalibrated && (
+              <Badge variant="default" className="text-xs">
+                AI-Calibrated
+              </Badge>
+            )}
+            {buildingOn && currentQuestionIndex > 0 && (
+              <span className="text-xs text-text-tertiary">
+                → Building on: {buildingOn}
+              </span>
+            )}
 
             {/* Test Status */}
             {testResults.total > 0 && (
