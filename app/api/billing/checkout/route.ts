@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/auth.config";
-import { prisma } from "@/lib/prisma";
+import prisma from "@/lib/prisma";
 import { createCheckout, PADDLE_PRODUCTS } from "@/lib/services/paddle";
 
 export async function POST(req: NextRequest) {

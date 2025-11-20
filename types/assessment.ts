@@ -101,6 +101,28 @@ export interface AssessmentConfig {
   templateId?: string;
   customQuestionSeeds?: QuestionSeed[];
 
+  /** Incremental/Adaptive assessment configuration */
+  useIncremental?: boolean;
+  incrementalConfig?: {
+    domain: string;
+    requiredTech: {
+      languages: Array<{ name: string; priority: TechPriority; version?: string }>;
+      frameworks: Array<{ name: string; priority: TechPriority; version?: string }>;
+      databases: Array<{ name: string; priority: TechPriority; version?: string }>;
+      tools?: Array<{ name: string; priority: TechPriority; version?: string }>;
+    };
+    baseProblem: {
+      title: string;
+      description: string;
+      starterCode: string;
+      estimatedTime: number;
+    };
+    progressionHints: {
+      extensionTopics: string[];
+      simplificationTopics: string[];
+    };
+  };
+
   /** AI configuration */
   aiAssistanceEnabled: boolean;
   aiMonitoringEnabled: boolean;

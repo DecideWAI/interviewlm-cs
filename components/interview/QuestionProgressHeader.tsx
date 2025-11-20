@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Clock, Target } from "lucide-react";
+import { Clock, Target, ArrowRight, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -13,6 +13,10 @@ interface QuestionProgressHeaderProps {
   estimatedTime?: number; // in minutes
   title: string;
   className?: string;
+  // NEW: Incremental assessment context
+  isIncremental?: boolean;
+  buildingOn?: string; // What this question builds on from previous work
+  difficultyCalibrated?: boolean; // Whether this uses LLM difficulty calibration
 }
 
 export function QuestionProgressHeader({
@@ -23,6 +27,9 @@ export function QuestionProgressHeader({
   estimatedTime,
   title,
   className,
+  isIncremental = false,
+  buildingOn,
+  difficultyCalibrated = false,
 }: QuestionProgressHeaderProps) {
   const progressPercentage = (currentQuestion / totalQuestions) * 100;
 
@@ -83,9 +90,35 @@ export function QuestionProgressHeader({
         </div>
 
         {/* Question Title */}
-        <h2 className="text-xl font-semibold text-text-primary mb-4">
-          {title}
-        </h2>
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <h2 className="text-xl font-semibold text-text-primary">
+              {title}
+            </h2>
+            {isIncremental && (
+              <Badge variant="primary" className="text-xs flex items-center gap-1">
+                <Sparkles className="h-3 w-3" />
+                Adaptive
+              </Badge>
+            )}
+            {difficultyCalibrated && (
+              <Badge variant="default" className="text-xs">
+                AI-Calibrated
+              </Badge>
+            )}
+          </div>
+
+          {/* Incremental Context */}
+          {isIncremental && buildingOn && currentQuestion > 1 && (
+            <div className="flex items-start gap-2 p-2 bg-primary/5 border border-primary/20 rounded text-xs">
+              <ArrowRight className="h-3 w-3 text-primary mt-0.5 flex-shrink-0" />
+              <div>
+                <span className="text-text-tertiary">Building on: </span>
+                <span className="text-text-primary font-medium">{buildingOn}</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Progress Bar */}
         <div className="relative">

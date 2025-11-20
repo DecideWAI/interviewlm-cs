@@ -137,14 +137,14 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     });
 
     try {
-      // Send conversation history to agent endpoint with retry logic
+      // Send current message to agent endpoint with retry logic
       const response = await fetchWithRetry(
         `/api/interview/${sessionId}/chat/agent`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            messages: conversationHistory.current,
+            message: userMessage.content,
           }),
         },
         {
@@ -298,9 +298,21 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
           }
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to send message:", err);
-      setError("Failed to send message. Please try again.");
+
+      // Check if it's an overload error
+      const errorMessage = err?.message || String(err);
+      const isOverloaded = errorMessage.includes('overloaded') ||
+                          errorMessage.includes('Overloaded') ||
+                          errorMessage.includes('503');
+
+      if (isOverloaded) {
+        setError("Claude AI is experiencing high demand. The system will automatically retry. Please wait a moment...");
+      } else {
+        setError("Failed to send message. Please try again.");
+      }
+
       setIsLoading(false);
       setIsConnected(false);
       setCurrentStreamingMessage("");
