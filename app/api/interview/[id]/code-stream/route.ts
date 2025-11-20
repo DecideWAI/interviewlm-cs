@@ -49,7 +49,11 @@ export async function GET(
     }
 
     // Check authorization (user must be member of candidate's organization)
-    if (candidate.organization.members.length === 0) {
+    // OR candidate is interviewing themselves (candidate.email === session.user.email)
+    const isOrgMember = candidate.organization.members.length > 0;
+    const isSelfInterview = candidate.email === session.user.email;
+
+    if (!isOrgMember && !isSelfInterview) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
