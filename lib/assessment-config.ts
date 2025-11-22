@@ -23,6 +23,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
     icon: "Server",
     defaultDuration: 60,
     availableInTiers: ["payg", "small", "medium", "large", "enterprise"],
+    status: "active",
   },
   frontend: {
     id: "frontend",
@@ -31,6 +32,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
     icon: "Monitor",
     defaultDuration: 60,
     availableInTiers: ["payg", "small", "medium", "large", "enterprise"],
+    status: "coming_soon",
   },
   fullstack: {
     id: "fullstack",
@@ -39,6 +41,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
     icon: "Layers",
     defaultDuration: 90,
     availableInTiers: ["payg", "small", "medium", "large", "enterprise"],
+    status: "coming_soon",
   },
   database: {
     id: "database",
@@ -47,6 +50,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
     icon: "Database",
     defaultDuration: 60,
     availableInTiers: ["payg", "small", "medium", "large", "enterprise"],
+    status: "coming_soon",
   },
   security: {
     id: "security",
@@ -55,6 +59,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
     icon: "Shield",
     defaultDuration: 75,
     availableInTiers: ["payg", "small", "medium", "large", "enterprise"],
+    status: "coming_soon",
   },
   ml: {
     id: "ml",
@@ -63,6 +68,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
     icon: "Brain",
     defaultDuration: 90,
     availableInTiers: ["payg", "small", "medium", "large", "enterprise"],
+    status: "coming_soon",
   },
   custom: {
     id: "custom",
@@ -71,6 +77,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
     icon: "Settings",
     defaultDuration: 60,
     availableInTiers: ["large", "enterprise"],
+    status: "coming_soon",
   },
 };
 
@@ -241,6 +248,16 @@ export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
         topics: ["REST APIs", "HTTP Methods", "Error Handling"],
         difficultyDistribution: { easy: 60, medium: 30, hard: 10 },
       },
+      {
+        instructions: "Implement a function to process a list of orders and calculate the total revenue by product category. Handle edge cases like missing data or invalid formats.",
+        topics: ["Data Processing", "Algorithms", "Error Handling"],
+        difficultyDistribution: { easy: 70, medium: 30, hard: 0 },
+      },
+      {
+        instructions: "Design a database schema for a simple blog application (users, posts, comments) and write SQL queries to fetch the latest posts with author details.",
+        topics: ["Database Design", "SQL", "Data Modeling"],
+        difficultyDistribution: { easy: 50, medium: 50, hard: 0 },
+      },
     ],
   },
   {
@@ -258,6 +275,16 @@ export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
         topics: ["Authentication", "Database Design", "API Security", "Performance"],
         difficultyDistribution: { easy: 20, medium: 60, hard: 20 },
       },
+      {
+        instructions: "Implement a caching layer for a high-traffic API endpoint using Redis. Handle cache invalidation and consistency strategies.",
+        topics: ["Caching", "Redis", "Performance Optimization"],
+        difficultyDistribution: { easy: 10, medium: 70, hard: 20 },
+      },
+      {
+        instructions: "Design a background job processing system for handling email notifications. Ensure reliability, retries, and failure handling.",
+        topics: ["Async Processing", "Message Queues", "System Design"],
+        difficultyDistribution: { easy: 10, medium: 60, hard: 30 },
+      },
     ],
   },
   {
@@ -274,6 +301,16 @@ export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
         instructions: "Design and implement a distributed system with message queues, caching, and database replication. Focus on scalability, reliability, and monitoring.",
         topics: ["System Design", "Microservices", "Caching", "Message Queues", "Monitoring"],
         difficultyDistribution: { easy: 10, medium: 50, hard: 40 },
+      },
+      {
+        instructions: "Optimize a slow database query involving multiple joins and millions of rows. Analyze the query plan and implement indexing or schema changes.",
+        topics: ["Database Optimization", "Performance Tuning", "SQL"],
+        difficultyDistribution: { easy: 0, medium: 40, hard: 60 },
+      },
+      {
+        instructions: "Architect a real-time chat application using WebSockets and a pub/sub system. Handle connection management, message persistence, and scalability.",
+        topics: ["Real-time Systems", "WebSockets", "System Architecture"],
+        difficultyDistribution: { easy: 0, medium: 50, hard: 50 },
       },
     ],
   },

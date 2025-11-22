@@ -74,6 +74,45 @@ export const LANGUAGES: Record<string, Technology> = {
     },
     commonlyPairedWith: ["spring", "junit", "maven"],
   },
+  csharp: {
+    id: "csharp",
+    name: "C#",
+    category: "language",
+    icon: "FileCode2",
+    description: "Modern, object-oriented language",
+    color: "#239120",
+    detectionPatterns: {
+      fileExtensions: [".cs"],
+      importPatterns: ["using ", "namespace ", "public class "],
+    },
+    commonlyPairedWith: ["dotnet", "entityframework", "nunit"],
+  },
+  php: {
+    id: "php",
+    name: "PHP",
+    category: "language",
+    icon: "FileCode2",
+    description: "Server-side scripting language",
+    color: "#777BB4",
+    detectionPatterns: {
+      fileExtensions: [".php"],
+      importPatterns: ["<?php", "namespace ", "use "],
+    },
+    commonlyPairedWith: ["laravel", "symfony", "phpunit"],
+  },
+  ruby: {
+    id: "ruby",
+    name: "Ruby",
+    category: "language",
+    icon: "FileCode2",
+    description: "Dynamic, open source language",
+    color: "#CC342D",
+    detectionPatterns: {
+      fileExtensions: [".rb"],
+      importPatterns: ["require ", "def ", "class "],
+    },
+    commonlyPairedWith: ["rails", "rspec"],
+  },
   rust: {
     id: "rust",
     name: "Rust",
@@ -86,6 +125,45 @@ export const LANGUAGES: Record<string, Technology> = {
       importPatterns: ["use ", "fn ", "struct ", "impl ", "mod "],
     },
     commonlyPairedWith: ["actix", "tokio"],
+  },
+  scala: {
+    id: "scala",
+    name: "Scala",
+    category: "language",
+    icon: "FileCode2",
+    description: "General-purpose programming language",
+    color: "#DC322F",
+    detectionPatterns: {
+      fileExtensions: [".scala"],
+      importPatterns: ["import ", "object ", "class ", "trait "],
+    },
+    commonlyPairedWith: ["akka", "play"],
+  },
+  kotlin: {
+    id: "kotlin",
+    name: "Kotlin",
+    category: "language",
+    icon: "FileCode2",
+    description: "Modern programming language",
+    color: "#7F52FF",
+    detectionPatterns: {
+      fileExtensions: [".kt", ".kts"],
+      importPatterns: ["import ", "fun ", "class ", "val "],
+    },
+    commonlyPairedWith: ["spring", "ktor"],
+  },
+  swift: {
+    id: "swift",
+    name: "Swift",
+    category: "language",
+    icon: "FileCode2",
+    description: "General-purpose, multi-paradigm language",
+    color: "#F05138",
+    detectionPatterns: {
+      fileExtensions: [".swift"],
+      importPatterns: ["import ", "func ", "class ", "struct "],
+    },
+    commonlyPairedWith: ["vapor"],
   },
 };
 
@@ -219,6 +297,18 @@ export const FRAMEWORKS: Record<string, Technology> = {
     },
     commonlyPairedWith: ["go", "postgresql", "redis"],
   },
+  echo: {
+    id: "echo",
+    name: "Echo",
+    category: "framework",
+    icon: "Wind",
+    description: "High performance Go framework",
+    color: "#00ADD8",
+    detectionPatterns: {
+      importPatterns: ['"github.com/labstack/echo"', "echo."],
+    },
+    commonlyPairedWith: ["go", "postgresql"],
+  },
 
   // Java Frameworks
   spring: {
@@ -232,6 +322,164 @@ export const FRAMEWORKS: Record<string, Technology> = {
       importPatterns: ["org.springframework", "@SpringBootApplication"],
     },
     commonlyPairedWith: ["java", "postgresql", "mysql"],
+  },
+  hibernate: {
+    id: "hibernate",
+    name: "Hibernate",
+    category: "framework",
+    icon: "Database",
+    description: "Java ORM framework",
+    color: "#59666C",
+    detectionPatterns: {
+      importPatterns: ["org.hibernate"],
+    },
+    commonlyPairedWith: ["java", "spring"],
+  },
+
+  // C# Frameworks
+  dotnet: {
+    id: "dotnet",
+    name: ".NET Core",
+    category: "framework",
+    icon: "Box",
+    description: "Cross-platform framework",
+    color: "#512BD4",
+    detectionPatterns: {
+      importPatterns: ["Microsoft.AspNetCore"],
+    },
+    commonlyPairedWith: ["csharp", "entityframework"],
+  },
+  entityframework: {
+    id: "entityframework",
+    name: "Entity Framework",
+    category: "framework",
+    icon: "Database",
+    description: ".NET ORM",
+    color: "#512BD4",
+    detectionPatterns: {
+      importPatterns: ["Microsoft.EntityFrameworkCore"],
+    },
+    commonlyPairedWith: ["csharp", "dotnet"],
+  },
+
+  // PHP Frameworks
+  laravel: {
+    id: "laravel",
+    name: "Laravel",
+    category: "framework",
+    icon: "Layers",
+    description: "The PHP Framework for Web Artisans",
+    color: "#FF2D20",
+    detectionPatterns: {
+      importPatterns: ["Illuminate\\"],
+    },
+    commonlyPairedWith: ["php", "mysql"],
+  },
+  symfony: {
+    id: "symfony",
+    name: "Symfony",
+    category: "framework",
+    icon: "Layers",
+    description: "PHP framework for web projects",
+    color: "#000000",
+    detectionPatterns: {
+      importPatterns: ["Symfony\\"],
+    },
+    commonlyPairedWith: ["php", "mysql"],
+  },
+
+  // Ruby Frameworks
+  rails: {
+    id: "rails",
+    name: "Ruby on Rails",
+    category: "framework",
+    icon: "Train",
+    description: "Server-side web application framework",
+    color: "#CC0000",
+    detectionPatterns: {
+      importPatterns: ["Rails"],
+    },
+    commonlyPairedWith: ["ruby", "postgresql"],
+  },
+
+  // Rust Frameworks
+  actix: {
+    id: "actix",
+    name: "Actix Web",
+    category: "framework",
+    icon: "Zap",
+    description: "Rust web framework",
+    color: "#CE422B",
+    detectionPatterns: {
+      importPatterns: ["actix_web"],
+    },
+    commonlyPairedWith: ["rust", "tokio"],
+  },
+  tokio: {
+    id: "tokio",
+    name: "Tokio",
+    category: "framework",
+    icon: "Clock",
+    description: "Asynchronous runtime for Rust",
+    color: "#CE422B",
+    detectionPatterns: {
+      importPatterns: ["tokio"],
+    },
+    commonlyPairedWith: ["rust", "actix"],
+  },
+
+  // Scala Frameworks
+  play: {
+    id: "play",
+    name: "Play Framework",
+    category: "framework",
+    icon: "Play",
+    description: "Web framework for Scala and Java",
+    color: "#92D050",
+    detectionPatterns: {
+      importPatterns: ["play."],
+    },
+    commonlyPairedWith: ["scala", "java"],
+  },
+  akka: {
+    id: "akka",
+    name: "Akka",
+    category: "framework",
+    icon: "Activity",
+    description: "Toolkit for building concurrent applications",
+    color: "#15A9D6",
+    detectionPatterns: {
+      importPatterns: ["akka."],
+    },
+    commonlyPairedWith: ["scala", "java"],
+  },
+
+  // Kotlin Frameworks
+  ktor: {
+    id: "ktor",
+    name: "Ktor",
+    category: "framework",
+    icon: "Zap",
+    description: "Framework for building asynchronous servers",
+    color: "#7F52FF",
+    detectionPatterns: {
+      importPatterns: ["io.ktor"],
+    },
+    commonlyPairedWith: ["kotlin"],
+  },
+
+  // Swift Frameworks
+  vapor: {
+    id: "vapor",
+    name: "Vapor",
+    category: "framework",
+    icon: "Cloud",
+    description: "Server-side Swift web framework",
+    color: "#F05138",
+    detectionPatterns: {
+      importPatterns: ["Vapor"],
+    },
+    commonlyPairedWith: ["swift"],
   },
 };
 
@@ -261,7 +509,7 @@ export const DATABASES: Record<string, Technology> = {
     detectionPatterns: {
       importPatterns: ["mysql", "pymysql", "mysql://"],
     },
-    commonlyPairedWith: ["python", "nodejs", "java"],
+    commonlyPairedWith: ["python", "nodejs", "java", "php"],
   },
   mongodb: {
     id: "mongodb",
@@ -299,6 +547,78 @@ export const DATABASES: Record<string, Technology> = {
       fileExtensions: [".db", ".sqlite"],
     },
     commonlyPairedWith: ["python", "nodejs"],
+  },
+  cassandra: {
+    id: "cassandra",
+    name: "Cassandra",
+    category: "database",
+    icon: "Database",
+    description: "Wide-column store database",
+    color: "#1287B1",
+    detectionPatterns: {
+      importPatterns: ["cassandra", "cql"],
+    },
+    commonlyPairedWith: ["java", "python"],
+  },
+  dynamodb: {
+    id: "dynamodb",
+    name: "DynamoDB",
+    category: "database",
+    icon: "Database",
+    description: "AWS NoSQL database",
+    color: "#4053D6",
+    detectionPatterns: {
+      importPatterns: ["boto3", "dynamodb"],
+    },
+    commonlyPairedWith: ["python", "nodejs", "java"],
+  },
+  elasticsearch: {
+    id: "elasticsearch",
+    name: "Elasticsearch",
+    category: "database",
+    icon: "Search",
+    description: "Search and analytics engine",
+    color: "#005571",
+    detectionPatterns: {
+      importPatterns: ["elasticsearch"],
+    },
+    commonlyPairedWith: ["java", "python", "nodejs"],
+  },
+  mariadb: {
+    id: "mariadb",
+    name: "MariaDB",
+    category: "database",
+    icon: "Database",
+    description: "Open source relational database",
+    color: "#003545",
+    detectionPatterns: {
+      importPatterns: ["mariadb"],
+    },
+    commonlyPairedWith: ["php", "java", "python"],
+  },
+  oracle: {
+    id: "oracle",
+    name: "Oracle DB",
+    category: "database",
+    icon: "Database",
+    description: "Multi-model database management system",
+    color: "#F80000",
+    detectionPatterns: {
+      importPatterns: ["cx_Oracle", "ojdbc"],
+    },
+    commonlyPairedWith: ["java", "csharp"],
+  },
+  sqlserver: {
+    id: "sqlserver",
+    name: "SQL Server",
+    category: "database",
+    icon: "Database",
+    description: "Microsoft relational database",
+    color: "#CC2927",
+    detectionPatterns: {
+      importPatterns: ["pyodbc", "System.Data.SqlClient"],
+    },
+    commonlyPairedWith: ["csharp", "dotnet"],
   },
 };
 
@@ -354,6 +674,54 @@ export const TESTING: Record<string, Technology> = {
       importPatterns: ["import unittest", "from unittest"],
     },
     commonlyPairedWith: ["python"],
+  },
+  nunit: {
+    id: "nunit",
+    name: "NUnit",
+    category: "testing",
+    icon: "TestTube",
+    description: ".NET unit-testing framework",
+    color: "#25A162",
+    detectionPatterns: {
+      importPatterns: ["NUnit.Framework"],
+    },
+    commonlyPairedWith: ["csharp", "dotnet"],
+  },
+  xunit: {
+    id: "xunit",
+    name: "xUnit",
+    category: "testing",
+    icon: "TestTube",
+    description: ".NET testing tool",
+    color: "#512BD4",
+    detectionPatterns: {
+      importPatterns: ["Xunit"],
+    },
+    commonlyPairedWith: ["csharp", "dotnet"],
+  },
+  phpunit: {
+    id: "phpunit",
+    name: "PHPUnit",
+    category: "testing",
+    icon: "TestTube",
+    description: "Programmer-oriented testing framework for PHP",
+    color: "#4C617C",
+    detectionPatterns: {
+      importPatterns: ["PHPUnit\\"],
+    },
+    commonlyPairedWith: ["php"],
+  },
+  rspec: {
+    id: "rspec",
+    name: "RSpec",
+    category: "testing",
+    icon: "TestTube",
+    description: "Behaviour Driven Development for Ruby",
+    color: "#CC342D",
+    detectionPatterns: {
+      importPatterns: ["describe", "it", "expect"],
+    },
+    commonlyPairedWith: ["ruby"],
   },
 };
 
@@ -431,6 +799,63 @@ export const TOOLS: Record<string, Technology> = {
       importPatterns: ["pika", "amqp://"],
     },
     commonlyPairedWith: ["python", "nodejs"],
+  },
+  kafka: {
+    id: "kafka",
+    name: "Kafka",
+    category: "tool",
+    icon: "Activity",
+    description: "Distributed event streaming platform",
+    color: "#231F20",
+    detectionPatterns: {
+      importPatterns: ["kafka-python", "confluent-kafka"],
+    },
+    commonlyPairedWith: ["java", "scala", "python", "go"],
+  },
+  terraform: {
+    id: "terraform",
+    name: "Terraform",
+    category: "tool",
+    icon: "Cloud",
+    description: "Infrastructure as Code",
+    color: "#7B42BC",
+    detectionPatterns: {
+      fileExtensions: [".tf"],
+    },
+  },
+  ansible: {
+    id: "ansible",
+    name: "Ansible",
+    category: "tool",
+    icon: "Terminal",
+    description: "IT automation",
+    color: "#EE0000",
+    detectionPatterns: {
+      fileExtensions: [".yml", ".yaml"],
+      importPatterns: ["hosts:", "tasks:"],
+    },
+  },
+  jenkins: {
+    id: "jenkins",
+    name: "Jenkins",
+    category: "tool",
+    icon: "Settings",
+    description: "Open source automation server",
+    color: "#D24939",
+    detectionPatterns: {
+      fileExtensions: ["Jenkinsfile"],
+    },
+  },
+  aws: {
+    id: "aws",
+    name: "AWS",
+    category: "tool",
+    icon: "Cloud",
+    description: "Amazon Web Services",
+    color: "#FF9900",
+    detectionPatterns: {
+      importPatterns: ["boto3", "aws-sdk"],
+    },
   },
   tailwind: {
     id: "tailwind",
@@ -549,21 +974,21 @@ export const TECH_STACK_PRESETS = {
     recommended: [DATABASES.postgresql, TESTING.pytest],
     optional: [TOOLS.docker, DATABASES.redis],
   },
-  "javascript-fullstack": {
-    name: "JavaScript Full Stack",
-    description: "React + Node.js full stack",
-    critical: [LANGUAGES.javascript],
-    required: [FRAMEWORKS.react, FRAMEWORKS.nodejs, FRAMEWORKS.express],
-    recommended: [DATABASES.postgresql, TESTING.jest],
-    optional: [TOOLS.docker],
+  "java-spring": {
+    name: "Java Spring Boot",
+    description: "Enterprise Java backend with Spring Boot",
+    critical: [LANGUAGES.java],
+    required: [FRAMEWORKS.spring],
+    recommended: [DATABASES.postgresql, TESTING.junit],
+    optional: [TOOLS.docker, TOOLS.kafka],
   },
-  "typescript-fullstack": {
-    name: "TypeScript Full Stack",
-    description: "Next.js + Node.js with TypeScript",
-    critical: [LANGUAGES.typescript],
-    required: [FRAMEWORKS.nextjs, FRAMEWORKS.nodejs],
-    recommended: [DATABASES.postgresql, TESTING.jest],
-    optional: [TOOLS.docker, TOOLS.tailwind],
+  "csharp-dotnet": {
+    name: "C# .NET Core",
+    description: "Modern .NET backend",
+    critical: [LANGUAGES.csharp],
+    required: [FRAMEWORKS.dotnet, FRAMEWORKS.entityframework],
+    recommended: [DATABASES.sqlserver, TESTING.xunit],
+    optional: [TOOLS.docker, TOOLS.azure],
   },
   "go-backend": {
     name: "Go Backend",
@@ -571,6 +996,14 @@ export const TECH_STACK_PRESETS = {
     critical: [LANGUAGES.go],
     required: [FRAMEWORKS.gin],
     recommended: [DATABASES.postgresql, DATABASES.redis],
+    optional: [TOOLS.docker],
+  },
+  "nodejs-express": {
+    name: "Node.js Express",
+    description: "Standard Node.js backend",
+    critical: [LANGUAGES.typescript],
+    required: [FRAMEWORKS.nodejs, FRAMEWORKS.express],
+    recommended: [DATABASES.mongodb, TESTING.jest],
     optional: [TOOLS.docker],
   },
 };
