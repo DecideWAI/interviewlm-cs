@@ -459,3 +459,24 @@ enum TransactionType {
   REFUND
   ADJUSTMENT
 }
+
+model Technology {
+  id                String   @id @default(cuid())
+  slug              String   @unique // e.g., "python", "react"
+  name              String
+  category          String   // "language", "framework", "database", "tool", "testing"
+  icon              String?  // Lucide icon name
+  description       String?
+  color             String?  // Hex color code
+  detectionPatterns Json?    @default("[]") // JSON array of patterns
+  
+  // Relationships
+  pairedWithIds     String[] @default([]) // Array of IDs this tech is commonly paired with
+  
+  // Metadata
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("technologies")
+}
