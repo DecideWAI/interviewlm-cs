@@ -359,6 +359,594 @@ You have two services:
     tags: ["Caching", "Redis", "Performance", "Optimization", "LRU"],
     language: "typescript",
   },
+
+  // =====================================================
+  // NEW SEEDS: Modern Backend Technologies
+  // =====================================================
+
+  {
+    title: "GraphQL API with Schema Design",
+    description: `Build a GraphQL API for a social media platform with proper schema design, resolvers, and real-time subscriptions.
+
+**Requirements:**
+- Design a GraphQL schema for users, posts, comments, and likes
+- Implement Query, Mutation, and Subscription types
+- Add authentication middleware for protected operations
+- Implement DataLoader for N+1 query prevention
+- Add cursor-based pagination for feeds
+- Include input validation with custom scalars
+- Add real-time subscriptions for new posts and comments
+- Implement proper error handling with GraphQL errors
+
+**Schema Types:**
+- User: id, username, email, avatar, posts, followers, following
+- Post: id, content, author, comments, likes, createdAt
+- Comment: id, content, author, post, createdAt
+- Like: id, user, post
+
+**Operations:**
+- Queries: me, user, posts, post, feed
+- Mutations: createPost, updatePost, deletePost, createComment, likePost, follow
+- Subscriptions: onNewPost, onNewComment
+
+**Skills Tested:**
+- GraphQL schema design principles
+- Resolver patterns and context
+- DataLoader for efficient data fetching
+- Real-time subscriptions with WebSockets
+- Authentication in GraphQL
+- Cursor-based pagination
+- Error handling best practices
+
+**Test Cases:**
+- Schema introspection works correctly
+- Authentication blocks unauthorized mutations
+- DataLoader batches queries properly
+- Subscriptions receive real-time updates
+- Pagination returns correct cursors`,
+    difficulty: "MEDIUM",
+    category: "backend",
+    tags: ["GraphQL", "API Design", "Subscriptions", "DataLoader", "Apollo", "Real-time"],
+    language: "typescript",
+    starterCode: `import { ApolloServer } from '@apollo/server';
+import { expressMiddleware } from '@apollo/server/express4';
+import express from 'express';
+
+// TODO: Define GraphQL schema
+const typeDefs = \`
+  type Query {
+    me: User
+    # Add more queries
+  }
+
+  type User {
+    id: ID!
+    username: String!
+    # Add more fields
+  }
+
+  # Add more types: Post, Comment, Like
+  # Add Mutation type
+  # Add Subscription type
+\`;
+
+// TODO: Implement resolvers
+const resolvers = {
+  Query: {
+    me: (parent, args, context) => {
+      // TODO: Return current user from context
+    },
+  },
+  // Add more resolvers
+};
+
+// TODO: Add DataLoader for efficient batching
+// TODO: Add authentication middleware
+// TODO: Set up subscriptions with WebSocket
+
+const app = express();
+const server = new ApolloServer({ typeDefs, resolvers });
+
+async function startServer() {
+  await server.start();
+  app.use('/graphql', express.json(), expressMiddleware(server));
+  app.listen(4000);
+}
+
+startServer();`,
+  },
+
+  {
+    title: "Serverless Event-Driven Microservices",
+    description: `Design and implement a serverless order processing system using AWS Lambda, API Gateway, and EventBridge.
+
+**System Components:**
+1. Order Service - Receives and validates orders
+2. Payment Service - Processes payments (mock)
+3. Inventory Service - Checks and reserves stock
+4. Notification Service - Sends order confirmations
+
+**Requirements:**
+- Implement Lambda functions for each service
+- Use EventBridge for event-driven communication
+- Add Step Functions for order orchestration
+- Implement dead letter queues for failed events
+- Add idempotency for retry safety
+- Include structured logging with correlation IDs
+- Implement circuit breaker pattern for external calls
+- Add monitoring with custom CloudWatch metrics
+
+**Event Flow:**
+1. OrderCreated → PaymentService processes payment
+2. PaymentSuccessful → InventoryService reserves stock
+3. StockReserved → NotificationService sends confirmation
+4. Any failure → Compensation/rollback events
+
+**Skills Tested:**
+- Serverless architecture patterns
+- Event-driven design
+- AWS Lambda best practices
+- Error handling and compensation
+- Idempotency in distributed systems
+- Logging and observability
+- Infrastructure as Code (SAM/CDK)
+
+**Expected Behavior:**
+- Order processing completes in <3 seconds
+- Failed payments trigger proper rollback
+- Duplicate events are handled idempotently
+- All events are traceable via correlation ID`,
+    difficulty: "HARD",
+    category: "backend",
+    tags: ["Serverless", "AWS Lambda", "EventBridge", "Microservices", "Event-Driven", "Cloud"],
+    language: "typescript",
+    starterCode: `// Order Service Lambda Handler
+export const orderHandler = async (event: any) => {
+  // TODO: Validate order
+  // TODO: Publish OrderCreated event to EventBridge
+  // TODO: Return order ID
+};
+
+// Payment Service Lambda Handler
+export const paymentHandler = async (event: any) => {
+  // TODO: Extract order from EventBridge event
+  // TODO: Process payment (mock)
+  // TODO: Publish PaymentSuccessful or PaymentFailed event
+};
+
+// Inventory Service Lambda Handler
+export const inventoryHandler = async (event: any) => {
+  // TODO: Check stock availability
+  // TODO: Reserve stock
+  // TODO: Publish StockReserved or StockUnavailable event
+};
+
+// Notification Service Lambda Handler
+export const notificationHandler = async (event: any) => {
+  // TODO: Send order confirmation email (mock)
+  // TODO: Log notification sent
+};
+
+// TODO: Add EventBridge client for publishing events
+// TODO: Add idempotency checks
+// TODO: Add structured logging with correlation IDs`,
+  },
+
+  {
+    title: "Container Orchestration with Kubernetes",
+    description: `Deploy and scale a multi-tier application on Kubernetes with proper resource management and observability.
+
+**Application Components:**
+1. Frontend - React app (nginx container)
+2. Backend API - Node.js Express (2-10 replicas)
+3. Worker - Background job processor (1-5 replicas)
+4. Database - PostgreSQL (StatefulSet)
+5. Cache - Redis (single replica)
+
+**Requirements:**
+- Write Kubernetes manifests (Deployments, Services, ConfigMaps, Secrets)
+- Implement Horizontal Pod Autoscaler (HPA) for API and Worker
+- Add resource requests/limits for all containers
+- Configure liveness and readiness probes
+- Set up Ingress with TLS termination
+- Implement NetworkPolicies for pod-to-pod security
+- Add PodDisruptionBudgets for high availability
+- Configure proper logging with Fluentd sidecar
+
+**Skills Tested:**
+- Kubernetes resource types and patterns
+- Pod scheduling and resource management
+- Auto-scaling configuration
+- Service discovery and networking
+- Secrets management
+- Health checks and probes
+- High availability patterns
+
+**Expected Outcomes:**
+- Application scales from 2 to 10 pods based on CPU
+- Zero-downtime deployments
+- Database survives pod restarts (PV/PVC)
+- Proper network isolation between tiers
+- All pods have health checks configured`,
+    difficulty: "HARD",
+    category: "backend",
+    tags: ["Kubernetes", "Docker", "DevOps", "Containers", "Orchestration", "Infrastructure"],
+    language: "yaml",
+    starterCode: `# api-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+      - name: api
+        image: myapp/api:latest
+        # TODO: Add resource requests/limits
+        # TODO: Add liveness/readiness probes
+        # TODO: Add environment variables from ConfigMap/Secret
+
+---
+# TODO: Add Service for API
+# TODO: Add HorizontalPodAutoscaler
+# TODO: Add Ingress with TLS
+# TODO: Add ConfigMap and Secret
+# TODO: Add NetworkPolicy
+# TODO: Add PodDisruptionBudget`,
+  },
+
+  {
+    title: "Real-time Data Pipeline with Kafka",
+    description: `Build a real-time data pipeline that processes user activity events for analytics and recommendations.
+
+**Pipeline Components:**
+1. Producer - Ingests clickstream events from web/mobile
+2. Stream Processor - Enriches and transforms events
+3. Aggregator - Computes real-time metrics
+4. Consumer - Writes to data warehouse and cache
+
+**Requirements:**
+- Implement Kafka producer with batching and compression
+- Create Kafka Streams application for event processing
+- Add exactly-once semantics for critical events
+- Implement windowed aggregations (1min, 5min, 1hour)
+- Handle late-arriving data with grace periods
+- Add schema registry for event schema evolution
+- Implement dead letter topic for poison messages
+- Add consumer lag monitoring
+
+**Event Schema:**
+\`\`\`
+{
+  "eventId": "uuid",
+  "userId": "string",
+  "eventType": "page_view|click|purchase",
+  "timestamp": "ISO8601",
+  "properties": { ... },
+  "sessionId": "string"
+}
+\`\`\`
+
+**Skills Tested:**
+- Kafka producer/consumer patterns
+- Stream processing with Kafka Streams
+- Exactly-once vs at-least-once semantics
+- Windowed aggregations
+- Schema evolution and compatibility
+- Error handling in streaming
+- Monitoring and observability
+
+**Expected Metrics:**
+- Process 10,000 events/second
+- End-to-end latency <100ms
+- No data loss with exactly-once
+- Real-time dashboard updates every 1 minute`,
+    difficulty: "HARD",
+    category: "backend",
+    tags: ["Kafka", "Streaming", "Data Pipeline", "Real-time", "Event Processing", "Big Data"],
+    language: "typescript",
+    starterCode: `import { Kafka, Producer, Consumer } from 'kafkajs';
+
+const kafka = new Kafka({
+  clientId: 'activity-pipeline',
+  brokers: ['localhost:9092'],
+});
+
+// TODO: Implement event producer with batching
+class ActivityProducer {
+  private producer: Producer;
+
+  async sendEvent(event: ActivityEvent): Promise<void> {
+    // TODO: Serialize event with schema validation
+    // TODO: Send to appropriate partition
+  }
+}
+
+// TODO: Implement stream processor for enrichment
+class EventEnricher {
+  async processEvent(event: ActivityEvent): Promise<EnrichedEvent> {
+    // TODO: Lookup user data
+    // TODO: Add geo-location from IP
+    // TODO: Classify event type
+  }
+}
+
+// TODO: Implement windowed aggregator
+class MetricsAggregator {
+  // TODO: Compute events per minute by type
+  // TODO: Compute unique users per 5-minute window
+  // TODO: Handle late-arriving data
+}
+
+// TODO: Implement consumer for data warehouse
+class WarehouseConsumer {
+  async consume(): Promise<void> {
+    // TODO: Batch events for efficient writes
+    // TODO: Handle consumer lag
+    // TODO: Implement exactly-once with transactions
+  }
+}`,
+  },
+
+  {
+    title: "gRPC Service with Protocol Buffers",
+    description: `Build a high-performance gRPC service for a ride-sharing platform with streaming and load balancing.
+
+**Service Definition:**
+- RideService: Request rides, track drivers, complete rides
+- LocationService: Real-time driver location streaming
+- PaymentService: Process ride payments
+
+**Requirements:**
+- Define Protocol Buffer schemas for all services
+- Implement unary, server-streaming, and bidirectional streaming
+- Add gRPC interceptors for logging and authentication
+- Implement retry policies with exponential backoff
+- Add deadline/timeout propagation
+- Implement health checking protocol
+- Add reflection for debugging
+- Configure load balancing (round-robin)
+
+**RPC Methods:**
+- RequestRide (unary): Request a new ride
+- TrackDriver (server-stream): Stream driver location updates
+- UpdateDriverLocation (client-stream): Drivers send location updates
+- RideChat (bidirectional-stream): Real-time chat during ride
+
+**Skills Tested:**
+- Protocol Buffer schema design
+- gRPC service patterns
+- Streaming RPC patterns
+- Interceptor/middleware patterns
+- Error handling and status codes
+- Load balancing and resilience
+- Performance optimization
+
+**Expected Performance:**
+- Unary calls: <10ms p99 latency
+- Streaming: Handle 1000 concurrent streams
+- Proper cancellation handling
+- Graceful degradation under load`,
+    difficulty: "MEDIUM",
+    category: "backend",
+    tags: ["gRPC", "Protocol Buffers", "Microservices", "Streaming", "Performance", "RPC"],
+    language: "typescript",
+    starterCode: `// ride.proto
+syntax = "proto3";
+
+package rideshare;
+
+// TODO: Define message types
+message RideRequest {
+  string user_id = 1;
+  Location pickup = 2;
+  Location destination = 3;
+}
+
+message Location {
+  double latitude = 1;
+  double longitude = 2;
+}
+
+// TODO: Define service with streaming methods
+service RideService {
+  rpc RequestRide(RideRequest) returns (RideResponse);
+  // TODO: Add TrackDriver server-streaming
+  // TODO: Add UpdateDriverLocation client-streaming
+  // TODO: Add RideChat bidirectional streaming
+}
+
+// server.ts
+import * as grpc from '@grpc/grpc-js';
+
+// TODO: Implement RideService handlers
+const rideServiceHandlers = {
+  requestRide: (call, callback) => {
+    // TODO: Match with nearest driver
+    // TODO: Return ride details
+  },
+  // TODO: Implement streaming handlers
+};
+
+// TODO: Add interceptors for logging and auth
+// TODO: Add health checking
+// TODO: Configure server with reflection`,
+  },
+
+  // =====================================================
+  // EASY SEEDS: For Calibration and Junior Candidates
+  // =====================================================
+
+  {
+    title: "Basic CRUD API",
+    description: `Create a simple REST API for a todo list with basic CRUD operations.
+
+**Requirements:**
+- Implement GET /todos - List all todos
+- Implement POST /todos - Create a new todo
+- Implement PUT /todos/:id - Update a todo
+- Implement DELETE /todos/:id - Delete a todo
+- Store todos in-memory (array)
+- Return proper HTTP status codes
+- Add basic input validation
+
+**Todo Structure:**
+\`\`\`
+{
+  "id": 1,
+  "title": "Buy groceries",
+  "completed": false,
+  "createdAt": "2024-01-01T00:00:00Z"
+}
+\`\`\`
+
+**Skills Tested:**
+- Basic REST API design
+- HTTP methods and status codes
+- Request/response handling
+- Simple data validation
+
+**Test Cases:**
+- Create todo returns 201
+- Get all todos returns array
+- Update non-existent todo returns 404
+- Delete todo returns 204`,
+    difficulty: "EASY",
+    category: "backend",
+    tags: ["REST API", "CRUD", "Express.js", "Node.js", "Beginner"],
+    language: "typescript",
+    starterCode: `import express from 'express';
+
+const app = express();
+app.use(express.json());
+
+interface Todo {
+  id: number;
+  title: string;
+  completed: boolean;
+  createdAt: string;
+}
+
+const todos: Todo[] = [];
+let nextId = 1;
+
+// GET /todos - List all todos
+app.get('/todos', (req, res) => {
+  // TODO: Return all todos
+});
+
+// POST /todos - Create a new todo
+app.post('/todos', (req, res) => {
+  // TODO: Validate input
+  // TODO: Create and return new todo
+});
+
+// PUT /todos/:id - Update a todo
+app.put('/todos/:id', (req, res) => {
+  // TODO: Find todo by id
+  // TODO: Update and return todo
+  // TODO: Return 404 if not found
+});
+
+// DELETE /todos/:id - Delete a todo
+app.delete('/todos/:id', (req, res) => {
+  // TODO: Find and delete todo
+  // TODO: Return 204 on success
+  // TODO: Return 404 if not found
+});
+
+app.listen(3000);`,
+  },
+
+  {
+    title: "Simple Data Validation",
+    description: `Implement input validation for a user registration endpoint.
+
+**Requirements:**
+- Validate email format (must contain @ and domain)
+- Validate password (min 8 chars, at least 1 number)
+- Validate name (not empty, max 100 chars)
+- Validate age (optional, must be 18-120 if provided)
+- Return clear error messages for each field
+- Return 400 with validation errors
+- Return 201 on successful validation
+
+**Expected Error Format:**
+\`\`\`
+{
+  "errors": [
+    { "field": "email", "message": "Invalid email format" },
+    { "field": "password", "message": "Password must be at least 8 characters" }
+  ]
+}
+\`\`\`
+
+**Skills Tested:**
+- Input validation patterns
+- Error handling and messaging
+- Regular expressions
+- HTTP status codes
+
+**Test Cases:**
+- Valid user returns 201
+- Invalid email returns 400 with error
+- Short password returns 400 with error
+- Multiple errors return all of them`,
+    difficulty: "EASY",
+    category: "backend",
+    tags: ["Validation", "Error Handling", "REST API", "Beginner"],
+    language: "typescript",
+    starterCode: `import express from 'express';
+
+const app = express();
+app.use(express.json());
+
+interface ValidationError {
+  field: string;
+  message: string;
+}
+
+interface UserRegistration {
+  name: string;
+  email: string;
+  password: string;
+  age?: number;
+}
+
+function validateUser(data: any): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  // TODO: Validate name (not empty, max 100 chars)
+
+  // TODO: Validate email (contains @ and domain)
+
+  // TODO: Validate password (min 8 chars, at least 1 number)
+
+  // TODO: Validate age if provided (18-120)
+
+  return errors;
+}
+
+app.post('/register', (req, res) => {
+  const errors = validateUser(req.body);
+
+  if (errors.length > 0) {
+    // TODO: Return 400 with errors
+  }
+
+  // TODO: Return 201 with success message
+});
+
+app.listen(3000);`,
+  },
 ];
 
 /**

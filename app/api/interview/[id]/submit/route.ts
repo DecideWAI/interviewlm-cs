@@ -279,6 +279,62 @@ export async function POST(
       },
     });
 
+    // Create Evaluation record immediately (synchronous)
+    // This ensures evaluation exists even if background worker isn't running
+    const evaluation = await prisma.evaluation.create({
+      data: {
+        candidateId: id,
+        sessionId: sessionRecording.id,
+
+        // 4-dimension scores (0-100) - convert to Int
+        codeQualityScore: Math.round(candidateProfile.codeQualityScore || 50),
+        codeQualityEvidence: {
+          snapshots: sessionRecording.codeSnapshots.length,
+          iterativeDevelopment: sessionRecording.codeSnapshots.length > 0,
+        },
+        codeQualityConfidence: 0.7,
+
+        problemSolvingScore: Math.round(candidateProfile.problemSolvingScore || 50),
+        problemSolvingEvidence: {
+          testsPassed: metrics.testsPassed || 0,
+          testsFailed: metrics.testsFailed || 0,
+          completionRate: metrics.completionRate || 0,
+        },
+        problemSolvingConfidence: 0.8,
+
+        aiCollaborationScore: Math.round(aiCollaborationScore.overall),
+        aiCollaborationEvidence: {
+          interactions: metrics.claudeInteractions || 0,
+          avgPromptQuality: metrics.avgPromptQuality || 3,
+          breakdown: aiCollaborationScore,
+        },
+        aiCollaborationConfidence: 0.75,
+
+        communicationScore: Math.round(aiCollaborationScore.overall),
+        communicationEvidence: {
+          promptQuality: metrics.avgPromptQuality || 3,
+          interactions: metrics.claudeInteractions || 0,
+        },
+        communicationConfidence: 0.7,
+
+        // Overall metrics
+        overallScore: Math.round(overallScore.overall),
+        confidence: 0.75,
+
+        // Hiring recommendation
+        hiringRecommendation: recommendation.decision,
+        hiringConfidence: recommendation.confidence,
+        hiringReasoning: {
+          recommendation,
+          percentileRank,
+          redFlags,
+          greenFlags,
+        },
+
+        evaluatedAt: new Date(),
+      },
+    });
+
     // Queue async comprehensive evaluation
     // This will re-analyze the session with the evaluation agent
     // and update scores with evidence-based analysis
@@ -394,9 +450,9 @@ function calculateSessionMetrics(
   const avgPromptQuality =
     claudeInteractions.length > 0
       ? claudeInteractions.reduce(
-          (sum: number, i: any) => sum + (i.promptQuality || 3),
-          0
-        ) / claudeInteractions.length
+        (sum: number, i: any) => sum + (i.promptQuality || 3),
+        0
+      ) / claudeInteractions.length
       : 3;
 
   return {

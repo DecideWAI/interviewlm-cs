@@ -27,6 +27,7 @@ export type AgentTool =
   | 'Grep'
   | 'Glob'
   | 'Bash'
+  | 'list_files'
   | 'run_tests'
 
   // Monitoring tools (Interview Agent)
@@ -65,21 +66,21 @@ export interface HelpfulnessConfig {
 export const HELPFULNESS_CONFIGS: Record<HelpfulnessLevel, HelpfulnessConfig> = {
   consultant: {
     level: 'consultant',
-    allowedTools: ['Read', 'Grep', 'Glob', 'run_tests'],
+    allowedTools: ['Read', 'Grep', 'Glob', 'list_files', 'run_tests'],
     description: 'Read-only assistance, suggestions only',
     useCase: 'Senior roles - evaluate independence',
   },
 
   'pair-programming': {
     level: 'pair-programming',
-    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'run_tests'],
+    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'list_files', 'run_tests'],
     description: 'Full coding assistance with limited bash',
     useCase: 'Default - realistic AI collaboration',
   },
 
   'full-copilot': {
     level: 'full-copilot',
-    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'run_tests'],
+    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'list_files', 'run_tests'],
     description: 'Maximum autonomy',
     useCase: 'Junior roles - evaluate delegation skills',
   },
@@ -114,7 +115,8 @@ export interface CodingAgentConfig extends AgentConfig {
   helpfulnessLevel: HelpfulnessLevel;
   workspaceRoot: string;
   problemStatement?: string;
-  candidateId?: string; // Required for test execution
+  candidateId?: string; // Candidate UUID - required for test execution and DB lookups
+  sessionRecordingId?: string; // SessionRecording UUID - required for saving test results to DB
 }
 
 /**
