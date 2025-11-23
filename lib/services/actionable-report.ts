@@ -705,7 +705,7 @@ export class ActionableReportGenerator {
     gapMatrix: SkillsGapMatrix
   ): ActionableReport['hiringRecommendation'] {
     const hasCriticalGaps = gapMatrix.criticalGaps.some(g => g.impact === 'high');
-    const hasMultipleModeratGaps = gapMatrix.criticalGaps.filter(g => g.impact === 'medium').length >= 2;
+    const hasMultipleModerateGaps = gapMatrix.criticalGaps.filter(g => g.impact === 'medium').length >= 2;
     const hasStrengths = gapMatrix.strengths.length >= 2;
     const overallFit = gapMatrix.overallFit;
 
@@ -734,7 +734,7 @@ export class ActionableReportGenerator {
       reasoning.push('Has compensating strengths');
       conditions.push('Requires dedicated mentorship');
       conditions.push('3-month performance checkpoint recommended');
-    } else if (hasCriticalGaps || hasMultipleModeratGaps) {
+    } else if (hasCriticalGaps || hasMultipleModerateGaps) {
       decision = 'no-hire';
       confidence = 0.7;
       reasoning.push(`Significant gaps identified: ${gapMatrix.criticalGaps.map(g => g.skill).join(', ')}`);

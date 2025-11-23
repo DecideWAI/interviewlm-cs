@@ -234,7 +234,7 @@ export class IRTDifficultyEngine {
 
     // Optimal targeting: question at theta + offset gives max information
     // But adjust based on where we are in the assessment
-    let targetOffset = this.OPTIMAL_OFFSET;
+    let targetOffset: number;
 
     // Early questions (Q1-Q2): Be more conservative, target near theta
     if (questionNumber <= 2) {
@@ -422,7 +422,6 @@ export class IRTDifficultyEngine {
     encouragement: string;
   } {
     const level = this.abilityToLabel(targetDifficulty);
-    const candidateLevel = this.abilityToLabel(abilityEstimate.theta);
 
     // Calculate expected success probability
     const successProb = this.probability(
