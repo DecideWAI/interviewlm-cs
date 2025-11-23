@@ -11,6 +11,12 @@ import { getChatCompletion } from "./claude";
 import type { Difficulty, QuestionStatus, GeneratedQuestion } from "@/lib/prisma-types";
 import type { RequiredTechStack, BaseProblem, ProgressionHints, SeniorityExpectations } from "@/types/seed";
 import type { SeniorityLevel } from "@/types/assessment";
+import {
+  IRTDifficultyEngine,
+  irtEngine,
+  CandidateAbilityEstimate,
+  DifficultyTargeting,
+} from "./irt-difficulty-engine";
 
 /**
  * Performance metrics for a completed question
@@ -37,6 +43,22 @@ export interface QuestionGenerationContext {
 }
 
 /**
+ * IRT-enhanced generation result
+ */
+export interface IRTEnhancedQuestionResult {
+  question: GeneratedQuestion;
+  abilityEstimate: CandidateAbilityEstimate;
+  difficultyTargeting: DifficultyTargeting;
+  difficultyVisibility: {
+    level: string;
+    description: string;
+    progressIndicator: string;
+    encouragement: string;
+  };
+  shouldContinue: { continue: boolean; reason: string };
+}
+
+/**
  * Progress analysis result
  */
 interface ProgressAnalysis {
@@ -53,10 +75,72 @@ interface ProgressAnalysis {
  */
 export class IncrementalQuestionGenerator {
   /**
+   * Generate next question with full IRT analysis
+   * Returns enhanced result with ability estimate, difficulty targeting, and visibility info
+   */
+  async generateNextQuestionWithIRT(
+    context: QuestionGenerationContext
+  ): Promise<IRTEnhancedQuestionResult> {
+    // Convert performance history to IRT format
+    const completedQuestions = context.previousQuestions.filter(
+      (q: any) => q.status === 'COMPLETED' && q.score !== null
+    );
+
+    const irtPerformance = irtEngine.convertPerformanceToIRT(
+      completedQuestions.map((q: any) => ({
+        id: q.id,
+        difficulty: q.difficulty,
+        score: q.score,
+        startedAt: q.startedAt,
+        completedAt: q.completedAt,
+        estimatedTime: q.estimatedTime || 20,
+      }))
+    );
+
+    // Estimate candidate ability
+    const abilityEstimate = irtEngine.estimateAbility(irtPerformance);
+
+    // Calculate target difficulty for next question
+    const nextQuestionNumber = context.previousQuestions.length + 1;
+    const difficultyTargeting = irtEngine.calculateTargetDifficulty(
+      abilityEstimate,
+      nextQuestionNumber,
+      5 // max questions
+    );
+
+    // Check if we should continue
+    const shouldContinue = irtEngine.shouldContinueAssessment(
+      abilityEstimate,
+      context.previousQuestions.length,
+      2, // min questions
+      5  // max questions
+    );
+
+    // Generate difficulty visibility info
+    const difficultyVisibility = irtEngine.generateDifficultyVisibility(
+      nextQuestionNumber,
+      difficultyTargeting.targetDifficulty,
+      abilityEstimate
+    );
+
+    // Generate the question using enhanced context
+    const question = await this.generateNextQuestion(context, difficultyTargeting);
+
+    return {
+      question,
+      abilityEstimate,
+      difficultyTargeting,
+      difficultyVisibility,
+      shouldContinue,
+    };
+  }
+
+  /**
    * Generate next question based on candidate's progress
    */
   async generateNextQuestion(
-    context: QuestionGenerationContext
+    context: QuestionGenerationContext,
+    irtTargeting?: DifficultyTargeting
   ): Promise<GeneratedQuestion> {
     // Get seed data
     const seed = await prisma.problemSeed.findUnique({
@@ -93,10 +177,11 @@ export class IncrementalQuestionGenerator {
       });
     }
 
-    // Check if we should generate another question
+    // Check if we should generate another question (IRT-enhanced)
     const shouldContinue = this.shouldGenerateNextQuestion(
       context.previousQuestions.length,
-      context.previousPerformance
+      context.previousPerformance,
+      context.previousQuestions
     );
 
     if (!shouldContinue.continue) {
@@ -109,7 +194,7 @@ export class IncrementalQuestionGenerator {
       context.previousQuestions.length
     );
 
-    // Build contextual prompt for Claude
+    // Build contextual prompt for Claude with IRT targeting
     const prompt = this.buildIncrementalPrompt({
       seed,
       seniority: context.seniority,
@@ -120,6 +205,7 @@ export class IncrementalQuestionGenerator {
       progressionHints,
       seniorityExpectations,
       timeRemaining: Math.floor(context.timeRemaining / 60), // Convert to minutes
+      irtTargeting,
     });
 
     // Generate question using Claude
@@ -335,16 +421,16 @@ export class IncrementalQuestionGenerator {
 
   /**
    * Determine if we should generate another question
-   * Based on question count limits and performance thresholds
+   * Uses IRT-based precision targeting for dynamic question count (2-5)
    */
   private shouldGenerateNextQuestion(
     currentQuestionCount: number,
-    performanceHistory: PerformanceMetrics[]
+    performanceHistory: PerformanceMetrics[],
+    previousQuestions?: GeneratedQuestion[]
   ): { continue: boolean; reason?: string } {
     // Configuration
     const MIN_QUESTIONS = 2;
     const MAX_QUESTIONS = 5;
-    const EXPERTISE_THRESHOLD = 0.7; // Need 70% on current question to advance
 
     // Check max questions limit
     if (currentQuestionCount >= MAX_QUESTIONS) {
@@ -354,25 +440,57 @@ export class IncrementalQuestionGenerator {
       };
     }
 
-    // If we haven't reached minimum, continue
+    // If we haven't reached minimum, always continue
     if (currentQuestionCount < MIN_QUESTIONS) {
       return { continue: true };
     }
 
-    // After minimum questions, check if candidate is performing well enough to continue
+    // Use IRT-based decision if we have previous questions data
+    if (previousQuestions && previousQuestions.length > 0) {
+      const completedQuestions = previousQuestions.filter(
+        (q: any) => q.status === 'COMPLETED' && q.score !== null
+      );
+
+      const irtPerformance = irtEngine.convertPerformanceToIRT(
+        completedQuestions.map((q: any) => ({
+          id: q.id,
+          difficulty: q.difficulty,
+          score: q.score,
+          startedAt: q.startedAt,
+          completedAt: q.completedAt,
+          estimatedTime: q.estimatedTime || 20,
+        }))
+      );
+
+      const abilityEstimate = irtEngine.estimateAbility(irtPerformance);
+
+      // Use IRT decision logic
+      const irtDecision = irtEngine.shouldContinueAssessment(
+        abilityEstimate,
+        currentQuestionCount,
+        MIN_QUESTIONS,
+        MAX_QUESTIONS
+      );
+
+      return {
+        continue: irtDecision.continue,
+        reason: irtDecision.reason,
+      };
+    }
+
+    // Fallback: legacy threshold-based logic
+    const EXPERTISE_THRESHOLD = 0.7;
     if (performanceHistory.length > 0) {
       const lastPerformance = performanceHistory[performanceHistory.length - 1];
 
-      // If candidate is struggling (below threshold), stop generating more questions
       if (lastPerformance.score < EXPERTISE_THRESHOLD) {
         return {
           continue: false,
-          reason: `Candidate performance (${(lastPerformance.score * 100).toFixed(0)}%) below expertise threshold (${(EXPERTISE_THRESHOLD * 100).toFixed(0)}%). Stopping at ${currentQuestionCount} questions.`,
+          reason: `Candidate performance (${(lastPerformance.score * 100).toFixed(0)}%) below expertise threshold. Stopping at ${currentQuestionCount} questions.`,
         };
       }
     }
 
-    // Continue if performing well and haven't hit max
     return { continue: true };
   }
 
@@ -389,6 +507,7 @@ export class IncrementalQuestionGenerator {
     progressionHints: ProgressionHints;
     seniorityExpectations: SeniorityExpectations | null;
     timeRemaining: number;
+    irtTargeting?: DifficultyTargeting;
   }): string {
     const {
       seed,
@@ -400,6 +519,7 @@ export class IncrementalQuestionGenerator {
       progressionHints,
       seniorityExpectations,
       timeRemaining,
+      irtTargeting,
     } = params;
 
     const lastPerformance = previousPerformance[previousPerformance.length - 1];
@@ -452,7 +572,12 @@ Q${i + 1}: ${q.title}
 - Trend: ${progressAnalysis.trend}
 - Code Quality: ${progressAnalysis.codeQuality}
 - Tech Stack Compliance: ${progressAnalysis.techCompliance ? '✓ Compliant' : '✗ Non-compliant'}
-
+${irtTargeting ? `
+**IRT-Based Difficulty Targeting:**
+- Target Difficulty: θ=${irtTargeting.targetDifficulty.toFixed(2)} (${irtEngine.thetaToCategoricalDifficulty(irtTargeting.targetDifficulty)})
+- Acceptable Range: θ=${irtTargeting.targetRange.min.toFixed(2)} to θ=${irtTargeting.targetRange.max.toFixed(2)}
+- Reasoning: ${irtTargeting.reasoning}
+` : ''}
 **Time Remaining:** ${timeRemaining} minutes
 
 **Your Task:**
