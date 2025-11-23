@@ -8,11 +8,10 @@
 
 import prisma from "@/lib/prisma";
 import { getChatCompletion } from "./claude";
-import type { Difficulty, QuestionStatus, GeneratedQuestion } from "@/lib/prisma-types";
+import type { Difficulty, GeneratedQuestion } from "@/lib/prisma-types";
 import type { RequiredTechStack, BaseProblem, ProgressionHints, SeniorityExpectations } from "@/types/seed";
 import type { SeniorityLevel } from "@/types/assessment";
 import {
-  IRTDifficultyEngine,
   irtEngine,
   CandidateAbilityEstimate,
   DifficultyTargeting,
@@ -360,7 +359,7 @@ export class IncrementalQuestionGenerator {
    */
   private analyzeProgress(
     performanceHistory: PerformanceMetrics[],
-    questionCount: number
+    _questionCount: number
   ): ProgressAnalysis {
     if (performanceHistory.length === 0) {
       return {
@@ -521,8 +520,6 @@ export class IncrementalQuestionGenerator {
       timeRemaining,
       irtTargeting,
     } = params;
-
-    const lastPerformance = previousPerformance[previousPerformance.length - 1];
 
     let actionGuidance = '';
     if (progressAnalysis.recommendedAction === 'extend') {
