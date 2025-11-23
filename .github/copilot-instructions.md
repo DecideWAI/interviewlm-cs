@@ -12,7 +12,8 @@ InterviewLM is an AI-powered interview and talent hiring platform that leverages
 - **Styling**: Tailwind CSS 3.4.1
 - **Animations**: Framer Motion 11.0.0
 - **Fonts**: Google Fonts (Geist, Geist Mono)
-- **Linting**: ESLint 8 with Next.js config
+- **Linting**: ESLint 8 with Next.js config (core-web-vitals + typescript)
+- **PostCSS**: Autoprefixer for browser compatibility
 
 ## Project Structure
 
@@ -23,9 +24,22 @@ interviewlm-cs/
 │   ├── layout.tsx       # Root layout with metadata
 │   └── page.tsx         # Home page component
 ├── .github/             # GitHub configuration
+│   └── copilot-instructions.md  # This file
 ├── public/              # Static assets (if needed)
-└── [config files]       # Next.js, TypeScript, Tailwind configs
+├── .eslintrc.json       # ESLint configuration (core-web-vitals + typescript)
+├── next.config.ts       # Next.js configuration
+├── postcss.config.mjs   # PostCSS with Tailwind and Autoprefixer
+├── tailwind.config.ts   # Tailwind with custom animations (float, glow)
+├── tsconfig.json        # TypeScript strict mode configuration
+└── package.json         # Dependencies and scripts
 ```
+
+### Key Configuration Files
+
+- **tailwind.config.ts**: Defines custom animations (`float`, `glow`) and color variables
+- **globals.css**: Sets CSS variables (`--background`, `--foreground`) and base styles
+- **tsconfig.json**: Strict TypeScript with path aliases (`@/*`)
+- **next.config.ts**: Minimal Next.js configuration (can be extended as needed)
 
 ## Development Commands
 
@@ -56,12 +70,17 @@ interviewlm-cs/
 - Maintain consistent spacing using Tailwind's spacing scale
 - Use semantic color classes (e.g., `bg-zinc-900`, `text-gray-400`)
 - Keep custom CSS minimal; prefer Tailwind utilities
+- Use CSS variables defined in `globals.css` for theme colors (`--background`, `--foreground`)
+- Custom Tailwind animations available: `animate-float`, `animate-glow`, `animate-pulse`
 
 ### Animation
 - Use Framer Motion for animations
 - Define animation variants separately for reusability
 - Use appropriate easing functions for smooth transitions
 - Follow the established animation patterns (stagger, fade-in, etc.)
+- Common pattern: `containerVariants` with `staggerChildren` for sequential animations
+- Common pattern: `itemVariants` with opacity and y-axis transforms
+- Use easing like `[0.6, -0.05, 0.01, 0.99]` for smooth, professional motion
 
 ### Code Style
 - Use single quotes for strings
@@ -76,6 +95,8 @@ interviewlm-cs/
 - `package-lock.json` (unless updating dependencies)
 - `.gitignore` (unless adding new ignore patterns)
 - Build output directories (`.next/`, `node_modules/`)
+- `.eslintrc.json` (ESLint configuration is stable)
+- `postcss.config.mjs` (PostCSS configuration is standard)
 
 ### Security
 - Never commit API keys, secrets, or credentials
@@ -137,6 +158,54 @@ interviewlm-cs/
 1. Use `npm install <package>` to add new packages
 2. Verify package compatibility with React 19 and Next.js 15
 3. Update this instructions file if the dependency significantly changes the stack
+
+## Design System & Patterns
+
+### Color Palette
+- **Background**: Black (`#000000`) with zinc-900 variants for cards
+- **Foreground**: White (`#ffffff`) with gray variants for secondary text
+- **Borders**: zinc-800 with zinc-700 on hover
+- **Accents**: White backgrounds for CTAs, gradient text for emphasis
+
+### Component Patterns
+- **Cards**: `bg-zinc-900/50 border border-zinc-800 rounded-2xl p-6` with hover effects
+- **Forms**: Dark zinc-900 backgrounds with zinc-800 borders, white text
+- **Buttons**: White background with black text, hover scale and shadow effects
+- **Gradients**: Use `bg-gradient-to-r` for text and subtle backgrounds
+
+### Animation Patterns
+```typescript
+// Container with stagger
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.2,
+      delayChildren: 0.3,
+    },
+  },
+};
+
+// Item with fade and slide
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.8,
+      ease: [0.6, -0.05, 0.01, 0.99],
+    },
+  },
+};
+```
+
+### Responsive Design
+- Mobile-first approach with `md:` and `lg:` breakpoints
+- Stack vertically on mobile, grid layouts on desktop
+- Adjust font sizes: `text-3xl md:text-5xl` pattern
+- Flexible forms: `flex-col sm:flex-row` for inputs and buttons
 
 ## Project Status & Current Focus
 
