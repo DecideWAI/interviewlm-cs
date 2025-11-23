@@ -5,6 +5,7 @@ import { getSession } from "@/lib/auth-helpers";
 import Anthropic from "@anthropic-ai/sdk";
 import { GeneratedProblem } from "@/types/problem";
 import { incrementalQuestionGenerator } from "@/lib/services/incremental-questions";
+import { irtEngine } from "@/lib/services/irt-difficulty-engine";
 import type { RequiredTechStack } from "@/types/seed";
 
 // Request validation schema for generating next question
@@ -125,6 +126,8 @@ export async function GET(
     // Calculate incremental context if applicable
     let progressionContext = null;
     let buildingOn = "";
+    let difficultyVisibility = null;
+    let abilityEstimate = null;
 
     if (isIncremental) {
       const currentQuestionIndex = candidate.generatedQuestions.indexOf(currentQuestion);
@@ -145,6 +148,27 @@ export async function GET(
           buildingOn = `${previousQuestion.title}`;
         }
       }
+
+      // Calculate IRT-based difficulty visibility for the candidate
+      const irtPerformance = irtEngine.convertPerformanceToIRT(
+        completedQuestions.map((q: any) => ({
+          id: q.id,
+          difficulty: q.difficulty,
+          score: q.score,
+          startedAt: q.startedAt,
+          completedAt: q.completedAt,
+          estimatedTime: q.estimatedTime || 20,
+        }))
+      );
+
+      abilityEstimate = irtEngine.estimateAbility(irtPerformance);
+      const questionDifficulty = irtEngine.categoricalDifficultyToTheta(currentQuestion.difficulty);
+
+      difficultyVisibility = irtEngine.generateDifficultyVisibility(
+        currentQuestionIndex + 1,
+        questionDifficulty,
+        abilityEstimate
+      );
     }
 
     return NextResponse.json(
@@ -157,6 +181,13 @@ export async function GET(
         isIncremental,
         progressionContext,
         buildingOn,
+        difficultyVisibility,
+        abilityEstimate: abilityEstimate ? {
+          level: abilityEstimate.theta > 1 ? 'advanced' :
+                 abilityEstimate.theta > 0 ? 'intermediate' :
+                 abilityEstimate.theta > -1 ? 'developing' : 'foundational',
+          confidence: Math.round(abilityEstimate.reliability * 100),
+        } : null,
       },
       { status: 200 }
     );
@@ -276,8 +307,10 @@ export async function POST(
     let newQuestion: any;
 
     // Use incremental generator if seed is incremental type
+    let irtResult = null;
+
     if (seed && seed.seedType === 'incremental') {
-      console.log(`Using incremental question generator for seed ${seedId}`);
+      console.log(`Using IRT-enhanced incremental question generator for seed ${seedId}`);
 
       // Build performance metrics array
       const performanceMetrics = previousPerformance
@@ -310,8 +343,8 @@ export async function POST(
         : 0;
       const timeRemaining = Math.max(0, (assessmentDuration - timeElapsed) * 60); // seconds
 
-      // Generate incremental question
-      newQuestion = await incrementalQuestionGenerator.generateNextQuestion({
+      // Generate incremental question with full IRT analysis
+      irtResult = await incrementalQuestionGenerator.generateNextQuestionWithIRT({
         candidateId: id,
         seedId: seedId!,
         seniority: candidate.assessment.seniority.toLowerCase() as any,
@@ -319,6 +352,15 @@ export async function POST(
         previousPerformance: performanceMetrics,
         timeRemaining,
       });
+
+      newQuestion = irtResult.question;
+
+      // Log IRT decision
+      console.log(
+        `IRT targeting: θ=${irtResult.abilityEstimate.theta.toFixed(2)}, ` +
+        `target difficulty=${irtResult.difficultyTargeting.targetDifficulty.toFixed(2)}, ` +
+        `continue=${irtResult.shouldContinue.continue} (${irtResult.shouldContinue.reason})`
+      );
     } else {
       // Use legacy LLM generation
       console.log('Using legacy question generator');
@@ -382,6 +424,22 @@ export async function POST(
         isIncremental: seed?.seedType === 'incremental',
         progressionContext,
         buildingOn,
+        // IRT-enhanced data for candidate visibility
+        difficultyVisibility: irtResult?.difficultyVisibility || null,
+        abilityEstimate: irtResult ? {
+          level: irtResult.abilityEstimate.theta > 1 ? 'advanced' :
+                 irtResult.abilityEstimate.theta > 0 ? 'intermediate' :
+                 irtResult.abilityEstimate.theta > -1 ? 'developing' : 'foundational',
+          confidence: Math.round(irtResult.abilityEstimate.reliability * 100),
+          questionsUsed: irtResult.abilityEstimate.questionsUsed,
+        } : null,
+        assessmentContinuation: irtResult ? {
+          shouldContinue: irtResult.shouldContinue.continue,
+          reason: irtResult.shouldContinue.reason,
+          estimatedQuestionsRemaining: irtResult.shouldContinue.continue
+            ? Math.max(1, 5 - (newQuestion.order || 1))
+            : 0,
+        } : null,
       },
       { status: 200 }
     );
