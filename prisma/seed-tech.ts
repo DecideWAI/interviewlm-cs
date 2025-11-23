@@ -1,4 +1,3 @@
-import { PrismaClient } from "@prisma/client";
 import {
     LANGUAGES,
     FRAMEWORKS,
@@ -6,8 +5,7 @@ import {
     TESTING,
     TOOLS,
 } from "../lib/tech-catalog";
-
-const prisma = new PrismaClient();
+import prisma from "../lib/prisma";
 
 async function main() {
     console.log("Seeding technologies...");

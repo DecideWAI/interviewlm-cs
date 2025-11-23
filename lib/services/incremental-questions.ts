@@ -12,7 +12,6 @@ import type { Difficulty, QuestionStatus, GeneratedQuestion } from "@/lib/prisma
 import type { RequiredTechStack, BaseProblem, ProgressionHints, SeniorityExpectations } from "@/types/seed";
 import type { SeniorityLevel } from "@/types/assessment";
 import {
-  IRTDifficultyEngine,
   irtEngine,
   CandidateAbilityEstimate,
   DifficultyTargeting,
