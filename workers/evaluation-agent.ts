@@ -47,6 +47,17 @@ import {
   type ConfidenceMetrics,
   type BiasDetectionResult,
 } from '../lib/evaluation/confidence-and-bias';
+import {
+  ProgressiveScoringCalculator,
+  type ProgressiveScoreResult,
+} from '../lib/services/progressive-scoring';
+import { generateHiringRecommendation } from '../lib/scoring';
+import type { CandidateProfile, HiringRecommendation } from '../types/analytics';
+import type { SeniorityLevel } from '../types/assessment';
+import {
+  ActionableReportGenerator,
+  type EvaluationData,
+} from '../lib/services/actionable-report';
 
 /**
  * Evaluation score for a single dimension
@@ -89,6 +100,20 @@ interface EvaluationResult {
   overallScore: number;
   overallConfidence: number;
 
+  // Progressive scoring (multi-question assessments)
+  progressiveScoreResult?: ProgressiveScoreResult;
+  expertiseLevel?: 'beginner' | 'intermediate' | 'advanced' | 'expert';
+  expertiseGrowth?: number;
+  expertiseGrowthTrend?: 'improving' | 'declining' | 'stable';
+
+  // Confidence & bias detection
+  confidenceMetrics?: ConfidenceMetrics;
+  biasDetection?: BiasDetectionResult;
+  fairnessReport?: string;
+
+  // Hiring recommendation
+  hiringRecommendation?: HiringRecommendation;
+
   // Metadata
   evaluatedAt: Date;
   model: string;
@@ -124,11 +149,11 @@ class EvaluationAgentWorker {
     );
 
     // Worker event handlers
-    this.worker.on('completed', (job) => {
+    this.worker.on('completed', (job: Job) => {
       console.log(`[Evaluation Agent] Evaluated session: ${job.data.sessionId}`);
     });
 
-    this.worker.on('failed', async (job, err) => {
+    this.worker.on('failed', async (job: Job | undefined, err: Error) => {
       console.error(`[Evaluation Agent] Failed to evaluate session: ${job?.data.sessionId}`, err);
 
       // Move to dead letter queue if exceeded max attempts
@@ -137,7 +162,7 @@ class EvaluationAgentWorker {
       }
     });
 
-    this.worker.on('error', (err) => {
+    this.worker.on('error', (err: Error) => {
       console.error('[Evaluation Agent] Worker error:', err);
     });
 
@@ -260,6 +285,22 @@ class EvaluationAgentWorker {
       biasDetectionResult
     );
 
+    // Calculate progressive scoring for multi-question assessments
+    const progressiveResult = await this.calculateProgressiveScoring(candidateId, recording);
+
+    // Generate hiring recommendation
+    const hiringRecommendation = await this.generateHiringRecommendationForCandidate(
+      candidateId,
+      {
+        codeQuality,
+        problemSolving,
+        aiCollaboration,
+        communication,
+      },
+      Math.round(overallScore),
+      biasFlags
+    );
+
     // Build evaluation result
     const result: EvaluationResult = {
       sessionId,
@@ -270,12 +311,21 @@ class EvaluationAgentWorker {
       communication,
       overallScore: Math.round(overallScore),
       overallConfidence,
+      // Progressive scoring
+      progressiveScoreResult: progressiveResult?.progressiveScore,
+      expertiseLevel: progressiveResult?.progressiveScore?.expertiseLevel,
+      expertiseGrowth: progressiveResult?.expertiseGrowth?.growth,
+      expertiseGrowthTrend: progressiveResult?.expertiseGrowth?.trend,
+      // Confidence & bias
+      confidenceMetrics,
+      biasDetection: biasDetectionResult,
+      fairnessReport,
+      // Hiring recommendation
+      hiringRecommendation,
+      // Metadata
       evaluatedAt: new Date(),
       model: AGENT_MODEL_RECOMMENDATIONS.evaluationAgent,
       biasFlags,
-      confidenceMetrics, // NEW
-      biasDetection: biasDetectionResult, // NEW
-      fairnessReport, // NEW
     };
 
       // Save evaluation to database
@@ -441,7 +491,7 @@ class EvaluationAgentWorker {
           exitCode: e.data?.exitCode || 0,
           timestamp: new Date(e.timestamp),
         }))
-        .filter((cmd) => cmd.command.trim().length > 0);
+        .filter((cmd: { command: string; output: string; exitCode: number; timestamp: Date }) => cmd.command.trim().length > 0);
 
       if (terminalCommands.length > 0) {
         const terminalAnalysis = analyzeTerminalCommands(terminalCommands);
@@ -500,7 +550,8 @@ class EvaluationAgentWorker {
       evidence,
       breakdown: {
         iterationPatterns: iterationScore,
-        debuggingApproach: debuggingScore,
+        debuggingApproach: testBasedScore,
+        terminalAnalysis: terminalScore,
       },
     };
   }
@@ -564,8 +615,24 @@ class EvaluationAgentWorker {
         value: promptAnalysis.technicalDepth,
       });
 
+      // AI usage effectiveness: Did they use AI appropriately?
+      const metrics = recording.metrics as any;
+      const aiDependency = metrics?.aiDependencyScore || 50; // Default to moderate
+
+      // Optimal: Moderate AI usage (not too dependent, not ignoring it)
+      const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
+
+      evidence.push({
+        type: 'metric',
+        description: `AI dependency score: ${aiDependency}/100`,
+        value: aiDependency,
+      });
+
+      // Combine prompt quality with usage effectiveness (70/30 weight)
+      const combinedScore = promptAnalysis.score * 0.7 + usageEffectivenessScore * 0.3;
+
       return {
-        score: promptAnalysis.score,
+        score: Math.round(combinedScore),
         confidence: interactions.length >= 5 ? 0.9 : 0.6,
         evidence,
         breakdown: {
@@ -573,6 +640,7 @@ class EvaluationAgentWorker {
           clarity: promptAnalysis.clarity,
           technicalDepth: promptAnalysis.technicalDepth,
           iterationQuality: promptAnalysis.iterationQuality,
+          usageEffectiveness: usageEffectivenessScore,
         },
       };
     } catch (error) {
@@ -582,45 +650,36 @@ class EvaluationAgentWorker {
       const avgPromptQuality = 3; // Neutral
       const promptQualityScore = ((avgPromptQuality - 1) / 4) * 100;
 
+      // AI usage effectiveness fallback
+      const metrics = recording.metrics as any;
+      const aiDependency = metrics?.aiDependencyScore || 50;
+      const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
+
+      // Combine scores
+      const combinedScore = promptQualityScore * 0.7 + usageEffectivenessScore * 0.3;
+
       evidence.push({
         type: 'metric',
         description: 'Prompt analysis unavailable, using fallback scoring',
         value: promptQualityScore,
       });
 
+      evidence.push({
+        type: 'metric',
+        description: `AI dependency score: ${aiDependency}/100`,
+        value: aiDependency,
+      });
+
       return {
-        score: Math.round(promptQualityScore),
+        score: Math.round(combinedScore),
         confidence: 0.3, // Low confidence for fallback
         evidence,
+        breakdown: {
+          promptQuality: promptQualityScore,
+          usageEffectiveness: usageEffectivenessScore,
+        },
       };
     }
-
-    // AI usage effectiveness: Did they use AI appropriately?
-    const metrics = recording.metrics as any;
-    const aiDependency = metrics?.aiDependencyScore || 0;
-
-    // Optimal: Moderate AI usage (not too dependent, not ignoring it)
-    const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
-
-    evidence.push({
-      type: 'metric',
-      description: `AI dependency score: ${aiDependency}/100`,
-      value: aiDependency,
-    });
-
-    // Combine scores
-    const score = (promptQualityScore + usageEffectivenessScore) / 2;
-    const confidence = interactions.length >= 5 ? 0.85 : 0.6;
-
-    return {
-      score: Math.round(score),
-      confidence,
-      evidence,
-      breakdown: {
-        promptQuality: promptQualityScore,
-        usageEffectiveness: usageEffectivenessScore,
-      },
-    };
   }
 
   /**
@@ -997,6 +1056,107 @@ Respond with ONLY a number between 0-100.`,
   }
 
   /**
+   * Calculate progressive scoring for multi-question assessments
+   */
+  private async calculateProgressiveScoring(
+    candidateId: string,
+    recording: SessionRecording
+  ): Promise<{
+    progressiveScore: ProgressiveScoreResult;
+    expertiseGrowth: { growth: number; trend: 'improving' | 'declining' | 'stable' };
+  } | null> {
+    try {
+      const questions = await prisma.generatedQuestion.findMany({
+        where: { candidateId, status: 'COMPLETED' },
+        orderBy: { order: 'asc' },
+      });
+
+      if (questions.length === 0) return null;
+
+      const questionScores = questions.map((q: { order: number; score: number | null; difficultyAssessment: unknown }) => ({
+        questionNumber: q.order,
+        score: q.score || 0,
+        difficultyAssessment: q.difficultyAssessment as any,
+      }));
+
+      const progressiveScore = ProgressiveScoringCalculator.calculateScore(questionScores);
+      const expertiseGrowth = ProgressiveScoringCalculator.calculateExpertiseGrowth(
+        questionScores.map((q: { questionNumber: number; score: number }) => ({ questionNumber: q.questionNumber, score: q.score }))
+      );
+
+      console.log(`[Evaluation Agent] Progressive scoring:`, progressiveScore.expertiseLevel);
+      return { progressiveScore, expertiseGrowth };
+    } catch (error) {
+      console.error('[Evaluation Agent] Progressive scoring error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Generate hiring recommendation based on evaluation scores
+   */
+  private async generateHiringRecommendationForCandidate(
+    candidateId: string,
+    scores: {
+      codeQuality: DimensionScore;
+      problemSolving: DimensionScore;
+      aiCollaboration: DimensionScore;
+      communication: DimensionScore;
+    },
+    overallScore: number,
+    biasFlags: string[]
+  ): Promise<HiringRecommendation | undefined> {
+    try {
+      const candidate = await prisma.candidate.findUnique({
+        where: { id: candidateId },
+        include: { assessment: true },
+      });
+
+      if (!candidate) return undefined;
+
+      const seniorityMap: Record<string, SeniorityLevel> = {
+        JUNIOR: 'junior', MID: 'mid', SENIOR: 'senior', LEAD: 'staff', PRINCIPAL: 'principal',
+      };
+      const seniority = seniorityMap[candidate.assessment.seniority] || 'mid';
+
+      const { detectRedFlags, detectGreenFlags } = await import('../lib/scoring');
+
+      const profileForFlags: CandidateProfile = {
+        id: candidateId,
+        name: candidate.name,
+        email: candidate.email,
+        appliedRole: candidate.assessment.role as any,
+        targetSeniority: seniority,
+        status: candidate.status as any,
+        stage: 'assessment' as any,
+        assessmentCompleted: true,
+        overallScore,
+        codeQualityScore: scores.codeQuality.score,
+        problemSolvingScore: scores.problemSolving.score,
+        aiCollaborationScore: scores.aiCollaboration.score,
+        technicalScore: overallScore,
+        completionRate: 1,
+        timeUsed: 60,
+        topStrengths: [],
+        areasForImprovement: [],
+        redFlags: [],
+        greenFlags: [],
+        appliedAt: candidate.createdAt.toISOString(),
+        lastActivityAt: new Date().toISOString(),
+      };
+
+      const redFlags = detectRedFlags(profileForFlags);
+      const greenFlags = detectGreenFlags(profileForFlags);
+      const candidateProfile = { ...profileForFlags, redFlags, greenFlags };
+
+      return generateHiringRecommendation(candidateProfile, seniority);
+    } catch (error) {
+      console.error('[Evaluation Agent] Hiring recommendation error:', error);
+      return undefined;
+    }
+  }
+
+  /**
    * Save evaluation to database
    */
   private async saveEvaluation(result: EvaluationResult): Promise<void> {
@@ -1006,18 +1166,112 @@ Respond with ONLY a number between 0-100.`,
         sessionId: result.sessionId,
         codeQualityScore: result.codeQuality.score,
         codeQualityEvidence: result.codeQuality.evidence as any,
+        codeQualityConfidence: result.codeQuality.confidence,
         problemSolvingScore: result.problemSolving.score,
         problemSolvingEvidence: result.problemSolving.evidence as any,
+        problemSolvingConfidence: result.problemSolving.confidence,
         aiCollaborationScore: result.aiCollaboration.score,
         aiCollaborationEvidence: result.aiCollaboration.evidence as any,
+        aiCollaborationConfidence: result.aiCollaboration.confidence,
         communicationScore: result.communication.score,
         communicationEvidence: result.communication.evidence as any,
+        communicationConfidence: result.communication.confidence,
         overallScore: result.overallScore,
         confidence: result.overallConfidence,
+        progressiveScoreResult: result.progressiveScoreResult as any,
+        expertiseLevel: result.expertiseLevel,
+        expertiseGrowth: result.expertiseGrowth,
+        expertiseGrowthTrend: result.expertiseGrowthTrend,
         biasFlags: result.biasFlags,
+        confidenceMetrics: result.confidenceMetrics as any,
+        biasDetection: result.biasDetection as any,
+        fairnessReport: result.fairnessReport,
+        hiringRecommendation: result.hiringRecommendation?.decision,
+        hiringConfidence: result.hiringRecommendation?.confidence,
+        hiringReasoning: result.hiringRecommendation as any,
+        model: result.model,
         evaluatedAt: result.evaluatedAt,
       },
     });
+
+    // Update candidate scores
+    const candidate = await prisma.candidate.update({
+      where: { id: result.candidateId },
+      data: {
+        overallScore: result.overallScore,
+        codingScore: result.codeQuality.score,
+        communicationScore: result.communication.score,
+        problemSolvingScore: result.problemSolving.score,
+        status: 'EVALUATED',
+      },
+      include: {
+        assessment: {
+          select: { role: true, seniority: true },
+        },
+        generatedQuestions: {
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+
+    // Generate actionable report
+    try {
+      const reportData: EvaluationData = {
+        sessionId: result.sessionId,
+        candidateId: result.candidateId,
+        role: candidate.assessment.role,
+        seniority: candidate.assessment.seniority.toLowerCase() as SeniorityLevel,
+        techStack: [],
+        codeQuality: {
+          score: result.codeQuality.score,
+          evidence: result.codeQuality.evidence.map(e => e.description),
+          breakdown: result.codeQuality.breakdown,
+        },
+        problemSolving: {
+          score: result.problemSolving.score,
+          evidence: result.problemSolving.evidence.map(e => e.description),
+          breakdown: result.problemSolving.breakdown,
+        },
+        aiCollaboration: {
+          score: result.aiCollaboration.score,
+          evidence: result.aiCollaboration.evidence.map(e => e.description),
+          breakdown: result.aiCollaboration.breakdown,
+        },
+        communication: {
+          score: result.communication.score,
+          evidence: result.communication.evidence.map(e => e.description),
+          breakdown: result.communication.breakdown,
+        },
+        overallScore: result.overallScore,
+        expertiseLevel: result.expertiseLevel,
+        expertiseGrowthTrend: result.expertiseGrowthTrend,
+        questionScores: candidate.generatedQuestions
+          .filter((q: any) => q.score !== null)
+          .map((q: any, idx: number) => ({
+            questionNumber: idx + 1,
+            score: q.score,
+            difficulty: q.difficulty,
+            topics: q.requirements || [],
+          })),
+      };
+
+      const actionableReport = ActionableReportGenerator.generateReport(reportData);
+
+      // Update evaluation with actionable report
+      await prisma.evaluation.update({
+        where: { sessionId: result.sessionId },
+        data: {
+          actionableReport: actionableReport as any,
+        },
+      });
+
+      console.log(`[Evaluation Agent] Generated actionable report for ${result.candidateId}`);
+    } catch (reportError) {
+      // Don't fail the evaluation if report generation fails
+      console.error(`[Evaluation Agent] Failed to generate actionable report:`, reportError);
+    }
+
+    console.log(`[Evaluation Agent] Saved evaluation for ${result.candidateId}`);
   }
 
   /**

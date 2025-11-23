@@ -162,6 +162,7 @@ export interface RoleMetadata {
   icon: string;
   defaultDuration: number;
   availableInTiers: PricingTier[];
+  status: "active" | "coming_soon";
 }
 
 /**

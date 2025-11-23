@@ -93,7 +93,7 @@ export default function CandidateLandingPage({ params }: { params: Promise<{ tok
 
       if (response.ok) {
         const json = await response.json();
-        router.push(`/interview/${json.sessionId}`);
+        router.push(`/interview/${json.candidateId}`);
       } else {
         const json = await response.json();
         toast.error(json.error || "Failed to start interview");

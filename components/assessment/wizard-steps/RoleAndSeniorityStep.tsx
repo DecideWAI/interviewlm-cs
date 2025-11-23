@@ -61,6 +61,7 @@ export function RoleAndSeniorityStep({
         <div className="grid grid-cols-2 gap-3">
           {Object.values(ROLES).map((role) => {
             const isAvailable = isRoleAvailableForTier(role.id, userTier);
+            const isActive = role.status === "active";
             const isSelected = config.role === role.id;
             const IconComponent = getIconComponent(role.icon);
 
@@ -68,13 +69,13 @@ export function RoleAndSeniorityStep({
               <button
                 key={role.id}
                 type="button"
-                onClick={() => isAvailable && handleRoleSelect(role.id)}
-                disabled={!isAvailable}
+                onClick={() => isAvailable && isActive && handleRoleSelect(role.id)}
+                disabled={!isAvailable || !isActive}
                 className={`
                   p-4 rounded-lg border-2 text-left transition-all
                   ${isSelected
                     ? "border-primary bg-primary/5"
-                    : isAvailable
+                    : isAvailable && isActive
                       ? "border-border hover:border-border-secondary hover:bg-background-tertiary"
                       : "border-border opacity-50 cursor-not-allowed"
                   }
@@ -94,11 +95,15 @@ export function RoleAndSeniorityStep({
                       <h4 className="font-medium text-text-primary text-sm">
                         {role.name}
                       </h4>
-                      {!isAvailable && (
+                      {!isActive ? (
+                        <Badge variant="default" className="text-xs bg-background-tertiary text-text-secondary border-border hover:bg-background-tertiary">
+                          Coming Soon
+                        </Badge>
+                      ) : !isAvailable ? (
                         <Badge variant="warning" className="text-xs">
                           Upgrade
                         </Badge>
-                      )}
+                      ) : null}
                     </div>
                     <p className="text-xs text-text-tertiary line-clamp-2">
                       {role.description}
