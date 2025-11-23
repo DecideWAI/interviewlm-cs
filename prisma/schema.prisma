@@ -221,6 +221,7 @@ model Candidate {
   organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   generatedQuestions  GeneratedQuestion[]
   sessionRecording    SessionRecording?
+  evaluation          Evaluation?
 
   @@index([isPreview])
   @@map("candidates")
@@ -243,6 +244,7 @@ model SessionRecording {
   events             SessionEvent[]
   candidate          Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
   testResults        TestResult[]
+  terminalCommands   TerminalCommand[]
 
   @@index([candidateId])
   @@map("session_recordings")
@@ -469,14 +471,93 @@ model Technology {
   description       String?
   color             String?  // Hex color code
   detectionPatterns Json?    @default("[]") // JSON array of patterns
-  
+
   // Relationships
   pairedWithIds     String[] @default([]) // Array of IDs this tech is commonly paired with
-  
+
   // Metadata
   isActive          Boolean  @default(true)
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("technologies")
+}
+
+// =====================================================
+// EVALUATION SYSTEM
+// Evidence-based evaluation results for interviews
+// =====================================================
+
+model Evaluation {
+  id                       String   @id @default(cuid())
+  candidateId              String   @map("candidate_id")
+  sessionId                String   @unique @map("session_id")
+
+  // 4-dimension scores (0-100)
+  codeQualityScore         Int      @map("code_quality_score")
+  codeQualityEvidence      Json     @map("code_quality_evidence")
+  codeQualityConfidence    Float    @default(0.5) @map("code_quality_confidence")
+
+  problemSolvingScore      Int      @map("problem_solving_score")
+  problemSolvingEvidence   Json     @map("problem_solving_evidence")
+  problemSolvingConfidence Float    @default(0.5) @map("problem_solving_confidence")
+
+  aiCollaborationScore     Int      @map("ai_collaboration_score")
+  aiCollaborationEvidence  Json     @map("ai_collaboration_evidence")
+  aiCollaborationConfidence Float   @default(0.5) @map("ai_collaboration_confidence")
+
+  communicationScore       Int      @map("communication_score")
+  communicationEvidence    Json     @map("communication_evidence")
+  communicationConfidence  Float    @default(0.5) @map("communication_confidence")
+
+  // Overall metrics
+  overallScore             Int      @map("overall_score")
+  confidence               Float    @default(0.5)
+
+  // Progressive scoring (multi-question assessments)
+  progressiveScoreResult   Json?    @map("progressive_score_result")
+  expertiseLevel           String?  @map("expertise_level") // beginner, intermediate, advanced, expert
+  expertiseGrowth          Float?   @map("expertise_growth") // percentage point change
+  expertiseGrowthTrend     String?  @map("expertise_growth_trend") // improving, declining, stable
+
+  // Bias detection & fairness
+  biasFlags                String[] @default([])
+  confidenceMetrics        Json?    @map("confidence_metrics")
+  biasDetection            Json?    @map("bias_detection")
+  fairnessReport           String?  @map("fairness_report")
+
+  // Hiring recommendation
+  hiringRecommendation     String?  @map("hiring_recommendation") // strong_yes, yes, maybe, no, strong_no
+  hiringConfidence         Float?   @map("hiring_confidence")
+  hiringReasoning          Json?    @map("hiring_reasoning")
+
+  // Metadata
+  model                    String   @default("claude-sonnet-4-20250514")
+  evaluatedAt              DateTime @default(now()) @map("evaluated_at")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  candidate                Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+  @@index([sessionId])
+  @@index([overallScore])
+  @@index([evaluatedAt])
+  @@map("evaluations")
+}
+
+model TerminalCommand {
+  id        String           @id @default(cuid())
+  sessionId String           @map("session_id")
+  timestamp DateTime         @default(now())
+  command   String
+  output    String?
+  exitCode  Int              @default(0) @map("exit_code")
+  duration  Int?             // Execution duration in ms
+  category  String?          // Categorized command type
+  session   SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, timestamp])
+  @@map("terminal_commands")
 }

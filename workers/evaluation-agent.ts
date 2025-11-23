@@ -47,6 +47,13 @@ import {
   type ConfidenceMetrics,
   type BiasDetectionResult,
 } from '../lib/evaluation/confidence-and-bias';
+import {
+  ProgressiveScoringCalculator,
+  type ProgressiveScoreResult,
+} from '../lib/services/progressive-scoring';
+import { generateHiringRecommendation } from '../lib/scoring';
+import type { CandidateProfile, HiringRecommendation } from '../types/analytics';
+import type { SeniorityLevel } from '../types/assessment';
 
 /**
  * Evaluation score for a single dimension
@@ -88,6 +95,20 @@ interface EvaluationResult {
   // Overall score (weighted)
   overallScore: number;
   overallConfidence: number;
+
+  // Progressive scoring (multi-question assessments)
+  progressiveScoreResult?: ProgressiveScoreResult;
+  expertiseLevel?: 'beginner' | 'intermediate' | 'advanced' | 'expert';
+  expertiseGrowth?: number;
+  expertiseGrowthTrend?: 'improving' | 'declining' | 'stable';
+
+  // Confidence & bias detection
+  confidenceMetrics?: ConfidenceMetrics;
+  biasDetection?: BiasDetectionResult;
+  fairnessReport?: string;
+
+  // Hiring recommendation
+  hiringRecommendation?: HiringRecommendation;
 
   // Metadata
   evaluatedAt: Date;
@@ -260,6 +281,22 @@ class EvaluationAgentWorker {
       biasDetectionResult
     );
 
+    // Calculate progressive scoring for multi-question assessments
+    const progressiveResult = await this.calculateProgressiveScoring(candidateId, recording);
+
+    // Generate hiring recommendation
+    const hiringRecommendation = await this.generateHiringRecommendationForCandidate(
+      candidateId,
+      {
+        codeQuality,
+        problemSolving,
+        aiCollaboration,
+        communication,
+      },
+      Math.round(overallScore),
+      biasFlags
+    );
+
     // Build evaluation result
     const result: EvaluationResult = {
       sessionId,
@@ -270,12 +307,21 @@ class EvaluationAgentWorker {
       communication,
       overallScore: Math.round(overallScore),
       overallConfidence,
+      // Progressive scoring
+      progressiveScoreResult: progressiveResult?.progressiveScore,
+      expertiseLevel: progressiveResult?.progressiveScore?.expertiseLevel,
+      expertiseGrowth: progressiveResult?.expertiseGrowth?.growth,
+      expertiseGrowthTrend: progressiveResult?.expertiseGrowth?.trend,
+      // Confidence & bias
+      confidenceMetrics,
+      biasDetection: biasDetectionResult,
+      fairnessReport,
+      // Hiring recommendation
+      hiringRecommendation,
+      // Metadata
       evaluatedAt: new Date(),
       model: AGENT_MODEL_RECOMMENDATIONS.evaluationAgent,
       biasFlags,
-      confidenceMetrics, // NEW
-      biasDetection: biasDetectionResult, // NEW
-      fairnessReport, // NEW
     };
 
       // Save evaluation to database
@@ -500,7 +546,8 @@ class EvaluationAgentWorker {
       evidence,
       breakdown: {
         iterationPatterns: iterationScore,
-        debuggingApproach: debuggingScore,
+        debuggingApproach: testBasedScore,
+        terminalAnalysis: terminalScore,
       },
     };
   }
@@ -997,6 +1044,107 @@ Respond with ONLY a number between 0-100.`,
   }
 
   /**
+   * Calculate progressive scoring for multi-question assessments
+   */
+  private async calculateProgressiveScoring(
+    candidateId: string,
+    recording: SessionRecording
+  ): Promise<{
+    progressiveScore: ProgressiveScoreResult;
+    expertiseGrowth: { growth: number; trend: 'improving' | 'declining' | 'stable' };
+  } | null> {
+    try {
+      const questions = await prisma.generatedQuestion.findMany({
+        where: { candidateId, status: 'COMPLETED' },
+        orderBy: { order: 'asc' },
+      });
+
+      if (questions.length === 0) return null;
+
+      const questionScores = questions.map((q) => ({
+        questionNumber: q.order,
+        score: q.score || 0,
+        difficultyAssessment: q.difficultyAssessment as any,
+      }));
+
+      const progressiveScore = ProgressiveScoringCalculator.calculateScore(questionScores);
+      const expertiseGrowth = ProgressiveScoringCalculator.calculateExpertiseGrowth(
+        questionScores.map((q) => ({ questionNumber: q.questionNumber, score: q.score }))
+      );
+
+      console.log(`[Evaluation Agent] Progressive scoring:`, progressiveScore.expertiseLevel);
+      return { progressiveScore, expertiseGrowth };
+    } catch (error) {
+      console.error('[Evaluation Agent] Progressive scoring error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Generate hiring recommendation based on evaluation scores
+   */
+  private async generateHiringRecommendationForCandidate(
+    candidateId: string,
+    scores: {
+      codeQuality: DimensionScore;
+      problemSolving: DimensionScore;
+      aiCollaboration: DimensionScore;
+      communication: DimensionScore;
+    },
+    overallScore: number,
+    biasFlags: string[]
+  ): Promise<HiringRecommendation | undefined> {
+    try {
+      const candidate = await prisma.candidate.findUnique({
+        where: { id: candidateId },
+        include: { assessment: true },
+      });
+
+      if (!candidate) return undefined;
+
+      const seniorityMap: Record<string, SeniorityLevel> = {
+        JUNIOR: 'junior', MID: 'mid', SENIOR: 'senior', LEAD: 'staff', PRINCIPAL: 'principal',
+      };
+      const seniority = seniorityMap[candidate.assessment.seniority] || 'mid';
+
+      const { detectRedFlags, detectGreenFlags } = await import('../lib/scoring');
+
+      const profileForFlags: CandidateProfile = {
+        id: candidateId,
+        name: candidate.name,
+        email: candidate.email,
+        appliedRole: candidate.assessment.role as any,
+        targetSeniority: seniority,
+        status: candidate.status as any,
+        stage: 'assessment' as any,
+        assessmentCompleted: true,
+        overallScore,
+        codeQualityScore: scores.codeQuality.score,
+        problemSolvingScore: scores.problemSolving.score,
+        aiCollaborationScore: scores.aiCollaboration.score,
+        technicalScore: overallScore,
+        completionRate: 1,
+        timeUsed: 60,
+        topStrengths: [],
+        areasForImprovement: [],
+        redFlags: [],
+        greenFlags: [],
+        appliedAt: candidate.createdAt.toISOString(),
+        lastActivityAt: new Date().toISOString(),
+      };
+
+      const redFlags = detectRedFlags(profileForFlags);
+      const greenFlags = detectGreenFlags(profileForFlags);
+      const candidateProfile = { ...profileForFlags, redFlags, greenFlags };
+
+      return generateHiringRecommendation(candidateProfile, seniority);
+    } catch (error) {
+      console.error('[Evaluation Agent] Hiring recommendation error:', error);
+      return undefined;
+    }
+  }
+
+  /**
    * Save evaluation to database
    */
   private async saveEvaluation(result: EvaluationResult): Promise<void> {
@@ -1006,18 +1154,47 @@ Respond with ONLY a number between 0-100.`,
         sessionId: result.sessionId,
         codeQualityScore: result.codeQuality.score,
         codeQualityEvidence: result.codeQuality.evidence as any,
+        codeQualityConfidence: result.codeQuality.confidence,
         problemSolvingScore: result.problemSolving.score,
         problemSolvingEvidence: result.problemSolving.evidence as any,
+        problemSolvingConfidence: result.problemSolving.confidence,
         aiCollaborationScore: result.aiCollaboration.score,
         aiCollaborationEvidence: result.aiCollaboration.evidence as any,
+        aiCollaborationConfidence: result.aiCollaboration.confidence,
         communicationScore: result.communication.score,
         communicationEvidence: result.communication.evidence as any,
+        communicationConfidence: result.communication.confidence,
         overallScore: result.overallScore,
         confidence: result.overallConfidence,
+        progressiveScoreResult: result.progressiveScoreResult as any,
+        expertiseLevel: result.expertiseLevel,
+        expertiseGrowth: result.expertiseGrowth,
+        expertiseGrowthTrend: result.expertiseGrowthTrend,
         biasFlags: result.biasFlags,
+        confidenceMetrics: result.confidenceMetrics as any,
+        biasDetection: result.biasDetection as any,
+        fairnessReport: result.fairnessReport,
+        hiringRecommendation: result.hiringRecommendation?.decision,
+        hiringConfidence: result.hiringRecommendation?.confidence,
+        hiringReasoning: result.hiringRecommendation as any,
+        model: result.model,
         evaluatedAt: result.evaluatedAt,
       },
     });
+
+    // Update candidate scores
+    await prisma.candidate.update({
+      where: { id: result.candidateId },
+      data: {
+        overallScore: result.overallScore,
+        codingScore: result.codeQuality.score,
+        communicationScore: result.communication.score,
+        problemSolvingScore: result.problemSolving.score,
+        status: 'EVALUATED',
+      },
+    });
+
+    console.log(`[Evaluation Agent] Saved evaluation for ${result.candidateId}`);
   }
 
   /**
