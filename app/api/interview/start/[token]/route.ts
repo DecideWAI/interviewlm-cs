@@ -23,6 +23,7 @@ export async function POST(
       },
       include: {
         assessment: true,
+        sessionRecording: true,
       },
     });
 
@@ -43,7 +44,7 @@ export async function POST(
     }
 
     // Check if already completed
-    if (candidate.status === "COMPLETED" || candidate.status === "SUBMITTED") {
+    if (candidate.status === "COMPLETED" || candidate.status === "EVALUATED" || candidate.status === "HIRED" || candidate.status === "REJECTED") {
       return NextResponse.json(
         { error: "Interview already completed" },
         { status: 400 }
@@ -51,28 +52,34 @@ export async function POST(
     }
 
     // If already has a session, return that session ID
-    if (candidate.sessionId) {
+    if (candidate.sessionRecording) {
       return NextResponse.json({
-        sessionId: candidate.sessionId,
+        sessionId: candidate.sessionRecording.id,
+        candidateId: candidate.id,
         message: "Resuming existing session",
       });
     }
 
-    // Create a new interview session
-    const sessionId = crypto.randomBytes(16).toString("hex");
+    // Create a new interview session recording
+    const sessionRecording = await prisma.sessionRecording.create({
+      data: {
+        candidateId: candidate.id,
+        status: "ACTIVE",
+      },
+    });
 
-    // Update candidate with session ID and status
+    // Update candidate status
     await prisma.candidate.update({
       where: { id: candidate.id },
       data: {
-        sessionId,
         status: "IN_PROGRESS",
         startedAt: new Date(),
       },
     });
 
     return NextResponse.json({
-      sessionId,
+      sessionId: sessionRecording.id,
+      candidateId: candidate.id,
       message: "Interview session created successfully",
     });
   } catch (error) {

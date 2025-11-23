@@ -490,7 +490,7 @@ model Technology {
 
 model Evaluation {
   id                       String   @id @default(cuid())
-  candidateId              String   @map("candidate_id")
+  candidateId              String   @unique @map("candidate_id")
   sessionId                String   @unique @map("session_id")
 
   // 4-dimension scores (0-100)
