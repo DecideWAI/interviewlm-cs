@@ -121,12 +121,39 @@ export async function POST(
     const startTime = Date.now();
 
     // Create CodingAgent instance
+    // IMPORTANT: id = candidateId, sessionRecording.id = actual session recording ID
     const agent = await createCodingAgent({
-      sessionId: id,
+      sessionId: id, // This is used for Modal volume ID (vol-{candidateId})
+      candidateId: id, // Pass candidateId explicitly for run_tests
+      sessionRecordingId: sessionRecording.id, // For DB operations
       helpfulnessLevel: (helpfulnessLevel || "pair-programming") as HelpfulnessLevel,
       workspaceRoot: "/workspace",
       problemStatement,
     });
+
+    // Load conversation history from database to maintain context across requests
+    // This is CRITICAL - without this, Claude loses context between messages
+    const previousInteractions = await prisma.claudeInteraction.findMany({
+      where: {
+        sessionId: sessionRecording.id,
+      },
+      orderBy: {
+        createdAt: "asc",
+      },
+      select: {
+        role: true,
+        content: true,
+      },
+    });
+
+    if (previousInteractions.length > 0) {
+      agent.loadConversationHistory(
+        previousInteractions.map((interaction) => ({
+          role: interaction.role as "user" | "assistant",
+          content: interaction.content,
+        }))
+      );
+    }
 
     // Send message to agent (this handles tool use automatically)
     const agentResponse = await agent.sendMessage(enhancedMessage);

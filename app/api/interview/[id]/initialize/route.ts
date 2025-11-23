@@ -338,15 +338,15 @@ module.exports = longestPalindrome;`,
     // Transform test cases to match ProblemPanel interface
     const transformedTestCases = Array.isArray(question.testCases)
       ? question.testCases.map((tc: any) => {
-          // Handle both 'expected' and 'expectedOutput' field names for backwards compatibility
-          const expectedValue = tc.expectedOutput || tc.expected;
-          return {
-            name: tc.name || "",
-            input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
-            expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
-            hidden: tc.hidden || false,
-          };
-        })
+        // Handle both 'expected' and 'expectedOutput' field names for backwards compatibility
+        const expectedValue = tc.expectedOutput || tc.expected;
+        return {
+          name: tc.name || "",
+          input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
+          expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
+          hidden: tc.hidden || false,
+        };
+      })
       : [];
 
     // Return initialization data

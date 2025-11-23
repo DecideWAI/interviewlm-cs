@@ -13,7 +13,7 @@ const anthropic = new Anthropic({
 // Request validation schema
 const runTestsRequestSchema = z.object({
   code: z.string().min(1, "Code is required"),
-  language: z.enum(["javascript", "typescript", "python", "go"], {
+  language: z.enum(["javascript", "typescript", "python", "go", "node.js"], {
     errorMap: () => ({ message: "Unsupported language" }),
   }),
   testCases: z.array(
