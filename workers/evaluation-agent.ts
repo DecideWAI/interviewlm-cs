@@ -54,6 +54,10 @@ import {
 import { generateHiringRecommendation } from '../lib/scoring';
 import type { CandidateProfile, HiringRecommendation } from '../types/analytics';
 import type { SeniorityLevel } from '../types/assessment';
+import {
+  ActionableReportGenerator,
+  type EvaluationData,
+} from '../lib/services/actionable-report';
 
 /**
  * Evaluation score for a single dimension
@@ -1183,7 +1187,7 @@ Respond with ONLY a number between 0-100.`,
     });
 
     // Update candidate scores
-    await prisma.candidate.update({
+    const candidate = await prisma.candidate.update({
       where: { id: result.candidateId },
       data: {
         overallScore: result.overallScore,
@@ -1192,7 +1196,72 @@ Respond with ONLY a number between 0-100.`,
         problemSolvingScore: result.problemSolving.score,
         status: 'EVALUATED',
       },
+      include: {
+        assessment: {
+          select: { role: true, seniority: true },
+        },
+        generatedQuestions: {
+          orderBy: { order: 'asc' },
+        },
+      },
     });
+
+    // Generate actionable report
+    try {
+      const reportData: EvaluationData = {
+        sessionId: result.sessionId,
+        candidateId: result.candidateId,
+        role: candidate.assessment.role,
+        seniority: candidate.assessment.seniority.toLowerCase() as SeniorityLevel,
+        techStack: [],
+        codeQuality: {
+          score: result.codeQuality.score,
+          evidence: result.codeQuality.evidence.map(e => e.description),
+          breakdown: result.codeQuality.breakdown,
+        },
+        problemSolving: {
+          score: result.problemSolving.score,
+          evidence: result.problemSolving.evidence.map(e => e.description),
+          breakdown: result.problemSolving.breakdown,
+        },
+        aiCollaboration: {
+          score: result.aiCollaboration.score,
+          evidence: result.aiCollaboration.evidence.map(e => e.description),
+          breakdown: result.aiCollaboration.breakdown,
+        },
+        communication: {
+          score: result.communication.score,
+          evidence: result.communication.evidence.map(e => e.description),
+          breakdown: result.communication.breakdown,
+        },
+        overallScore: result.overallScore,
+        expertiseLevel: result.expertiseLevel,
+        expertiseGrowthTrend: result.expertiseGrowthTrend,
+        questionScores: candidate.generatedQuestions
+          .filter((q: any) => q.score !== null)
+          .map((q: any, idx: number) => ({
+            questionNumber: idx + 1,
+            score: q.score,
+            difficulty: q.difficulty,
+            topics: q.requirements || [],
+          })),
+      };
+
+      const actionableReport = ActionableReportGenerator.generateReport(reportData);
+
+      // Update evaluation with actionable report
+      await prisma.evaluation.update({
+        where: { sessionId: result.sessionId },
+        data: {
+          actionableReport: actionableReport as any,
+        },
+      });
+
+      console.log(`[Evaluation Agent] Generated actionable report for ${result.candidateId}`);
+    } catch (reportError) {
+      // Don't fail the evaluation if report generation fails
+      console.error(`[Evaluation Agent] Failed to generate actionable report:`, reportError);
+    }
 
     console.log(`[Evaluation Agent] Saved evaluation for ${result.candidateId}`);
   }
