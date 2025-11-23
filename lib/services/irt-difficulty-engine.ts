@@ -200,7 +200,6 @@ export class IRTDifficultyEngine {
 
     // Calculate consistency of performance relative to predicted
     let sumSquaredResiduals = 0;
-    let sumSquaredExpected = 0;
 
     for (const record of performanceHistory) {
       const a = record.discrimination || this.DEFAULT_DISCRIMINATION;
@@ -209,7 +208,6 @@ export class IRTDifficultyEngine {
       const actual = record.score;
 
       sumSquaredResiduals += Math.pow(actual - predicted, 2);
-      sumSquaredExpected += Math.pow(predicted - 0.5, 2);
     }
 
     // Higher reliability when predictions match actual performance
@@ -228,7 +226,7 @@ export class IRTDifficultyEngine {
   static calculateTargetDifficulty(
     abilityEstimate: CandidateAbilityEstimate,
     questionNumber: number,
-    maxQuestions: number = 5
+    _maxQuestions: number = 5
   ): DifficultyTargeting {
     const theta = abilityEstimate.theta;
 
