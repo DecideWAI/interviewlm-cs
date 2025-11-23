@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Plus, Trash2, Info } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Info, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import { createExperiment } from '@/lib/api-client';
 
 interface Variant {
   id: string;
@@ -20,6 +21,8 @@ export default function NewExperimentPage() {
   const [description, setDescription] = useState('');
   const [trafficPercentage, setTrafficPercentage] = useState(10);
   const [primaryMetric, setPrimaryMetric] = useState('response_latency_ms');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [variants, setVariants] = useState<Variant[]>([
     {
       id: 'var_1',
@@ -61,24 +64,36 @@ export default function NewExperimentPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
 
     // Validate weights sum to 100
     const totalWeight = variants.reduce((sum, v) => sum + v.weight, 0);
     if (totalWeight !== 100) {
-      alert('Variant weights must sum to 100%');
+      setError('Variant weights must sum to 100%');
       return;
     }
 
-    // TODO: Call API to create experiment
-    console.log({
-      name,
-      description,
-      trafficPercentage,
-      primaryMetric,
-      variants,
-    });
-
-    router.push('/experiments');
+    try {
+      setSubmitting(true);
+      await createExperiment({
+        name,
+        description,
+        trafficPercentage,
+        primaryMetric,
+        variants: variants.map((v) => ({
+          name: v.name,
+          backend: v.backend,
+          weight: v.weight,
+          config: v.config,
+        })),
+      });
+      router.push('/experiments');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create experiment');
+      console.error('Create experiment error:', err);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -99,6 +114,12 @@ export default function NewExperimentPage() {
           Set up an A/B test between agent backends
         </p>
       </div>
+
+      {error && (
+        <div className="p-4 bg-error/10 border border-error/20 rounded-lg text-error text-sm">
+          {error}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Basic Info */}
@@ -292,9 +313,11 @@ export default function NewExperimentPage() {
           </Link>
           <button
             type="submit"
-            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors"
+            disabled={submitting}
+            className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            Create Experiment
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {submitting ? 'Creating...' : 'Create Experiment'}
           </button>
         </div>
       </form>

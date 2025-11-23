@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   ArrowLeft,
@@ -10,87 +10,105 @@ import {
   Square,
   TrendingUp,
   TrendingDown,
-  AlertCircle,
   CheckCircle2,
   Clock,
   Users,
   Activity,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
-
-// Mock data for experiment details
-const mockExperiment = {
-  id: 'exp_001',
-  name: 'Agent Backend Comparison v1',
-  description: 'Compare Claude SDK vs LangGraph for coding assistance',
-  status: 'running' as const,
-  trafficPercentage: 50,
-  primaryMetric: 'response_latency_ms',
-  startedAt: '2025-11-20T10:00:00Z',
-  createdAt: '2025-11-19T08:00:00Z',
-  createdBy: 'admin@interviewlm.com',
-  variants: [
-    {
-      id: 'var_001',
-      name: 'Control (Claude SDK)',
-      backend: 'claude-sdk',
-      weight: 50,
-      metrics: {
-        requests: 6423,
-        avgLatency: 1250,
-        p50Latency: 1100,
-        p95Latency: 2200,
-        p99Latency: 3500,
-        errorRate: 0.018,
-        successRate: 0.982,
-        tokenUsage: 45678,
-        completionRate: 0.89,
-      },
-    },
-    {
-      id: 'var_002',
-      name: 'Treatment (LangGraph)',
-      backend: 'langgraph',
-      weight: 50,
-      metrics: {
-        requests: 6424,
-        avgLatency: 980,
-        p50Latency: 850,
-        p95Latency: 1800,
-        p99Latency: 2800,
-        errorRate: 0.012,
-        successRate: 0.988,
-        tokenUsage: 42345,
-        completionRate: 0.92,
-      },
-    },
-  ],
-  results: {
-    winner: 'var_002',
-    confidence: 0.95,
-    improvement: '-21.6%',
-    sampleSize: 12847,
-    statisticalPower: 0.87,
-  },
-  timeSeriesData: [
-    { date: '2025-11-20', var_001: 1300, var_002: 1050 },
-    { date: '2025-11-21', var_001: 1280, var_002: 1000 },
-    { date: '2025-11-22', var_001: 1250, var_002: 980 },
-    { date: '2025-11-23', var_001: 1220, var_002: 950 },
-  ],
-};
+import {
+  fetchExperiment,
+  startExperiment,
+  pauseExperiment,
+  completeExperiment,
+} from '@/lib/api-client';
+import type { ExperimentListItem, ExperimentVariantWithMetrics } from '@/lib/types';
 
 export default function ExperimentDetailPage() {
   const params = useParams();
-  const [experiment, setExperiment] = useState(mockExperiment);
+  const router = useRouter();
+  const [experiment, setExperiment] = useState<ExperimentListItem | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'metrics' | 'logs'>('overview');
+
+  const loadExperiment = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await fetchExperiment(params.id as string);
+      setExperiment(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load experiment');
+      console.error('Experiment error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (params.id) {
+      loadExperiment();
+    }
+  }, [params.id]);
+
+  const handleStart = async () => {
+    if (!experiment) return;
+    try {
+      await startExperiment(experiment.id);
+      loadExperiment();
+    } catch (err) {
+      console.error('Failed to start experiment:', err);
+    }
+  };
+
+  const handlePause = async () => {
+    if (!experiment) return;
+    try {
+      await pauseExperiment(experiment.id);
+      loadExperiment();
+    } catch (err) {
+      console.error('Failed to pause experiment:', err);
+    }
+  };
+
+  const handleStop = async () => {
+    if (!experiment) return;
+    try {
+      await completeExperiment(experiment.id);
+      loadExperiment();
+    } catch (err) {
+      console.error('Failed to stop experiment:', err);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (error || !experiment) {
+    return (
+      <div className="text-center py-12">
+        <AlertTriangle className="h-12 w-12 text-error mx-auto mb-4" />
+        <p className="text-text-primary font-medium">Failed to load experiment</p>
+        <p className="text-text-tertiary text-sm mt-1">{error || 'Experiment not found'}</p>
+        <button
+          onClick={loadExperiment}
+          className="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   const controlVariant = experiment.variants[0];
   const treatmentVariant = experiment.variants[1];
-
-  const calculateChange = (control: number, treatment: number) => {
-    const change = ((treatment - control) / control) * 100;
-    return change.toFixed(1);
-  };
 
   return (
     <div className="space-y-6">
@@ -116,20 +134,38 @@ export default function ExperimentDetailPage() {
         <div className="flex items-center gap-2">
           {experiment.status === 'running' && (
             <>
-              <button className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 transition-colors">
+              <button
+                onClick={handlePause}
+                className="flex items-center gap-2 px-4 py-2 bg-warning/10 text-warning rounded-lg hover:bg-warning/20 transition-colors"
+              >
                 <Pause className="h-4 w-4" />
                 Pause
               </button>
-              <button className="flex items-center gap-2 px-4 py-2 bg-error/10 text-error rounded-lg hover:bg-error/20 transition-colors">
+              <button
+                onClick={handleStop}
+                className="flex items-center gap-2 px-4 py-2 bg-error/10 text-error rounded-lg hover:bg-error/20 transition-colors"
+              >
                 <Square className="h-4 w-4" />
                 Stop
               </button>
             </>
           )}
           {experiment.status === 'draft' && (
-            <button className="flex items-center gap-2 px-4 py-2 bg-success/10 text-success rounded-lg hover:bg-success/20 transition-colors">
+            <button
+              onClick={handleStart}
+              className="flex items-center gap-2 px-4 py-2 bg-success/10 text-success rounded-lg hover:bg-success/20 transition-colors"
+            >
               <Play className="h-4 w-4" />
               Start Experiment
+            </button>
+          )}
+          {experiment.status === 'paused' && (
+            <button
+              onClick={handleStart}
+              className="flex items-center gap-2 px-4 py-2 bg-success/10 text-success rounded-lg hover:bg-success/20 transition-colors"
+            >
+              <Play className="h-4 w-4" />
+              Resume
             </button>
           )}
         </div>
@@ -143,11 +179,13 @@ export default function ExperimentDetailPage() {
         </div>
         <div className="flex items-center gap-1.5">
           <Clock className="h-4 w-4" />
-          Started {new Date(experiment.startedAt).toLocaleDateString()}
+          {experiment.startedAt
+            ? `Started ${new Date(experiment.startedAt).toLocaleDateString()}`
+            : 'Not started'}
         </div>
         <div className="flex items-center gap-1.5">
           <Activity className="h-4 w-4" />
-          {experiment.results?.sampleSize.toLocaleString()} total sessions
+          {experiment.results?.sampleSize?.toLocaleString() || '0'} total sessions
         </div>
       </div>
 
@@ -173,7 +211,7 @@ export default function ExperimentDetailPage() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Results Summary */}
-          {experiment.results && (
+          {experiment.results && experiment.results.winner && (
             <div className="bg-success/5 border border-success/20 rounded-lg p-6">
               <div className="flex items-center gap-3 mb-4">
                 <CheckCircle2 className="h-5 w-5 text-success" />
@@ -219,69 +257,71 @@ export default function ExperimentDetailPage() {
           </div>
 
           {/* Metric Comparison Table */}
-          <div className="bg-background-secondary border border-border rounded-lg overflow-hidden">
-            <div className="px-6 py-4 border-b border-border">
-              <h3 className="text-lg font-medium text-text-primary">Metric Comparison</h3>
+          {controlVariant && treatmentVariant && (
+            <div className="bg-background-secondary border border-border rounded-lg overflow-hidden">
+              <div className="px-6 py-4 border-b border-border">
+                <h3 className="text-lg font-medium text-text-primary">Metric Comparison</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-background-tertiary">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-text-tertiary uppercase">
+                        Metric
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-text-tertiary uppercase">
+                        {controlVariant.name}
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-text-tertiary uppercase">
+                        {treatmentVariant.name}
+                      </th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-text-tertiary uppercase">
+                        Change
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    <MetricRow
+                      label="Avg Latency"
+                      control={controlVariant.metrics.avgLatency}
+                      treatment={treatmentVariant.metrics.avgLatency}
+                      unit="ms"
+                      lowerIsBetter
+                    />
+                    <MetricRow
+                      label="P95 Latency"
+                      control={controlVariant.metrics.p95Latency}
+                      treatment={treatmentVariant.metrics.p95Latency}
+                      unit="ms"
+                      lowerIsBetter
+                    />
+                    <MetricRow
+                      label="Error Rate"
+                      control={controlVariant.metrics.errorRate * 100}
+                      treatment={treatmentVariant.metrics.errorRate * 100}
+                      unit="%"
+                      lowerIsBetter
+                      decimals={2}
+                    />
+                    <MetricRow
+                      label="Completion Rate"
+                      control={controlVariant.metrics.completionRate * 100}
+                      treatment={treatmentVariant.metrics.completionRate * 100}
+                      unit="%"
+                      decimals={1}
+                    />
+                    <MetricRow
+                      label="Token Usage"
+                      control={controlVariant.metrics.tokenUsage}
+                      treatment={treatmentVariant.metrics.tokenUsage}
+                      unit=""
+                      lowerIsBetter
+                    />
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-background-tertiary">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-text-tertiary uppercase">
-                      Metric
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-text-tertiary uppercase">
-                      {controlVariant.name}
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-text-tertiary uppercase">
-                      {treatmentVariant.name}
-                    </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-text-tertiary uppercase">
-                      Change
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  <MetricRow
-                    label="Avg Latency"
-                    control={controlVariant.metrics.avgLatency}
-                    treatment={treatmentVariant.metrics.avgLatency}
-                    unit="ms"
-                    lowerIsBetter
-                  />
-                  <MetricRow
-                    label="P95 Latency"
-                    control={controlVariant.metrics.p95Latency}
-                    treatment={treatmentVariant.metrics.p95Latency}
-                    unit="ms"
-                    lowerIsBetter
-                  />
-                  <MetricRow
-                    label="Error Rate"
-                    control={controlVariant.metrics.errorRate * 100}
-                    treatment={treatmentVariant.metrics.errorRate * 100}
-                    unit="%"
-                    lowerIsBetter
-                    decimals={2}
-                  />
-                  <MetricRow
-                    label="Completion Rate"
-                    control={controlVariant.metrics.completionRate * 100}
-                    treatment={treatmentVariant.metrics.completionRate * 100}
-                    unit="%"
-                    decimals={1}
-                  />
-                  <MetricRow
-                    label="Token Usage"
-                    control={controlVariant.metrics.tokenUsage}
-                    treatment={treatmentVariant.metrics.tokenUsage}
-                    unit=""
-                    lowerIsBetter
-                  />
-                </tbody>
-              </table>
-            </div>
-          </div>
+          )}
         </div>
       )}
 
@@ -291,7 +331,6 @@ export default function ExperimentDetailPage() {
             <h3 className="text-lg font-medium text-text-primary mb-4">
               Latency Over Time
             </h3>
-            {/* Placeholder for chart */}
             <div className="h-64 bg-background-tertiary rounded-lg flex items-center justify-center text-text-muted">
               Chart: Latency trends for both variants over time
             </div>
@@ -324,21 +363,9 @@ export default function ExperimentDetailPage() {
             <h3 className="text-lg font-medium text-text-primary">Experiment Activity</h3>
           </div>
           <div className="divide-y divide-border">
-            {[
-              { time: '2025-11-23 10:00', event: 'Metrics collected', details: '128 new sessions' },
-              { time: '2025-11-22 18:00', event: 'Statistical significance reached', details: '95% confidence level' },
-              { time: '2025-11-21 09:00', event: 'Traffic increased', details: '25% → 50%' },
-              { time: '2025-11-20 10:00', event: 'Experiment started', details: 'By admin@interviewlm.com' },
-              { time: '2025-11-19 08:00', event: 'Experiment created', details: 'Draft status' },
-            ].map((log, i) => (
-              <div key={i} className="px-6 py-4 flex items-center justify-between">
-                <div>
-                  <div className="text-sm text-text-primary">{log.event}</div>
-                  <div className="text-xs text-text-tertiary">{log.details}</div>
-                </div>
-                <div className="text-xs text-text-muted">{log.time}</div>
-              </div>
-            ))}
+            <div className="px-6 py-8 text-center text-text-tertiary">
+              Activity logs will appear here once the experiment is running
+            </div>
           </div>
         </div>
       )}
@@ -365,7 +392,7 @@ function VariantCard({
   variant,
   isWinner,
 }: {
-  variant: typeof mockExperiment.variants[0];
+  variant: ExperimentVariantWithMetrics;
   isWinner: boolean;
 }) {
   return (
@@ -437,7 +464,7 @@ function MetricRow({
   lowerIsBetter?: boolean;
   decimals?: number;
 }) {
-  const change = ((treatment - control) / control) * 100;
+  const change = control > 0 ? ((treatment - control) / control) * 100 : 0;
   const isImprovement = lowerIsBetter ? change < 0 : change > 0;
 
   return (

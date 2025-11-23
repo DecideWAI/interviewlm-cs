@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Plus,
@@ -8,105 +8,56 @@ import {
   Pause,
   BarChart3,
   Settings,
-  Trash2,
   Check,
   Clock,
   Users,
+  Loader2,
+  AlertTriangle,
 } from 'lucide-react';
-
-// Mock data
-const mockExperiments = [
-  {
-    id: 'exp_001',
-    name: 'Agent Backend Comparison v1',
-    description: 'Compare Claude SDK vs LangGraph for coding assistance',
-    status: 'running',
-    trafficPercentage: 50,
-    primaryMetric: 'response_latency_ms',
-    startedAt: '2025-11-20T10:00:00Z',
-    variants: [
-      {
-        id: 'var_001',
-        name: 'Control (Claude SDK)',
-        backend: 'claude-sdk',
-        weight: 50,
-        metrics: { requests: 6423, avgLatency: 1250, errorRate: 0.018 },
-      },
-      {
-        id: 'var_002',
-        name: 'Treatment (LangGraph)',
-        backend: 'langgraph',
-        weight: 50,
-        metrics: { requests: 6424, avgLatency: 980, errorRate: 0.012 },
-      },
-    ],
-    results: {
-      winner: 'var_002',
-      confidence: 0.95,
-      improvement: '-21.6%',
-    },
-  },
-  {
-    id: 'exp_002',
-    name: 'Helpfulness Level Test',
-    description: 'Test different helpfulness levels for candidate experience',
-    status: 'running',
-    trafficPercentage: 20,
-    primaryMetric: 'completion_rate',
-    startedAt: '2025-11-22T14:00:00Z',
-    variants: [
-      {
-        id: 'var_003',
-        name: 'Pair Programming',
-        backend: 'claude-sdk',
-        weight: 50,
-        metrics: { requests: 1024, avgLatency: 1100, errorRate: 0.02 },
-      },
-      {
-        id: 'var_004',
-        name: 'Full Copilot',
-        backend: 'claude-sdk',
-        weight: 50,
-        metrics: { requests: 1025, avgLatency: 1400, errorRate: 0.015 },
-      },
-    ],
-    results: null,
-  },
-  {
-    id: 'exp_003',
-    name: 'Model Comparison Test',
-    description: 'Compare different Claude models for evaluation quality',
-    status: 'draft',
-    trafficPercentage: 10,
-    primaryMetric: 'evaluation_accuracy',
-    startedAt: null,
-    variants: [
-      {
-        id: 'var_005',
-        name: 'Sonnet',
-        backend: 'claude-sdk',
-        weight: 50,
-        metrics: { requests: 0, avgLatency: 0, errorRate: 0 },
-      },
-      {
-        id: 'var_006',
-        name: 'Haiku',
-        backend: 'claude-sdk',
-        weight: 50,
-        metrics: { requests: 0, avgLatency: 0, errorRate: 0 },
-      },
-    ],
-    results: null,
-  },
-];
+import { fetchExperiments, startExperiment, pauseExperiment } from '@/lib/api-client';
+import type { ExperimentListItem } from '@/lib/types';
 
 export default function ExperimentsPage() {
-  const [experiments, setExperiments] = useState(mockExperiments);
+  const [experiments, setExperiments] = useState<ExperimentListItem[]>([]);
   const [filter, setFilter] = useState<'all' | 'running' | 'draft' | 'completed'>('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const filteredExperiments = experiments.filter((exp) =>
-    filter === 'all' ? true : exp.status === filter,
-  );
+  const loadExperiments = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await fetchExperiments(filter);
+      setExperiments(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load experiments');
+      console.error('Experiments error:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadExperiments();
+  }, [filter]);
+
+  const handleStart = async (id: string) => {
+    try {
+      await startExperiment(id);
+      loadExperiments();
+    } catch (err) {
+      console.error('Failed to start experiment:', err);
+    }
+  };
+
+  const handlePause = async (id: string) => {
+    try {
+      await pauseExperiment(id);
+      loadExperiments();
+    } catch (err) {
+      console.error('Failed to pause experiment:', err);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -144,23 +95,67 @@ export default function ExperimentsPage() {
         ))}
       </div>
 
-      {/* Experiments List */}
-      <div className="space-y-4">
-        {filteredExperiments.map((exp) => (
-          <ExperimentCard key={exp.id} experiment={exp} />
-        ))}
-      </div>
+      {/* Loading State */}
+      {loading && (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      )}
 
-      {filteredExperiments.length === 0 && (
+      {/* Error State */}
+      {error && !loading && (
+        <div className="text-center py-12">
+          <AlertTriangle className="h-12 w-12 text-error mx-auto mb-4" />
+          <p className="text-text-primary font-medium">Failed to load experiments</p>
+          <p className="text-text-tertiary text-sm mt-1">{error}</p>
+          <button
+            onClick={loadExperiments}
+            className="mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Experiments List */}
+      {!loading && !error && (
+        <div className="space-y-4">
+          {experiments.map((exp) => (
+            <ExperimentCard
+              key={exp.id}
+              experiment={exp}
+              onStart={() => handleStart(exp.id)}
+              onPause={() => handlePause(exp.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {!loading && !error && experiments.length === 0 && (
         <div className="text-center py-12">
           <p className="text-text-tertiary">No experiments found</p>
+          <Link
+            href="/experiments/new"
+            className="inline-flex items-center gap-2 mt-4 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover"
+          >
+            <Plus className="h-4 w-4" />
+            Create your first experiment
+          </Link>
         </div>
       )}
     </div>
   );
 }
 
-function ExperimentCard({ experiment }: { experiment: typeof mockExperiments[0] }) {
+function ExperimentCard({
+  experiment,
+  onStart,
+  onPause,
+}: {
+  experiment: ExperimentListItem;
+  onStart: () => void;
+  onPause: () => void;
+}) {
   const statusColors = {
     running: 'bg-success/10 text-success',
     draft: 'bg-warning/10 text-warning',
@@ -192,12 +187,18 @@ function ExperimentCard({ experiment }: { experiment: typeof mockExperiments[0] 
           </div>
           <div className="flex items-center gap-2">
             {experiment.status === 'running' && (
-              <button className="p-2 text-text-tertiary hover:text-warning hover:bg-warning/10 rounded-lg transition-colors">
+              <button
+                onClick={onPause}
+                className="p-2 text-text-tertiary hover:text-warning hover:bg-warning/10 rounded-lg transition-colors"
+              >
                 <Pause className="h-4 w-4" />
               </button>
             )}
             {experiment.status === 'draft' && (
-              <button className="p-2 text-text-tertiary hover:text-success hover:bg-success/10 rounded-lg transition-colors">
+              <button
+                onClick={onStart}
+                className="p-2 text-text-tertiary hover:text-success hover:bg-success/10 rounded-lg transition-colors"
+              >
                 <Play className="h-4 w-4" />
               </button>
             )}
@@ -279,7 +280,7 @@ function ExperimentCard({ experiment }: { experiment: typeof mockExperiments[0] 
         </div>
 
         {/* Results */}
-        {experiment.results && (
+        {experiment.results && experiment.results.winner && (
           <div className="mt-4 p-4 bg-success/5 border border-success/20 rounded-lg">
             <div className="flex items-center gap-2 text-success">
               <Check className="h-4 w-4" />
