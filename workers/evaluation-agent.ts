@@ -149,11 +149,11 @@ class EvaluationAgentWorker {
     );
 
     // Worker event handlers
-    this.worker.on('completed', (job) => {
+    this.worker.on('completed', (job: Job) => {
       console.log(`[Evaluation Agent] Evaluated session: ${job.data.sessionId}`);
     });
 
-    this.worker.on('failed', async (job, err) => {
+    this.worker.on('failed', async (job: Job | undefined, err: Error) => {
       console.error(`[Evaluation Agent] Failed to evaluate session: ${job?.data.sessionId}`, err);
 
       // Move to dead letter queue if exceeded max attempts
@@ -162,7 +162,7 @@ class EvaluationAgentWorker {
       }
     });
 
-    this.worker.on('error', (err) => {
+    this.worker.on('error', (err: Error) => {
       console.error('[Evaluation Agent] Worker error:', err);
     });
 
@@ -491,7 +491,7 @@ class EvaluationAgentWorker {
           exitCode: e.data?.exitCode || 0,
           timestamp: new Date(e.timestamp),
         }))
-        .filter((cmd) => cmd.command.trim().length > 0);
+        .filter((cmd: { command: string; output: string; exitCode: number; timestamp: Date }) => cmd.command.trim().length > 0);
 
       if (terminalCommands.length > 0) {
         const terminalAnalysis = analyzeTerminalCommands(terminalCommands);
@@ -615,8 +615,24 @@ class EvaluationAgentWorker {
         value: promptAnalysis.technicalDepth,
       });
 
+      // AI usage effectiveness: Did they use AI appropriately?
+      const metrics = recording.metrics as any;
+      const aiDependency = metrics?.aiDependencyScore || 50; // Default to moderate
+
+      // Optimal: Moderate AI usage (not too dependent, not ignoring it)
+      const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
+
+      evidence.push({
+        type: 'metric',
+        description: `AI dependency score: ${aiDependency}/100`,
+        value: aiDependency,
+      });
+
+      // Combine prompt quality with usage effectiveness (70/30 weight)
+      const combinedScore = promptAnalysis.score * 0.7 + usageEffectivenessScore * 0.3;
+
       return {
-        score: promptAnalysis.score,
+        score: Math.round(combinedScore),
         confidence: interactions.length >= 5 ? 0.9 : 0.6,
         evidence,
         breakdown: {
@@ -624,6 +640,7 @@ class EvaluationAgentWorker {
           clarity: promptAnalysis.clarity,
           technicalDepth: promptAnalysis.technicalDepth,
           iterationQuality: promptAnalysis.iterationQuality,
+          usageEffectiveness: usageEffectivenessScore,
         },
       };
     } catch (error) {
@@ -633,45 +650,36 @@ class EvaluationAgentWorker {
       const avgPromptQuality = 3; // Neutral
       const promptQualityScore = ((avgPromptQuality - 1) / 4) * 100;
 
+      // AI usage effectiveness fallback
+      const metrics = recording.metrics as any;
+      const aiDependency = metrics?.aiDependencyScore || 50;
+      const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
+
+      // Combine scores
+      const combinedScore = promptQualityScore * 0.7 + usageEffectivenessScore * 0.3;
+
       evidence.push({
         type: 'metric',
         description: 'Prompt analysis unavailable, using fallback scoring',
         value: promptQualityScore,
       });
 
+      evidence.push({
+        type: 'metric',
+        description: `AI dependency score: ${aiDependency}/100`,
+        value: aiDependency,
+      });
+
       return {
-        score: Math.round(promptQualityScore),
+        score: Math.round(combinedScore),
         confidence: 0.3, // Low confidence for fallback
         evidence,
+        breakdown: {
+          promptQuality: promptQualityScore,
+          usageEffectiveness: usageEffectivenessScore,
+        },
       };
     }
-
-    // AI usage effectiveness: Did they use AI appropriately?
-    const metrics = recording.metrics as any;
-    const aiDependency = metrics?.aiDependencyScore || 0;
-
-    // Optimal: Moderate AI usage (not too dependent, not ignoring it)
-    const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
-
-    evidence.push({
-      type: 'metric',
-      description: `AI dependency score: ${aiDependency}/100`,
-      value: aiDependency,
-    });
-
-    // Combine scores
-    const score = (promptQualityScore + usageEffectivenessScore) / 2;
-    const confidence = interactions.length >= 5 ? 0.85 : 0.6;
-
-    return {
-      score: Math.round(score),
-      confidence,
-      evidence,
-      breakdown: {
-        promptQuality: promptQualityScore,
-        usageEffectiveness: usageEffectivenessScore,
-      },
-    };
   }
 
   /**
@@ -1065,7 +1073,7 @@ Respond with ONLY a number between 0-100.`,
 
       if (questions.length === 0) return null;
 
-      const questionScores = questions.map((q) => ({
+      const questionScores = questions.map((q: { order: number; score: number | null; difficultyAssessment: unknown }) => ({
         questionNumber: q.order,
         score: q.score || 0,
         difficultyAssessment: q.difficultyAssessment as any,
@@ -1073,7 +1081,7 @@ Respond with ONLY a number between 0-100.`,
 
       const progressiveScore = ProgressiveScoringCalculator.calculateScore(questionScores);
       const expertiseGrowth = ProgressiveScoringCalculator.calculateExpertiseGrowth(
-        questionScores.map((q) => ({ questionNumber: q.questionNumber, score: q.score }))
+        questionScores.map((q: { questionNumber: number; score: number }) => ({ questionNumber: q.questionNumber, score: q.score }))
       );
 
       console.log(`[Evaluation Agent] Progressive scoring:`, progressiveScore.expertiseLevel);

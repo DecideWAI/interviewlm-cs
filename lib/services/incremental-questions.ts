@@ -684,23 +684,23 @@ Return ONLY the JSON object, no additional text or markdown formatting.`;
 
     // Check for framework mentions
     const mentionsFramework = requiredTech.frameworks.some((fw) =>
-      combined.includes(fw.toLowerCase())
+      combined.includes(fw.name.toLowerCase())
     );
 
     // Check for database mentions
     const mentionsDatabase = requiredTech.databases.some((db) =>
-      combined.includes(db.toLowerCase())
+      combined.includes(db.name.toLowerCase())
     );
 
     if (!mentionsFramework && requiredTech.frameworks.length > 0) {
       console.warn(
-        `Generated question does not explicitly mention required frameworks: ${requiredTech.frameworks.join(', ')}`
+        `Generated question does not explicitly mention required frameworks: ${requiredTech.frameworks.map(f => f.name).join(', ')}`
       );
     }
 
     if (!mentionsDatabase && requiredTech.databases.length > 0) {
       console.warn(
-        `Generated question does not explicitly mention required databases: ${requiredTech.databases.join(', ')}`
+        `Generated question does not explicitly mention required databases: ${requiredTech.databases.map(d => d.name).join(', ')}`
       );
     }
   }
