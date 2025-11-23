@@ -531,6 +531,9 @@ model Evaluation {
   hiringConfidence         Float?   @map("hiring_confidence")
   hiringReasoning          Json?    @map("hiring_reasoning")
 
+  // Actionable report (skills gap matrix, development roadmap, insights)
+  actionableReport         Json?    @map("actionable_report")
+
   // Metadata
   model                    String   @default("claude-sonnet-4-20250514")
   evaluatedAt              DateTime @default(now()) @map("evaluated_at")
