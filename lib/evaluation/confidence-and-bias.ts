@@ -3,7 +3,11 @@
  *
  * Provides confidence metrics and bias detection for AI-generated evaluations
  * to ensure fair and reliable candidate assessments.
+ *
+ * Includes audit logging for compliance and transparency.
  */
+
+import prisma from "@/lib/prisma";
 
 export interface ConfidenceMetrics {
   overall: number; // 0-1, overall confidence in evaluation
@@ -21,15 +25,21 @@ export interface BiasDetectionResult {
   recommendations: string[];
 }
 
+export type BiasType =
+  | 'ai_over_reliance'           // Penalizing legitimate AI usage
+  | 'time_pressure'              // Unfair time expectations
+  | 'insufficient_data'          // Too little data for judgment
+  | 'single_dimension'           // Over-weighting one dimension
+  | 'inconsistent_scoring'       // Scores don't match evidence
+  | 'perfectionism'              // Unrealistic expectations
+  | 'experience_bias'            // Assuming certain experience level
+  // NEW bias types for enhanced detection
+  | 'question_difficulty_variance' // Questions were unusually hard/easy
+  | 'evaluator_drift'            // Scoring patterns changed over time
+  | 'time_of_day_bias';          // Morning vs evening performance patterns
+
 export interface BiasIndicator {
-  type:
-    | 'ai_over_reliance' // Penalizing legitimate AI usage
-    | 'time_pressure' // Unfair time expectations
-    | 'insufficient_data' // Too little data for judgment
-    | 'single_dimension' // Over-weighting one dimension
-    | 'inconsistent_scoring' // Scores don't match evidence
-    | 'perfectionism' // Unrealistic expectations
-    | 'experience_bias'; // Assuming certain experience level
+  type: BiasType;
   severity: 'low' | 'medium' | 'high';
   evidence: string;
   recommendation: string;
@@ -355,4 +365,312 @@ export function generateFairnessReport(
   }
 
   return report;
+}
+
+// =====================================================
+// EXTENDED BIAS DETECTION PARAMETERS
+// =====================================================
+
+export interface ExtendedBiasDetectionParams {
+  scores: {
+    codeQuality: number;
+    problemSolving: number;
+    aiCollaboration: number;
+    testing: number;
+  };
+  evidence: {
+    codeQuality: number;
+    problemSolving: number;
+    aiCollaboration: number;
+    testing: number;
+  };
+  aiInteractionCount: number;
+  sessionDuration: number;
+  testsPassed: number;
+  testsTotal: number;
+  // Extended parameters for new bias types
+  questionDifficulties?: number[]; // Array of difficulty scores for each question
+  sessionStartTime?: Date; // When the session started
+  previousEvaluationScores?: number[]; // Historical scores for evaluator drift detection
+}
+
+/**
+ * Enhanced bias detection with 3 additional bias types
+ */
+export function detectBiasEnhanced(params: ExtendedBiasDetectionParams): BiasDetectionResult {
+  // Start with basic bias detection
+  const basicResult = detectBias(params);
+  const biases = [...basicResult.biases];
+
+  // 8. Question Difficulty Variance Bias
+  // Questions were unusually hard or easy compared to target
+  if (params.questionDifficulties && params.questionDifficulties.length >= 2) {
+    const avgDifficulty = params.questionDifficulties.reduce((a, b) => a + b, 0) / params.questionDifficulties.length;
+    const variance = params.questionDifficulties.reduce(
+      (sum, d) => sum + Math.pow(d - avgDifficulty, 2), 0
+    ) / params.questionDifficulties.length;
+    const stdDev = Math.sqrt(variance);
+
+    // High variance suggests inconsistent difficulty targeting
+    if (stdDev > 2.0) {
+      biases.push({
+        type: 'question_difficulty_variance',
+        severity: 'medium',
+        evidence: `Question difficulty varied significantly (std dev: ${stdDev.toFixed(2)}). Avg: ${avgDifficulty.toFixed(1)}, Range: ${Math.min(...params.questionDifficulties).toFixed(1)}-${Math.max(...params.questionDifficulties).toFixed(1)}`,
+        recommendation: 'Review if IRT targeting is working correctly. Large difficulty swings may affect score fairness.',
+      });
+    }
+
+    // Extremely easy or hard questions overall
+    if (avgDifficulty < 3.0 || avgDifficulty > 8.0) {
+      const direction = avgDifficulty < 3.0 ? 'too easy' : 'too hard';
+      biases.push({
+        type: 'question_difficulty_variance',
+        severity: avgDifficulty < 2.0 || avgDifficulty > 9.0 ? 'high' : 'medium',
+        evidence: `Average question difficulty (${avgDifficulty.toFixed(1)}/10) was ${direction} for fair assessment`,
+        recommendation: `Adjust difficulty targeting. Questions seem ${direction} for accurate skill measurement.`,
+      });
+    }
+  }
+
+  // 9. Evaluator Drift Bias
+  // Scoring patterns changed over time (model or evaluator inconsistency)
+  if (params.previousEvaluationScores && params.previousEvaluationScores.length >= 5) {
+    const recentScores = params.previousEvaluationScores.slice(-5);
+    const olderScores = params.previousEvaluationScores.slice(-10, -5);
+
+    if (olderScores.length >= 3) {
+      const recentAvg = recentScores.reduce((a, b) => a + b, 0) / recentScores.length;
+      const olderAvg = olderScores.reduce((a, b) => a + b, 0) / olderScores.length;
+      const drift = Math.abs(recentAvg - olderAvg);
+
+      if (drift > 15) {
+        biases.push({
+          type: 'evaluator_drift',
+          severity: drift > 25 ? 'high' : 'medium',
+          evidence: `Scoring drift detected: Recent avg (${recentAvg.toFixed(1)}) differs from older avg (${olderAvg.toFixed(1)}) by ${drift.toFixed(1)} points`,
+          recommendation: 'Review if scoring criteria or model has changed. Consider recalibrating evaluation baseline.',
+        });
+      }
+    }
+  }
+
+  // 10. Time of Day Bias
+  // Early morning or late night sessions may affect performance
+  if (params.sessionStartTime) {
+    const hour = params.sessionStartTime.getHours();
+    const isEarlyMorning = hour >= 0 && hour < 6;
+    const isLateNight = hour >= 22 && hour <= 23;
+    const avgScore = (params.scores.codeQuality + params.scores.problemSolving +
+                      params.scores.aiCollaboration + params.scores.testing) / 4;
+
+    if ((isEarlyMorning || isLateNight) && avgScore < 60) {
+      biases.push({
+        type: 'time_of_day_bias',
+        severity: 'low',
+        evidence: `Session started at ${hour}:00 (${isEarlyMorning ? 'early morning' : 'late night'}) with below-average score (${avgScore.toFixed(0)})`,
+        recommendation: 'Consider if session time may have affected performance. Candidate may have been fatigued.',
+      });
+    }
+  }
+
+  // Recalculate overall risk with new biases
+  const severityCounts = {
+    low: biases.filter((b) => b.severity === 'low').length,
+    medium: biases.filter((b) => b.severity === 'medium').length,
+    high: biases.filter((b) => b.severity === 'high').length,
+  };
+
+  let overallRisk: 'low' | 'medium' | 'high' = 'low';
+  if (severityCounts.high > 0) {
+    overallRisk = 'high';
+  } else if (severityCounts.medium >= 2) {
+    overallRisk = 'high';
+  } else if (severityCounts.medium > 0) {
+    overallRisk = 'medium';
+  }
+
+  const recommendations = [...basicResult.recommendations];
+
+  // Add new recommendations for new bias types
+  const newBiases = biases.filter(b =>
+    b.type === 'question_difficulty_variance' ||
+    b.type === 'evaluator_drift' ||
+    b.type === 'time_of_day_bias'
+  );
+
+  if (newBiases.length > 0) {
+    recommendations.push(
+      ...newBiases.map((b) => `${b.type}: ${b.recommendation}`)
+    );
+  }
+
+  return {
+    detected: biases.length > 0,
+    biases,
+    overallRisk,
+    recommendations,
+  };
+}
+
+// =====================================================
+// AUDIT LOGGING FOR BIAS DETECTION
+// =====================================================
+
+/**
+ * Parameters for audit logging
+ */
+export interface BiasAuditParams {
+  sessionId: string;
+  candidateId: string;
+  evaluationId?: string;
+  checkType?: 'full_evaluation' | 'dimension_check' | 'pre_hire';
+}
+
+/**
+ * Sanitize inputs for storage (remove sensitive data)
+ */
+function sanitizeForStorage(params: ExtendedBiasDetectionParams): Record<string, any> {
+  return {
+    scores: params.scores,
+    evidence: params.evidence,
+    aiInteractionCount: params.aiInteractionCount,
+    sessionDuration: params.sessionDuration,
+    testsPassed: params.testsPassed,
+    testsTotal: params.testsTotal,
+    questionDifficultiesCount: params.questionDifficulties?.length || 0,
+    hasSessionStartTime: !!params.sessionStartTime,
+    hasPreviousEvaluations: !!params.previousEvaluationScores?.length,
+  };
+}
+
+/**
+ * Detect bias with audit logging
+ * Stores the bias check result in the database for compliance and review
+ */
+export async function detectBiasWithAudit(
+  params: ExtendedBiasDetectionParams,
+  auditParams: BiasAuditParams
+): Promise<BiasDetectionResult> {
+  // Run enhanced bias detection
+  const result = detectBiasEnhanced(params);
+
+  try {
+    // Log to database for audit trail
+    await prisma.biasAuditLog.create({
+      data: {
+        sessionId: auditParams.sessionId,
+        candidateId: auditParams.candidateId,
+        evaluationId: auditParams.evaluationId,
+        checkType: auditParams.checkType || 'full_evaluation',
+        inputs: sanitizeForStorage(params),
+        result: {
+          detected: result.detected,
+          biasCount: result.biases.length,
+          overallRisk: result.overallRisk,
+          biasTypes: result.biases.map(b => b.type),
+        },
+        riskLevel: result.overallRisk,
+        biasesDetected: result.biases.map(b => b.type),
+      },
+    });
+
+    console.log(
+      `Bias audit logged for candidate ${auditParams.candidateId}: ${result.overallRisk} risk, ${result.biases.length} biases detected`
+    );
+  } catch (error) {
+    // Log error but don't fail the bias detection
+    console.error('Failed to log bias audit:', error);
+  }
+
+  return result;
+}
+
+/**
+ * Mark a bias audit as human reviewed
+ */
+export async function markBiasAuditReviewed(
+  auditId: string,
+  reviewerId: string,
+  notes: string,
+  outcome: 'approved' | 'flagged' | 'adjusted'
+): Promise<void> {
+  await prisma.biasAuditLog.update({
+    where: { id: auditId },
+    data: {
+      humanReviewed: true,
+      reviewerId,
+      reviewNotes: notes,
+      reviewedAt: new Date(),
+      reviewOutcome: outcome,
+    },
+  });
+}
+
+/**
+ * Get bias audit logs for a candidate
+ */
+export async function getBiasAuditLogs(candidateId: string): Promise<any[]> {
+  return prisma.biasAuditLog.findMany({
+    where: { candidateId },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+/**
+ * Get high-risk bias audits pending review
+ */
+export async function getPendingHighRiskAudits(limit: number = 50): Promise<any[]> {
+  return prisma.biasAuditLog.findMany({
+    where: {
+      riskLevel: 'high',
+      humanReviewed: false,
+    },
+    orderBy: { createdAt: 'asc' },
+    take: limit,
+  });
+}
+
+/**
+ * Get bias detection statistics for an organization
+ */
+export async function getBiasStats(organizationId?: string): Promise<{
+  totalChecks: number;
+  highRiskCount: number;
+  mediumRiskCount: number;
+  lowRiskCount: number;
+  reviewedCount: number;
+  pendingReviewCount: number;
+  mostCommonBiases: { type: string; count: number }[];
+}> {
+  // Get all bias logs (optionally filtered by org via candidates)
+  const logs = await prisma.biasAuditLog.findMany({
+    select: {
+      riskLevel: true,
+      humanReviewed: true,
+      biasesDetected: true,
+    },
+  });
+
+  const biasTypeCounts: Record<string, number> = {};
+  for (const log of logs) {
+    for (const bias of log.biasesDetected) {
+      biasTypeCounts[bias] = (biasTypeCounts[bias] || 0) + 1;
+    }
+  }
+
+  const mostCommonBiases = Object.entries(biasTypeCounts)
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  return {
+    totalChecks: logs.length,
+    highRiskCount: logs.filter(l => l.riskLevel === 'high').length,
+    mediumRiskCount: logs.filter(l => l.riskLevel === 'medium').length,
+    lowRiskCount: logs.filter(l => l.riskLevel === 'low').length,
+    reviewedCount: logs.filter(l => l.humanReviewed).length,
+    pendingReviewCount: logs.filter(l => !l.humanReviewed && l.riskLevel === 'high').length,
+    mostCommonBiases,
+  };
 }

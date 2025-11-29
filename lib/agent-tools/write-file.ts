@@ -22,13 +22,13 @@ export interface WriteFileToolOutput {
  * Tool definition for Claude API
  */
 export const writeFileTool: Anthropic.Tool = {
-  name: "write_file",
+  name: "Write",
   description:
     "Write or overwrite a file in the candidate's workspace. Use this to create new files, fix bugs, implement features, or update existing code. The entire file content must be provided.",
   input_schema: {
     type: "object",
     properties: {
-      path: {
+      file_path: {
         type: "string",
         description: "Path to the file to write (e.g., 'solution.js', 'src/utils.ts')",
       },
@@ -37,30 +37,40 @@ export const writeFileTool: Anthropic.Tool = {
         description: "Complete content to write to the file",
       },
     },
-    required: ["path", "content"],
+    required: ["file_path", "content"],
   },
 };
 
 /**
- * Execute the write_file tool
+ * Execute the Write tool
+ * Supports both new signature (individual params) and legacy signature (input object)
  */
 export async function executeWriteFile(
-  volumeId: string,
-  input: WriteFileToolInput
+  sessionId: string,
+  filePathOrInput: string | WriteFileToolInput,
+  content?: string
 ): Promise<WriteFileToolOutput> {
+  // Handle both new and legacy signatures
+  const filePath = typeof filePathOrInput === 'string'
+    ? filePathOrInput
+    : filePathOrInput.path;
+  const fileContent = typeof filePathOrInput === 'string'
+    ? content!
+    : filePathOrInput.content;
+
   try {
-    await modal.writeFile(volumeId, input.path, input.content);
+    await modal.writeFile(sessionId, filePath, fileContent);
 
     return {
       success: true,
-      path: input.path,
-      bytesWritten: input.content.length,
+      path: filePath,
+      bytesWritten: fileContent.length,
     };
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to write file",
-      path: input.path,
+      path: filePath,
     };
   }
 }

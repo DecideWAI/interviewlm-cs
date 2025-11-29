@@ -13,6 +13,11 @@ langgraph-supervisor>=0.1.0,<1.0.0
 # LLM providers
 anthropic>=0.40.0,<1.0.0
 
+# HTTP API server
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.32.0,<1.0.0
+sse-starlette>=2.0.0,<3.0.0
+
 # Database and caching
 redis>=5.0.0,<6.0.0
 asyncpg>=0.29.0,<1.0.0

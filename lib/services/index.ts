@@ -94,3 +94,24 @@ export {
   sendPasswordReset,
   testEmailConnection,
 } from "./email";
+
+// LangGraph Multi-Agent Client
+export * as langGraphClient from "./langgraph-client";
+export {
+  streamCodingChat,
+  sendCodingChat,
+  recordInterviewEvent,
+  getInterviewMetrics,
+  evaluateSession,
+  clearSession as clearLangGraphSession,
+  checkHealth as checkLangGraphHealth,
+} from "./langgraph-client";
+export type {
+  CodingChatRequest,
+  CodingChatResponse,
+  InterviewEventData,
+  InterviewMetrics,
+  EvaluationRequest,
+  EvaluationResult,
+  StreamingCallbacks as LangGraphStreamingCallbacks,
+} from "./langgraph-client";

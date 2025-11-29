@@ -152,6 +152,9 @@ export interface ActionableReport {
   developmentRoadmap: DevelopmentRoadmap;
   interviewInsights: InterviewInsights;
 
+  // AI Collaboration Section (Industry First!)
+  aiCollaborationInsights?: AICollaborationInsights;
+
   // Summary
   executiveSummary: string;
   hiringRecommendation: {
@@ -159,6 +162,73 @@ export interface ActionableReport {
     confidence: number;
     reasoning: string[];
     conditions?: string[]; // Conditions for hire if applicable
+    aiFactorInfluence?: 'positive' | 'neutral' | 'negative'; // How AI score affected decision
+  };
+}
+
+/**
+ * Enhanced AI Collaboration data for detailed insights
+ */
+export interface AICollaborationDetails {
+  // Core 4-dimension scores
+  promptQuality: {
+    score: number;
+    examples: Array<{
+      prompt: string;
+      quality: 'excellent' | 'good' | 'fair' | 'poor';
+      feedback: string;
+    }>;
+  };
+  strategicUsage: {
+    score: number;
+    interactionCount: number;
+    optimal: string;
+    pattern: 'strategic' | 'over-reliant' | 'under-utilized' | 'balanced';
+  };
+  criticalThinking: {
+    score: number;
+    acceptanceRate: number;
+    modifications: number;
+    blindAcceptanceRisk: 'low' | 'medium' | 'high';
+  };
+  independence: {
+    score: number;
+    trend: 'improving' | 'stable' | 'declining';
+    soloCompletionRate: number;
+  };
+
+  // Productivity predictions
+  productivityMultiplier: number; // e.g., 1.5x = 50% more productive with AI
+  onboardingSpeedFactor: number; // e.g., 2.0x = expected to onboard 2x faster
+
+  // AI readiness classification
+  aiReadinessLevel: 'ai-native' | 'ai-proficient' | 'ai-learning' | 'ai-resistant';
+}
+
+/**
+ * AI Collaboration Insights section for the report
+ */
+export interface AICollaborationInsights {
+  overallScore: number;
+  percentile?: number;
+  seniorityBenchmark: number;
+  details: AICollaborationDetails;
+
+  // Key observations specific to AI usage
+  keyFindings: Array<{
+    category: 'prompting' | 'strategy' | 'evaluation' | 'independence';
+    finding: string;
+    impact: 'positive' | 'neutral' | 'concerning';
+    evidence: string;
+  }>;
+
+  // Hiring implications
+  hiringImplication: {
+    summary: string;
+    productivityImpact: string;
+    teamFit: string;
+    riskFactors: string[];
+    recommendations: string[];
   };
 }
 
@@ -189,6 +259,9 @@ export interface EvaluationData {
     difficulty: string;
     topics: string[];
   }>;
+
+  // Enhanced AI collaboration data (optional, for detailed AI insights)
+  aiCollaborationDetails?: AICollaborationDetails;
 }
 
 /**
@@ -219,11 +292,22 @@ export class ActionableReportGenerator {
     const skillsGapMatrix = this.generateSkillsGapMatrix(evaluation);
     const developmentRoadmap = this.generateDevelopmentRoadmap(evaluation, skillsGapMatrix);
     const interviewInsights = this.generateInterviewInsights(evaluation);
-    const hiringRecommendation = this.generateHiringRecommendation(evaluation, skillsGapMatrix);
+
+    // Generate AI Collaboration Insights if detailed data available
+    const aiCollaborationInsights = this.generateAICollaborationInsights(evaluation);
+
+    // Enhanced hiring recommendation that factors in AI collaboration
+    const hiringRecommendation = this.generateHiringRecommendation(
+      evaluation,
+      skillsGapMatrix,
+      aiCollaborationInsights
+    );
+
     const executiveSummary = this.generateExecutiveSummary(
       evaluation,
       skillsGapMatrix,
-      hiringRecommendation
+      hiringRecommendation,
+      aiCollaborationInsights
     );
 
     return {
@@ -235,6 +319,7 @@ export class ActionableReportGenerator {
       skillsGapMatrix,
       developmentRoadmap,
       interviewInsights,
+      aiCollaborationInsights,
       executiveSummary,
       hiringRecommendation,
     };
@@ -591,6 +676,252 @@ export class ActionableReportGenerator {
   }
 
   /**
+   * Generate AI Collaboration Insights
+   * Industry-first feature that provides detailed analysis of AI tool usage
+   */
+  static generateAICollaborationInsights(evaluation: EvaluationData): AICollaborationInsights | undefined {
+    const aiScore = evaluation.aiCollaboration.score;
+    const breakdown = evaluation.aiCollaboration.breakdown || {};
+    const hasDetailedData = evaluation.aiCollaborationDetails !== undefined;
+
+    // Get seniority benchmark
+    const requirements = this.getRequirementsForLevel(evaluation.seniority);
+    const seniorityBenchmark = requirements.aiCollaboration;
+
+    // Build details from available data
+    const details: AICollaborationDetails = hasDetailedData
+      ? evaluation.aiCollaborationDetails!
+      : this.inferAIDetails(aiScore, breakdown);
+
+    // Generate key findings
+    const keyFindings: AICollaborationInsights['keyFindings'] = [];
+
+    // Prompt quality findings
+    if (details.promptQuality.score >= 80) {
+      keyFindings.push({
+        category: 'prompting',
+        finding: 'Demonstrates expert-level prompt engineering',
+        impact: 'positive',
+        evidence: 'Crafts specific, contextual prompts that yield accurate results',
+      });
+    } else if (details.promptQuality.score < 50) {
+      keyFindings.push({
+        category: 'prompting',
+        finding: 'Vague or ineffective prompting patterns observed',
+        impact: 'concerning',
+        evidence: 'Prompts lack specificity, leading to suboptimal AI assistance',
+      });
+    }
+
+    // Strategic usage findings
+    if (details.strategicUsage.pattern === 'strategic') {
+      keyFindings.push({
+        category: 'strategy',
+        finding: 'Uses AI strategically for appropriate tasks',
+        impact: 'positive',
+        evidence: `${details.strategicUsage.interactionCount} interactions (optimal: ${details.strategicUsage.optimal})`,
+      });
+    } else if (details.strategicUsage.pattern === 'over-reliant') {
+      keyFindings.push({
+        category: 'strategy',
+        finding: 'Over-relies on AI for tasks that should be done independently',
+        impact: 'concerning',
+        evidence: 'High interaction count suggests dependency rather than collaboration',
+      });
+    } else if (details.strategicUsage.pattern === 'under-utilized') {
+      keyFindings.push({
+        category: 'strategy',
+        finding: 'Under-utilizes available AI tools',
+        impact: 'concerning',
+        evidence: 'Low AI usage despite availability may indicate resistance to modern workflows',
+      });
+    }
+
+    // Critical thinking findings
+    if (details.criticalThinking.blindAcceptanceRisk === 'high') {
+      keyFindings.push({
+        category: 'evaluation',
+        finding: 'Accepts AI suggestions without adequate review',
+        impact: 'concerning',
+        evidence: `${details.criticalThinking.acceptanceRate}% acceptance rate with only ${details.criticalThinking.modifications} modifications`,
+      });
+    } else if (details.criticalThinking.score >= 75) {
+      keyFindings.push({
+        category: 'evaluation',
+        finding: 'Critically evaluates and improves AI suggestions',
+        impact: 'positive',
+        evidence: `Made ${details.criticalThinking.modifications} meaningful modifications to AI output`,
+      });
+    }
+
+    // Independence trend findings
+    if (details.independence.trend === 'improving') {
+      keyFindings.push({
+        category: 'independence',
+        finding: 'Shows learning progression - decreasing AI reliance over time',
+        impact: 'positive',
+        evidence: 'Performance improved with reduced AI assistance on later questions',
+      });
+    } else if (details.independence.trend === 'declining') {
+      keyFindings.push({
+        category: 'independence',
+        finding: 'Increasing AI dependency observed',
+        impact: 'concerning',
+        evidence: 'Required more AI assistance as complexity increased',
+      });
+    }
+
+    // Generate hiring implication
+    const hiringImplication = this.generateAIHiringImplication(details, aiScore, seniorityBenchmark);
+
+    return {
+      overallScore: aiScore,
+      percentile: this.calculateAIPercentile(aiScore),
+      seniorityBenchmark,
+      details,
+      keyFindings,
+      hiringImplication,
+    };
+  }
+
+  /**
+   * Infer AI collaboration details when detailed data not available
+   */
+  private static inferAIDetails(score: number, breakdown: Record<string, number>): AICollaborationDetails {
+    // Estimate sub-scores from overall score if not provided
+    const promptScore = breakdown.prompting || breakdown.promptQuality || score;
+    const strategicScore = breakdown.strategic || breakdown.strategicUsage || score * 0.95;
+    const criticalScore = breakdown.criticalEval || breakdown.criticalThinking || score * 0.9;
+    const independenceScore = breakdown.independence || score * 0.85;
+
+    // Infer patterns from scores
+    const pattern = score >= 70 ? 'strategic' : score >= 50 ? 'balanced' : score >= 30 ? 'under-utilized' : 'over-reliant';
+    const blindAcceptanceRisk = criticalScore >= 70 ? 'low' : criticalScore >= 50 ? 'medium' : 'high';
+    const trend = independenceScore >= 70 ? 'improving' : independenceScore >= 50 ? 'stable' : 'declining';
+
+    // Calculate productivity multiplier based on score
+    const productivityMultiplier = score >= 80 ? 1.5 : score >= 60 ? 1.3 : score >= 40 ? 1.1 : 1.0;
+    const onboardingSpeedFactor = score >= 80 ? 3.0 : score >= 60 ? 2.0 : score >= 40 ? 1.5 : 1.0;
+
+    // Determine AI readiness level
+    let aiReadinessLevel: AICollaborationDetails['aiReadinessLevel'];
+    if (score >= 80) {
+      aiReadinessLevel = 'ai-native';
+    } else if (score >= 60) {
+      aiReadinessLevel = 'ai-proficient';
+    } else if (score >= 40) {
+      aiReadinessLevel = 'ai-learning';
+    } else {
+      aiReadinessLevel = 'ai-resistant';
+    }
+
+    return {
+      promptQuality: {
+        score: Math.round(promptScore),
+        examples: [], // No examples available without detailed data
+      },
+      strategicUsage: {
+        score: Math.round(strategicScore),
+        interactionCount: Math.round(score / 5), // Rough estimate
+        optimal: '8-15 interactions',
+        pattern: pattern as AICollaborationDetails['strategicUsage']['pattern'],
+      },
+      criticalThinking: {
+        score: Math.round(criticalScore),
+        acceptanceRate: Math.round(100 - criticalScore * 0.3), // Higher score = lower blind acceptance
+        modifications: Math.round(criticalScore / 10),
+        blindAcceptanceRisk,
+      },
+      independence: {
+        score: Math.round(independenceScore),
+        trend,
+        soloCompletionRate: Math.round(independenceScore * 0.8),
+      },
+      productivityMultiplier,
+      onboardingSpeedFactor,
+      aiReadinessLevel,
+    };
+  }
+
+  /**
+   * Generate AI-specific hiring implications
+   */
+  private static generateAIHiringImplication(
+    details: AICollaborationDetails,
+    score: number,
+    benchmark: number
+  ): AICollaborationInsights['hiringImplication'] {
+    const meetsExpectation = score >= benchmark;
+    const exceptionalAI = score >= 80;
+    const concerningAI = score < 40;
+
+    let summary: string;
+    let productivityImpact: string;
+    let teamFit: string;
+    const riskFactors: string[] = [];
+    const recommendations: string[] = [];
+
+    if (exceptionalAI) {
+      summary = 'Candidate demonstrates exceptional AI collaboration skills, suggesting high productivity potential in modern AI-augmented development environments.';
+      productivityImpact = `Expected ${Math.round((details.productivityMultiplier - 1) * 100)}% productivity boost compared to non-AI-proficient developers.`;
+      teamFit = 'Likely to elevate team productivity and mentor others in effective AI usage.';
+      recommendations.push('Consider for AI tooling champion role within the team');
+      recommendations.push('Fast-track onboarding with advanced AI tool access');
+    } else if (score >= 60) {
+      summary = 'Candidate shows good AI collaboration skills suitable for AI-augmented workflows.';
+      productivityImpact = 'Will benefit from AI tools with expected moderate productivity gains.';
+      teamFit = 'Should integrate well with teams using modern AI development tools.';
+      recommendations.push('Standard onboarding with AI tooling introduction');
+    } else if (score >= 40) {
+      summary = 'Candidate has developing AI collaboration skills that may need enhancement.';
+      productivityImpact = 'May not fully leverage AI tools initially, but can improve with guidance.';
+      teamFit = 'Will need support to adopt AI-augmented workflows effectively.';
+      riskFactors.push('May struggle with AI-first development culture initially');
+      recommendations.push('Pair with AI-proficient team member during onboarding');
+      recommendations.push('Provide AI collaboration training within first month');
+    } else {
+      summary = 'Candidate shows limited AI collaboration skills, which may impact productivity in modern development environments.';
+      productivityImpact = 'Unlikely to leverage AI tools effectively without significant training.';
+      teamFit = 'May slow team velocity in AI-augmented workflows.';
+      riskFactors.push('Risk of reduced productivity in AI-native teams');
+      riskFactors.push('May require extensive AI tooling training');
+      recommendations.push('Assess willingness to adopt AI tools before hiring');
+      recommendations.push('Budget for comprehensive AI collaboration training if hired');
+    }
+
+    // Add specific risks based on patterns
+    if (details.criticalThinking.blindAcceptanceRisk === 'high') {
+      riskFactors.push('High risk of accepting incorrect AI suggestions without review');
+    }
+    if (details.strategicUsage.pattern === 'over-reliant') {
+      riskFactors.push('May become dependent on AI rather than developing core skills');
+    }
+
+    return {
+      summary,
+      productivityImpact,
+      teamFit,
+      riskFactors,
+      recommendations,
+    };
+  }
+
+  /**
+   * Calculate AI collaboration percentile (simplified)
+   */
+  private static calculateAIPercentile(score: number): number {
+    // Simplified percentile - in production would use historical data
+    // Assumes normal distribution centered around 55 with SD of 15
+    if (score >= 85) return 95;
+    if (score >= 75) return 85;
+    if (score >= 65) return 70;
+    if (score >= 55) return 50;
+    if (score >= 45) return 30;
+    if (score >= 35) return 15;
+    return 5;
+  }
+
+  /**
    * Generate Interview Insights for hiring managers
    */
   static generateInterviewInsights(evaluation: EvaluationData): InterviewInsights {
@@ -698,27 +1029,46 @@ export class ActionableReportGenerator {
   }
 
   /**
-   * Generate hiring recommendation
+   * Generate hiring recommendation with AI collaboration factor
    */
   static generateHiringRecommendation(
     evaluation: EvaluationData,
-    gapMatrix: SkillsGapMatrix
+    gapMatrix: SkillsGapMatrix,
+    aiInsights?: AICollaborationInsights
   ): ActionableReport['hiringRecommendation'] {
     const hasCriticalGaps = gapMatrix.criticalGaps.some(g => g.impact === 'high');
     const hasMultipleModerateGaps = gapMatrix.criticalGaps.filter(g => g.impact === 'medium').length >= 2;
     const hasStrengths = gapMatrix.strengths.length >= 2;
     const overallFit = gapMatrix.overallFit;
 
+    // AI collaboration influence on decision
+    const aiScore = aiInsights?.overallScore || evaluation.aiCollaboration.score;
+    const aiReadiness = aiInsights?.details?.aiReadinessLevel;
+    const productivityMultiplier = aiInsights?.details?.productivityMultiplier || 1;
+
+    // Determine AI factor influence
+    let aiFactorInfluence: 'positive' | 'neutral' | 'negative' = 'neutral';
+    if (aiScore >= 75 && productivityMultiplier >= 1.3) {
+      aiFactorInfluence = 'positive';
+    } else if (aiScore < 40 || aiReadiness === 'ai-resistant') {
+      aiFactorInfluence = 'negative';
+    }
+
     let decision: 'strong-hire' | 'hire' | 'no-hire' | 'strong-no-hire';
     let confidence: number;
     const reasoning: string[] = [];
     const conditions: string[] = [];
 
+    // Enhanced decision logic that factors in AI collaboration
     if (overallFit >= 90 && !hasCriticalGaps && hasStrengths) {
       decision = 'strong-hire';
       confidence = 0.9;
       reasoning.push(`Exceeds requirements with ${overallFit}% role fit`);
       reasoning.push(`Demonstrated strengths: ${gapMatrix.strengths.map(s => s.skill).join(', ')}`);
+      if (aiFactorInfluence === 'positive') {
+        confidence = Math.min(0.95, confidence + 0.05);
+        reasoning.push(`AI-native candidate: Expected ${Math.round(productivityMultiplier * 100 - 100)}% productivity boost`);
+      }
     } else if (overallFit >= 75 && !hasCriticalGaps) {
       decision = 'hire';
       confidence = 0.75;
@@ -727,6 +1077,12 @@ export class ActionableReportGenerator {
         conditions.push('Provide structured onboarding to address minor gaps');
         conditions.push(`Focus areas: ${gapMatrix.criticalGaps.map(g => g.skill).join(', ')}`);
       }
+      // AI factor can upgrade borderline hire to strong-hire
+      if (aiFactorInfluence === 'positive' && overallFit >= 80) {
+        decision = 'strong-hire';
+        confidence = 0.85;
+        reasoning.push(`AI proficiency compensates for gaps - expected fast ramp-up`);
+      }
     } else if (overallFit >= 60 && !hasCriticalGaps && hasStrengths) {
       decision = 'hire';
       confidence = 0.6;
@@ -734,6 +1090,14 @@ export class ActionableReportGenerator {
       reasoning.push('Has compensating strengths');
       conditions.push('Requires dedicated mentorship');
       conditions.push('3-month performance checkpoint recommended');
+      // Strong AI skills can boost confidence for borderline candidates
+      if (aiFactorInfluence === 'positive') {
+        confidence = 0.7;
+        reasoning.push(`Strong AI collaboration skills suggest faster learning curve`);
+      } else if (aiFactorInfluence === 'negative') {
+        confidence = 0.5;
+        conditions.push('AI tooling training required');
+      }
     } else if (hasCriticalGaps || hasMultipleModerateGaps) {
       decision = 'no-hire';
       confidence = 0.7;
@@ -742,23 +1106,32 @@ export class ActionableReportGenerator {
       if (gapMatrix.strengths.length > 0) {
         reasoning.push(`Note: Shows promise in ${gapMatrix.strengths.map(s => s.skill).join(', ')}`);
       }
+      // Very strong AI skills might warrant reconsideration
+      if (aiFactorInfluence === 'positive' && aiScore >= 85) {
+        confidence = 0.6;
+        reasoning.push(`Consider: Exceptional AI skills (${aiScore}/100) may accelerate skill development`);
+      }
     } else {
       decision = 'strong-no-hire';
       confidence = 0.85;
       reasoning.push(`Does not meet minimum requirements (${overallFit}% fit)`);
       reasoning.push('Multiple critical skill gaps with high business impact');
+      if (aiFactorInfluence === 'negative') {
+        reasoning.push(`Additionally: Poor AI collaboration suggests slower modern workflow adoption`);
+      }
     }
 
-    return { decision, confidence, reasoning, conditions };
+    return { decision, confidence, reasoning, conditions, aiFactorInfluence };
   }
 
   /**
-   * Generate executive summary
+   * Generate executive summary with AI collaboration highlights
    */
   private static generateExecutiveSummary(
     evaluation: EvaluationData,
     gapMatrix: SkillsGapMatrix,
-    recommendation: ActionableReport['hiringRecommendation']
+    recommendation: ActionableReport['hiringRecommendation'],
+    aiInsights?: AICollaborationInsights
   ): string {
     const seniorityLabel = evaluation.seniority.charAt(0).toUpperCase() + evaluation.seniority.slice(1);
     const decisionLabel = recommendation.decision.replace(/-/g, ' ');
@@ -772,6 +1145,16 @@ export class ActionableReportGenerator {
       ``,
     ];
 
+    // Add AI collaboration highlight
+    if (aiInsights) {
+      const aiLabel = this.getAIReadinessLabel(aiInsights.details?.aiReadinessLevel);
+      lines.push(`**AI Readiness:** ${aiLabel} (${aiInsights.overallScore}/100)`);
+      if (aiInsights.details?.productivityMultiplier && aiInsights.details.productivityMultiplier > 1) {
+        lines.push(`**Expected Productivity Boost:** ${Math.round((aiInsights.details.productivityMultiplier - 1) * 100)}% with AI tools`);
+      }
+      lines.push('');
+    }
+
     if (gapMatrix.strengths.length > 0) {
       lines.push(`**Strengths:** ${gapMatrix.strengths.map(s => s.skill).join(', ')}`);
     }
@@ -782,7 +1165,17 @@ export class ActionableReportGenerator {
 
     lines.push('');
     lines.push('**Key Reasoning:**');
-    recommendation.reasoning.slice(0, 3).forEach(r => lines.push(`- ${r}`));
+    recommendation.reasoning.slice(0, 4).forEach(r => lines.push(`- ${r}`));
+
+    // Add AI factor influence note
+    if (recommendation.aiFactorInfluence && recommendation.aiFactorInfluence !== 'neutral') {
+      lines.push('');
+      if (recommendation.aiFactorInfluence === 'positive') {
+        lines.push(`**AI Factor:** Candidate's strong AI collaboration skills positively influenced this recommendation.`);
+      } else {
+        lines.push(`**AI Factor:** Limited AI collaboration skills may impact productivity in modern AI-augmented workflows.`);
+      }
+    }
 
     if (recommendation.conditions && recommendation.conditions.length > 0) {
       lines.push('');
@@ -791,6 +1184,24 @@ export class ActionableReportGenerator {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Helper: Get human-readable AI readiness label
+   */
+  private static getAIReadinessLabel(level?: AICollaborationDetails['aiReadinessLevel']): string {
+    switch (level) {
+      case 'ai-native':
+        return 'AI-Native (Exceptional)';
+      case 'ai-proficient':
+        return 'AI-Proficient (Strong)';
+      case 'ai-learning':
+        return 'AI-Learning (Developing)';
+      case 'ai-resistant':
+        return 'AI-Resistant (Needs Training)';
+      default:
+        return 'Not Assessed';
+    }
   }
 
   /**

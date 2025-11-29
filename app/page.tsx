@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InterviewPreview } from "@/components/demo/InterviewPreview";
+import { AIScoreComparisonDemo, AIMetricCard } from "@/components/demo/AIScoreComparisonDemo";
 import { Input } from "@/components/ui/input";
+import { MessageSquare } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Logo } from "@/components/Logo";
@@ -234,6 +236,68 @@ export default function LandingPage() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* AI Collaboration Scoring - Key Differentiator */}
+      <section className="py-20 px-6 bg-gradient-to-b from-primary/5 to-background">
+        <div className="max-w-6xl mx-auto">
+          <div className="text-center mb-12">
+            <Badge variant="primary" className="mb-4">
+              <Sparkles className="h-3 w-3 mr-1" />
+              Industry First
+            </Badge>
+            <h2 className="text-3xl md:text-5xl font-bold text-text-primary mb-6">
+              We Don't Just Allow AI Tools —
+              <br />
+              <span className="gradient-text">We Score How Candidates Use Them</span>
+            </h2>
+            <p className="text-xl text-text-secondary max-w-3xl mx-auto">
+              The only platform that measures AI collaboration skills across 4 dimensions.
+              See exactly how candidates leverage modern AI tools.
+            </p>
+          </div>
+
+          {/* 4 Metric Cards */}
+          <div className="grid md:grid-cols-4 gap-6 mb-12">
+            <AIMetricCard
+              title="Prompt Quality"
+              icon={MessageSquare}
+              description="Specific, contextual prompts vs vague requests"
+              example="&quot;Fix this&quot; vs &quot;API returns 500 when user.role is undefined...&quot;"
+            />
+            <AIMetricCard
+              title="Strategic Usage"
+              icon={Target}
+              description="When to use AI vs solve independently"
+              example="8-15 interactions/hour = balanced"
+            />
+            <AIMetricCard
+              title="Critical Evaluation"
+              icon={CheckCircle2}
+              description="Review and modify vs blindly accept"
+              example="60-80% acceptance with modifications"
+            />
+            <AIMetricCard
+              title="Independence Trend"
+              icon={TrendingUp}
+              description="Decreasing reliance over time"
+              example="Decreasing AI reliance = strong signal"
+            />
+          </div>
+
+          {/* Comparison Demo */}
+          <AIScoreComparisonDemo />
+
+          {/* CTA */}
+          <div className="text-center mt-12">
+            <Link href="/interview/demo">
+              <Button size="lg" variant="outline">
+                <Play className="h-4 w-4 mr-2" />
+                Try AI-Scored Demo Assessment
+              </Button>
+            </Link>
           </div>
         </div>
       </section>
