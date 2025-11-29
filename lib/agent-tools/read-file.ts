@@ -21,42 +21,66 @@ export interface ReadFileToolOutput {
  * Tool definition for Claude API
  */
 export const readFileTool: Anthropic.Tool = {
-  name: "read_file",
+  name: "Read",
   description:
     "Read the contents of a file in the candidate's workspace. Use this to examine code, understand the current implementation, or check file contents before making changes. The file path should be relative to the workspace root (e.g., 'solution.js', 'tests/test.js').",
   input_schema: {
     type: "object",
     properties: {
-      path: {
+      file_path: {
         type: "string",
         description:
           "Path to the file relative to workspace root (e.g., 'solution.js', 'src/index.ts')",
       },
+      offset: {
+        type: "number",
+        description: "Character offset to start reading from (optional)",
+      },
+      limit: {
+        type: "number",
+        description: "Maximum number of characters to read (optional)",
+      },
     },
-    required: ["path"],
+    required: ["file_path"],
   },
 };
 
 /**
- * Execute the read_file tool
+ * Execute the Read tool
+ * Supports both new signature (individual params) and legacy signature (input object)
  */
 export async function executeReadFile(
-  volumeId: string,
-  input: ReadFileToolInput
+  sessionId: string,
+  filePathOrInput: string | ReadFileToolInput,
+  offset?: number,
+  limit?: number
 ): Promise<ReadFileToolOutput> {
+  // Handle both new and legacy signatures
+  const filePath = typeof filePathOrInput === 'string'
+    ? filePathOrInput
+    : filePathOrInput.path;
+
   try {
-    const content = await modal.readFile(volumeId, input.path);
+    let content = await modal.readFile(sessionId, filePath);
+
+    // Apply offset and limit if provided
+    if (offset !== undefined && offset > 0) {
+      content = content.slice(offset);
+    }
+    if (limit !== undefined && limit > 0) {
+      content = content.slice(0, limit);
+    }
 
     return {
       success: true,
       content,
-      path: input.path,
+      path: filePath,
     };
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to read file",
-      path: input.path,
+      path: filePath,
     };
   }
 }

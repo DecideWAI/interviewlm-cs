@@ -187,6 +187,7 @@ model ProblemSeed {
   organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   parentSeed        ProblemSeed?         @relation("SeedClones", fields: [parentSeedId], references: [id], onDelete: SetNull)
   clonedSeeds       ProblemSeed[]        @relation("SeedClones")
+  poolStats         QuestionPoolStats?
 
   @@map("problem_seeds")
 }
@@ -339,9 +340,18 @@ model GeneratedQuestion {
   // NEW: LLM difficulty assessment for fair scoring
   difficultyAssessment  Json?          @map("difficulty_assessment")
 
+  // Infinite question generation fields
+  fingerprint           String?        // Hash for deduplication
+  reuseCount            Int            @default(0) @map("reuse_count")
+  parentQuestionId      String?        @map("parent_question_id")
+  iterationNumber       Int            @default(0) @map("iteration_number") // 0 = original, 1+ = iteration
+
   candidate             Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  parentQuestion        GeneratedQuestion?  @relation("QuestionIterations", fields: [parentQuestionId], references: [id], onDelete: SetNull)
+  iterations            GeneratedQuestion[] @relation("QuestionIterations")
 
   @@index([candidateId, order])
+  @@index([questionSeedId, fingerprint])
   @@map("generated_questions")
 }
 
@@ -563,4 +573,63 @@ model TerminalCommand {
 
   @@index([sessionId, timestamp])
   @@map("terminal_commands")
+}
+
+// =====================================================
+// INFINITE QUESTION GENERATION SYSTEM
+// Track question pool statistics per seed for smart reuse
+// =====================================================
+
+model QuestionPoolStats {
+  id                String       @id @default(cuid())
+  seedId            String       @unique @map("seed_id")
+  totalGenerated    Int          @default(0) @map("total_generated")
+  uniqueQuestions   Int          @default(0) @map("unique_questions")
+  avgReuseCount     Float        @default(0) @map("avg_reuse_count")
+  lastGeneratedAt   DateTime?    @map("last_generated_at")
+  threshold         Int          @default(100) // Per-seed threshold for reuse mode
+
+  // Stats for marketing/reporting
+  totalCandidatesServed Int      @default(0) @map("total_candidates_served")
+  avgUniquenessScore    Float    @default(1.0) @map("avg_uniqueness_score")
+
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+
+  seed              ProblemSeed  @relation(fields: [seedId], references: [id], onDelete: Cascade)
+
+  @@map("question_pool_stats")
+}
+
+// =====================================================
+// BIAS DETECTION & FAIRNESS AUDIT SYSTEM
+// Comprehensive audit logging for bias checks
+// =====================================================
+
+model BiasAuditLog {
+  id              String   @id @default(cuid())
+  sessionId       String   @map("session_id")
+  candidateId     String   @map("candidate_id")
+  evaluationId    String?  @map("evaluation_id")
+
+  checkType       String   @map("check_type") // 'full_evaluation', 'dimension_check', 'pre_hire'
+  inputs          Json     // Sanitized inputs to bias detection
+  result          Json     // Full BiasDetectionResult
+  riskLevel       String   @map("risk_level") // 'low' | 'medium' | 'high'
+  biasesDetected  String[] @default([]) @map("biases_detected") // Array of bias type codes
+
+  // Human review workflow
+  humanReviewed   Boolean  @default(false) @map("human_reviewed")
+  reviewerId      String?  @map("reviewer_id")
+  reviewNotes     String?  @map("review_notes")
+  reviewedAt      DateTime? @map("reviewed_at")
+  reviewOutcome   String?  @map("review_outcome") // 'approved', 'flagged', 'adjusted'
+
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([candidateId])
+  @@index([riskLevel])
+  @@index([createdAt])
+  @@index([humanReviewed, riskLevel])
+  @@map("bias_audit_logs")
 }

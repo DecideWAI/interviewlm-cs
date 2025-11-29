@@ -405,7 +405,11 @@ export class CodingAgent {
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        const response = await this.client.messages.create(params);
+        // Ensure we're not streaming - use non-streaming overload
+        const response = await this.client.messages.create({
+          ...params,
+          stream: false,
+        });
 
         // Log rate limit status if approaching limits (headers available on raw response)
         // This helps with proactive monitoring
