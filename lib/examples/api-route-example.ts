@@ -1,0 +1,375 @@
+/**
+ * API Route Example - Best Practices
+ *
+ * This file demonstrates the recommended patterns for API routes using
+ * all the production-ready utilities.
+ *
+ * Copy this pattern for new API routes.
+ */
+
+import { NextRequest } from "next/server";
+import { z } from "zod";
+import prisma from "@/lib/prisma";
+import { getSession } from "@/lib/auth-helpers";
+import { withErrorHandling, NotFoundError, AuthorizationError, ValidationError } from "@/lib/utils/errors";
+import { logger } from "@/lib/utils/logger";
+import { success, created, paginated, parsePagination, parseSort } from "@/lib/utils/api-response";
+import { withQueryLogging, buildSearchQuery } from "@/lib/utils/db-helpers";
+
+// ============================================================================
+// Request/Response Schemas
+// ============================================================================
+
+/**
+ * Define validation schemas for type safety
+ */
+const createItemSchema = z.object({
+  title: z.string().min(1, "Title is required").max(200),
+  description: z.string().optional(),
+  category: z.enum(["tech", "business", "design"]),
+  tags: z.array(z.string()).max(10).optional(),
+  metadata: z.record(z.any()).optional(),
+});
+
+const updateItemSchema = createItemSchema.partial();
+
+type CreateItemInput = z.infer<typeof createItemSchema>;
+type UpdateItemInput = z.infer<typeof updateItemSchema>;
+
+// ============================================================================
+// GET /api/items - List items with pagination
+// ============================================================================
+
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  // 1. Authentication (if required)
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError("Authentication required");
+  }
+
+  // 2. Parse query parameters
+  const { searchParams } = new URL(request.url);
+  const { page, pageSize, skip } = parsePagination(searchParams);
+  const { field: sortField, direction } = parseSort(searchParams, [
+    "createdAt",
+    "title",
+    "updatedAt",
+  ]);
+  const search = searchParams.get("search") || "";
+  const category = searchParams.get("category");
+
+  // 3. Build query filters
+  const where: any = {
+    organizationId: session.user.activeOrganizationId,
+    deletedAt: null, // Soft delete filter
+  };
+
+  // Add search filter
+  if (search) {
+    Object.assign(
+      where,
+      buildSearchQuery(search, ["title", "description"])
+    );
+  }
+
+  // Add category filter
+  if (category) {
+    where.category = category;
+  }
+
+  // 4. Execute query with logging
+  const [items, total] = await withQueryLogging(
+    "listItems",
+    () =>
+      Promise.all([
+        prisma.item.findMany({
+          where,
+          skip,
+          take: pageSize,
+          orderBy: { [sortField]: direction },
+          include: {
+            user: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+              },
+            },
+          },
+        }),
+        prisma.item.count({ where }),
+      ])
+  );
+
+  // 5. Return paginated response
+  return paginated(items, page, pageSize, total);
+});
+
+// ============================================================================
+// POST /api/items - Create new item
+// ============================================================================
+
+export const POST = withErrorHandling(async (request: NextRequest) => {
+  // 1. Authentication
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError();
+  }
+
+  // 2. Parse and validate body
+  const body = await request.json();
+  const validatedData = createItemSchema.parse(body);
+
+  // 3. Additional business logic validation
+  const existingItem = await prisma.item.findFirst({
+    where: {
+      title: validatedData.title,
+      organizationId: session.user.activeOrganizationId,
+      deletedAt: null,
+    },
+  });
+
+  if (existingItem) {
+    throw new ValidationError("An item with this title already exists");
+  }
+
+  // 4. Create item
+  const item = await logger.time(
+    "createItem",
+    () =>
+      prisma.item.create({
+        data: {
+          ...validatedData,
+          organizationId: session.user.activeOrganizationId,
+          userId: session.user.id,
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+            },
+          },
+        },
+      }),
+    { userId: session.user.id }
+  );
+
+  // 5. Log success
+  logger.info("Item created", {
+    itemId: item.id,
+    userId: session.user.id,
+  });
+
+  // 6. Return created response
+  return created(item);
+});
+
+// ============================================================================
+// GET /api/items/[id] - Get single item
+// ============================================================================
+
+export async function GETSingle(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return withErrorHandling(async () => {
+    // 1. Authentication
+    const session = await getSession();
+    if (!session?.user) {
+      throw new AuthorizationError();
+    }
+
+    // 2. Get ID from params
+    const { id } = await params;
+
+    // 3. Fetch item
+    const item = await prisma.item.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    // 4. Check existence
+    if (!item) {
+      throw new NotFoundError("Item", id);
+    }
+
+    // 5. Check authorization
+    if (item.organizationId !== session.user.activeOrganizationId) {
+      throw new AuthorizationError("You don't have access to this item");
+    }
+
+    // 6. Return success
+    return success(item);
+  })();
+}
+
+// ============================================================================
+// PATCH /api/items/[id] - Update item
+// ============================================================================
+
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return withErrorHandling(async () => {
+    // 1. Authentication
+    const session = await getSession();
+    if (!session?.user) {
+      throw new AuthorizationError();
+    }
+
+    // 2. Get ID from params
+    const { id } = await params;
+
+    // 3. Parse and validate body
+    const body = await request.json();
+    const validatedData = updateItemSchema.parse(body);
+
+    // 4. Check item exists and user has access
+    const existingItem = await prisma.item.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        organizationId: true,
+      },
+    });
+
+    if (!existingItem) {
+      throw new NotFoundError("Item", id);
+    }
+
+    if (existingItem.organizationId !== session.user.activeOrganizationId) {
+      throw new AuthorizationError("You don't have access to this item");
+    }
+
+    // 5. Update item
+    const updatedItem = await prisma.item.update({
+      where: { id },
+      data: {
+        ...validatedData,
+        updatedAt: new Date(),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    // 6. Log success
+    logger.info("Item updated", {
+      itemId: id,
+      userId: session.user.id,
+      changes: Object.keys(validatedData),
+    });
+
+    // 7. Return success
+    return success(updatedItem);
+  })();
+}
+
+// ============================================================================
+// DELETE /api/items/[id] - Delete item
+// ============================================================================
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  return withErrorHandling(async () => {
+    // 1. Authentication
+    const session = await getSession();
+    if (!session?.user) {
+      throw new AuthorizationError();
+    }
+
+    // 2. Get ID from params
+    const { id } = await params;
+
+    // 3. Check item exists and user has access
+    const existingItem = await prisma.item.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        organizationId: true,
+      },
+    });
+
+    if (!existingItem) {
+      throw new NotFoundError("Item", id);
+    }
+
+    if (existingItem.organizationId !== session.user.activeOrganizationId) {
+      throw new AuthorizationError("You don't have access to this item");
+    }
+
+    // 4. Soft delete item
+    await prisma.item.update({
+      where: { id },
+      data: {
+        deletedAt: new Date(),
+      },
+    });
+
+    // 5. Log success
+    logger.info("Item deleted", {
+      itemId: id,
+      userId: session.user.id,
+    });
+
+    // 6. Return success
+    return success({ id, deleted: true });
+  })();
+}
+
+// ============================================================================
+// Usage Example in Actual Route File
+// ============================================================================
+
+/**
+ * Example: app/api/items/route.ts
+ *
+ * import { GET, POST } from "@/lib/examples/api-route-example";
+ * export { GET, POST };
+ */
+
+/**
+ * Example: app/api/items/[id]/route.ts
+ *
+ * import { GETSingle as GET, PATCH, DELETE } from "@/lib/examples/api-route-example";
+ * export { GET, PATCH, DELETE };
+ */
+
+// ============================================================================
+// Pattern Checklist
+// ============================================================================
+
+/**
+ * ✅ Use withErrorHandling wrapper
+ * ✅ Validate authentication first
+ * ✅ Parse and validate input with Zod
+ * ✅ Check authorization (org/user access)
+ * ✅ Use try-catch for external services
+ * ✅ Log important operations
+ * ✅ Use typed error classes
+ * ✅ Return standardized responses
+ * ✅ Include performance logging for slow queries
+ * ✅ Use pagination helpers for lists
+ * ✅ Filter deleted records (soft delete)
+ * ✅ Include related data selectively (avoid n+1)
+ * ✅ Add request ID for tracing (in middleware)
+ */
