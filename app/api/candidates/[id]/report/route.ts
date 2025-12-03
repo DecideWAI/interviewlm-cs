@@ -7,6 +7,10 @@ import {
   type EvaluationData,
 } from "@/lib/services/actionable-report";
 import type { SeniorityLevel } from "@/types/assessment";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
 
 /**
  * GET /api/candidates/[id]/report
@@ -18,33 +22,32 @@ import type { SeniorityLevel } from "@/types/assessment";
  * - Interview Insights
  * - Hiring Recommendation
  */
-export async function GET(
+export const GET = withErrorHandling(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const session = await getSession();
+) => {
+  const { id } = await params;
 
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    const { id } = await params;
+  const session = await getSession();
 
-    // Get user's organization
-    const userOrg = await prisma.organizationMember.findFirst({
-      where: { userId: session.user.id },
-    });
+  if (!session?.user?.id) {
+    throw new AuthorizationError();
+  }
 
-    if (!userOrg) {
-      return NextResponse.json(
-        { error: "User not associated with any organization" },
-        { status: 400 }
-      );
-    }
+  logger.debug('[Report] Generating candidate report', { candidateId: id, userId: session.user.id });
+
+  // Get user's organization
+  const userOrg = await prisma.organizationMember.findFirst({
+    where: { userId: session.user.id },
+  });
+
+  if (!userOrg) {
+    throw new ValidationError("User not associated with any organization");
+  }
 
     // Fetch candidate with evaluation data
     const candidate = await prisma.candidate.findFirst({
@@ -85,20 +88,14 @@ export async function GET(
     });
 
     if (!candidate) {
-      return NextResponse.json(
-        { error: "Candidate not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Candidate", id);
     }
 
     // Check if candidate has been evaluated
     const evaluation = candidate.evaluations[0];
 
     if (!evaluation) {
-      return NextResponse.json(
-        { error: "Candidate has not been evaluated yet" },
-        { status: 400 }
-      );
+      throw new ValidationError("Candidate has not been evaluated yet");
     }
 
     // Check if we have a cached actionable report
@@ -106,7 +103,13 @@ export async function GET(
       const cachedReport = evaluation.actionableReport as ActionableReport & { candidateName?: string };
       cachedReport.candidateName = candidate.name;
 
-      return NextResponse.json({
+      logger.info('[Report] Returning cached report', {
+        candidateId: id,
+        evaluationId: evaluation.id,
+        cached: true,
+      });
+
+      return success({
         report: cachedReport,
         metadata: {
           generatedAt: cachedReport.generatedAt || new Date().toISOString(),
@@ -162,8 +165,12 @@ export async function GET(
         })),
     };
 
-    // Generate actionable report
-    const report = ActionableReportGenerator.generateReport(evaluationData);
+    // Generate actionable report with performance timing
+    const report = await logger.time(
+      'generateActionableReport',
+      () => Promise.resolve(ActionableReportGenerator.generateReport(evaluationData)),
+      { candidateId: id, evaluationId: evaluation.id }
+    );
 
     // Add candidate name to report
     const reportWithName: ActionableReport & { candidateName: string } = {
@@ -171,7 +178,14 @@ export async function GET(
       candidateName: candidate.name,
     };
 
-    return NextResponse.json({
+    logger.info('[Report] Generated new report', {
+      candidateId: id,
+      evaluationId: evaluation.id,
+      overallScore: evaluationData.overallScore,
+      cached: false,
+    });
+
+    return success({
       report: reportWithName,
       metadata: {
         generatedAt: new Date().toISOString(),
@@ -181,18 +195,7 @@ export async function GET(
         evaluatedAt: evaluation.evaluatedAt.toISOString(),
       },
     });
-
-  } catch (error) {
-    console.error("Report generation error:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to generate report",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
-}
+});
 
 /**
  * Extract tech stack from assessment questions

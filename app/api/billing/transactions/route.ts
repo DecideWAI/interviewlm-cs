@@ -1,45 +1,51 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { withErrorHandling, AuthorizationError, NotFoundError } from "@/lib/utils/errors";
+import { success, parsePagination } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
+import { withQueryLogging } from "@/lib/utils/db-helpers";
 
-export async function GET(req: NextRequest) {
-  try {
-    // Check authentication
-    const session = await auth();
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+export const GET = withErrorHandling(async (req: NextRequest) => {
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(req);
+  if (rateLimited) return rateLimited;
 
-    const searchParams = req.nextUrl.searchParams;
-    const limit = Math.min(parseInt(searchParams.get("limit") || "50"), 100);
-    const offset = parseInt(searchParams.get("offset") || "0");
+  // Check authentication
+  const session = await auth();
+  if (!session?.user?.email) {
+    throw new AuthorizationError();
+  }
 
-    // Get user with organization
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-      include: {
-        organizationMember: {
-          include: {
-            organization: true,
-          },
+  // Parse pagination parameters
+  const { searchParams } = req.nextUrl;
+  const { page, pageSize, skip } = parsePagination(searchParams, {
+    pageSize: 50,
+  });
+
+  // Get user with organization
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email },
+    include: {
+      organizationMember: {
+        include: {
+          organization: true,
         },
       },
-    });
+    },
+  });
 
-    if (!user || !user.organizationMember[0]) {
-      return NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 }
-      );
-    }
+  if (!user || !user.organizationMember[0]) {
+    throw new NotFoundError("Organization membership");
+  }
 
-    const organization = user.organizationMember[0].organization;
+  const organization = user.organizationMember[0].organization;
 
-    // Fetch credit transactions
-    const [transactions, totalCount] = await Promise.all([
+  // Fetch credit transactions with query logging
+  const [transactions, totalCount] = await withQueryLogging(
+    'fetchTransactions',
+    () => Promise.all([
       prisma.creditTransaction.findMany({
         where: {
           organizationId: organization.id,
@@ -47,31 +53,32 @@ export async function GET(req: NextRequest) {
         orderBy: {
           createdAt: "desc",
         },
-        take: limit,
-        skip: offset,
+        take: pageSize,
+        skip,
       }),
       prisma.creditTransaction.count({
         where: {
           organizationId: organization.id,
         },
       }),
-    ]);
+    ])
+  );
 
-    return NextResponse.json({
-      transactions,
-      pagination: {
-        total: totalCount,
-        limit,
-        offset,
-        hasMore: offset + limit < totalCount,
-      },
-      currentBalance: organization.credits,
-    });
-  } catch (error) {
-    console.error("Fetch transactions error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch transactions" },
-      { status: 500 }
-    );
-  }
-}
+  logger.info('Transactions fetched', {
+    userId: session.user.id,
+    organizationId: organization.id,
+    count: transactions.length,
+    page,
+  });
+
+  return success({
+    transactions,
+    pagination: {
+      total: totalCount,
+      page,
+      pageSize,
+      hasMore: skip + pageSize < totalCount,
+    },
+    currentBalance: organization.credits,
+  });
+});

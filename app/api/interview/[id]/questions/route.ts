@@ -7,6 +7,10 @@ import { GeneratedProblem } from "@/types/problem";
 import { incrementalQuestionGenerator } from "@/lib/services/incremental-questions";
 import { irtEngine } from "@/lib/services/irt-difficulty-engine";
 import type { RequiredTechStack } from "@/types/seed";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
 
 // Request validation schema for generating next question
 const generateQuestionSchema = z.object({
@@ -29,19 +33,24 @@ const anthropic = new Anthropic({
  * GET /api/interview/[id]/questions
  * Get current question for candidate
  */
-export async function GET(
+export const GET = withErrorHandling(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    // Await params (Next.js 15 requirement)
-    const { id } = await params;
+) => {
+  // Await params (Next.js 15 requirement)
+  const { id } = await params;
 
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
+
+  // Check authentication
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError();
+  }
+
+  logger.debug('[Questions GET] Fetching current question', { candidateId: id });
 
     // Verify candidate exists and belongs to authorized organization
     const candidate = await prisma.candidate.findUnique({
@@ -66,10 +75,7 @@ export async function GET(
     });
 
     if (!candidate) {
-      return NextResponse.json(
-        { error: "Interview session not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Interview session", id);
     }
 
     // Check authorization (user must be member of candidate's organization)
@@ -78,7 +84,7 @@ export async function GET(
     const isSelfInterview = candidate.email === session.user.email;
 
     if (!isOrgMember && !isSelfInterview) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      throw new AuthorizationError("Access denied to this interview session");
     }
 
     // Get current question (first non-completed question)
@@ -88,14 +94,16 @@ export async function GET(
 
     if (!currentQuestion) {
       // No more questions
-      return NextResponse.json(
-        {
-          currentQuestion: null,
-          completed: true,
-          totalQuestions: candidate.generatedQuestions.length,
-        },
-        { status: 200 }
-      );
+      logger.info('[Questions GET] No more questions', {
+        candidateId: id,
+        totalCompleted: candidate.generatedQuestions.length,
+      });
+
+      return success({
+        currentQuestion: null,
+        completed: true,
+        totalQuestions: candidate.generatedQuestions.length,
+      });
     }
 
     // Mark question as in progress if pending
@@ -171,68 +179,71 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(
-      {
-        currentQuestion: formatQuestion(currentQuestion),
-        completed: false,
-        totalQuestions: candidate.generatedQuestions.length,
-        currentQuestionIndex:
-          candidate.generatedQuestions.indexOf(currentQuestion) + 1,
-        isIncremental,
-        progressionContext,
-        buildingOn,
-        difficultyVisibility,
-        abilityEstimate: abilityEstimate ? {
-          level: abilityEstimate.theta > 1 ? 'advanced' :
-                 abilityEstimate.theta > 0 ? 'intermediate' :
-                 abilityEstimate.theta > -1 ? 'developing' : 'foundational',
-          confidence: Math.round(abilityEstimate.reliability * 100),
-        } : null,
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error("Questions GET API error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('[Questions GET] Current question retrieved', {
+      candidateId: id,
+      questionId: currentQuestion.id,
+      questionNumber: candidate.generatedQuestions.indexOf(currentQuestion) + 1,
+      isIncremental,
+    });
+
+    return success({
+      currentQuestion: formatQuestion(currentQuestion),
+      completed: false,
+      totalQuestions: candidate.generatedQuestions.length,
+      currentQuestionIndex:
+        candidate.generatedQuestions.indexOf(currentQuestion) + 1,
+      isIncremental,
+      progressionContext,
+      buildingOn,
+      difficultyVisibility,
+      abilityEstimate: abilityEstimate ? {
+        level: abilityEstimate.theta > 1 ? 'advanced' :
+               abilityEstimate.theta > 0 ? 'intermediate' :
+               abilityEstimate.theta > -1 ? 'developing' : 'foundational',
+        confidence: Math.round(abilityEstimate.reliability * 100),
+      } : null,
+    });
+});
 
 /**
  * POST /api/interview/[id]/questions
  * Generate next question based on performance
  */
-export async function POST(
+export const POST = withErrorHandling(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    // Await params (Next.js 15 requirement)
-    const { id } = await params;
+) => {
+  // Await params (Next.js 15 requirement)
+  const { id } = await params;
 
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    // Parse and validate request body
-    const body = await request.json();
-    const validationResult = generateQuestionSchema.safeParse(body);
+  // Check authentication
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError();
+  }
 
-    if (!validationResult.success) {
-      return NextResponse.json(
-        { error: "Invalid request", details: validationResult.error.errors },
-        { status: 400 }
-      );
-    }
+  // Parse and validate request body
+  const body = await request.json();
+  const validationResult = generateQuestionSchema.safeParse(body);
 
-    const { previousPerformance } = validationResult.data;
+  if (!validationResult.success) {
+    logger.warn('[Questions POST] Validation failed', {
+      candidateId: id,
+      errors: validationResult.error.errors,
+    });
+    throw new ValidationError("Invalid request: " + validationResult.error.errors.map(e => e.message).join(", "));
+  }
+
+  const { previousPerformance } = validationResult.data;
+
+  logger.info('[Questions POST] Generating next question', {
+    candidateId: id,
+    hasPreviousPerformance: !!previousPerformance,
+  });
 
     // Verify candidate exists and belongs to authorized organization
     const candidate = await prisma.candidate.findUnique({
@@ -257,10 +268,7 @@ export async function POST(
     });
 
     if (!candidate) {
-      return NextResponse.json(
-        { error: "Interview session not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Interview session", id);
     }
 
     // Check authorization (user must be member of candidate's organization)
@@ -269,7 +277,7 @@ export async function POST(
     const isSelfInterview = candidate.email === session.user.email;
 
     if (!isOrgMember && !isSelfInterview) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      throw new AuthorizationError("Access denied to this interview session");
     }
 
     // Mark previous question as completed if provided
@@ -310,7 +318,7 @@ export async function POST(
     let irtResult = null;
 
     if (seed && seed.seedType === 'incremental') {
-      console.log(`Using IRT-enhanced incremental question generator for seed ${seedId}`);
+      logger.info(`[Questions POST] Using IRT-enhanced incremental generator`, { candidateId: id, seedId });
 
       // Build performance metrics array
       const performanceMetrics = previousPerformance
@@ -356,14 +364,16 @@ export async function POST(
       newQuestion = irtResult.question;
 
       // Log IRT decision
-      console.log(
-        `IRT targeting: θ=${irtResult.abilityEstimate.theta.toFixed(2)}, ` +
-        `target difficulty=${irtResult.difficultyTargeting.targetDifficulty.toFixed(2)}, ` +
-        `continue=${irtResult.shouldContinue.continue} (${irtResult.shouldContinue.reason})`
-      );
+      logger.info('[Questions POST] IRT decision', {
+        candidateId: id,
+        abilityEstimate: irtResult.abilityEstimate.theta.toFixed(2),
+        targetDifficulty: irtResult.difficultyTargeting.targetDifficulty.toFixed(2),
+        shouldContinue: irtResult.shouldContinue.continue,
+        reason: irtResult.shouldContinue.reason,
+      });
     } else {
       // Use legacy LLM generation
-      console.log('Using legacy question generator');
+      logger.info('[Questions POST] Using legacy question generator', { candidateId: id });
 
       const nextQuestionOrder = candidate.generatedQuestions.length;
       const difficulty = determineNextDifficulty(
@@ -417,43 +427,38 @@ export async function POST(
       }
     }
 
-    return NextResponse.json(
-      {
-        question: formatQuestion(newQuestion),
-        questionNumber: newQuestion.order,
-        isIncremental: seed?.seedType === 'incremental',
-        progressionContext,
-        buildingOn,
-        // IRT-enhanced data for candidate visibility
-        difficultyVisibility: irtResult?.difficultyVisibility || null,
-        abilityEstimate: irtResult ? {
-          level: irtResult.abilityEstimate.theta > 1 ? 'advanced' :
-                 irtResult.abilityEstimate.theta > 0 ? 'intermediate' :
-                 irtResult.abilityEstimate.theta > -1 ? 'developing' : 'foundational',
-          confidence: Math.round(irtResult.abilityEstimate.reliability * 100),
-          questionsUsed: irtResult.abilityEstimate.questionsUsed,
-        } : null,
-        assessmentContinuation: irtResult ? {
-          shouldContinue: irtResult.shouldContinue.continue,
-          reason: irtResult.shouldContinue.reason,
-          estimatedQuestionsRemaining: irtResult.shouldContinue.continue
-            ? Math.max(1, 5 - (newQuestion.order || 1))
-            : 0,
-        } : null,
-      },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error("Questions POST API error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
-}
+    logger.info('[Questions POST] Next question generated', {
+      candidateId: id,
+      questionId: newQuestion.id,
+      questionNumber: newQuestion.order,
+      difficulty: newQuestion.difficulty,
+      isIncremental: seed?.seedType === 'incremental',
+    });
+
+    return success({
+      question: formatQuestion(newQuestion),
+      questionNumber: newQuestion.order,
+      isIncremental: seed?.seedType === 'incremental',
+      progressionContext,
+      buildingOn,
+      // IRT-enhanced data for candidate visibility
+      difficultyVisibility: irtResult?.difficultyVisibility || null,
+      abilityEstimate: irtResult ? {
+        level: irtResult.abilityEstimate.theta > 1 ? 'advanced' :
+               irtResult.abilityEstimate.theta > 0 ? 'intermediate' :
+               irtResult.abilityEstimate.theta > -1 ? 'developing' : 'foundational',
+        confidence: Math.round(irtResult.abilityEstimate.reliability * 100),
+        questionsUsed: irtResult.abilityEstimate.questionsUsed,
+      } : null,
+      assessmentContinuation: irtResult ? {
+        shouldContinue: irtResult.shouldContinue.continue,
+        reason: irtResult.shouldContinue.reason,
+        estimatedQuestionsRemaining: irtResult.shouldContinue.continue
+          ? Math.max(1, 5 - (newQuestion.order || 1))
+          : 0,
+      } : null,
+    });
+});
 
 /**
  * Format question for client response
@@ -634,7 +639,12 @@ Return a JSON object with this structure:
 
     throw new Error("Failed to parse LLM response");
   } catch (error) {
-    console.error("LLM generation error:", error);
+    logger.warn("LLM generation error", {
+      role,
+      seniority,
+      difficulty,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
 
     // Fallback to a default problem
     return {

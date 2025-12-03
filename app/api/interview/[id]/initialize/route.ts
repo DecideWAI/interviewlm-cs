@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { modalService as modal, questionService as questions, sessionService as sessions } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
 
 /**
  * Generate default starter code template based on language
@@ -52,15 +56,14 @@ func solution(input interface{}) interface{} {
  * POST /api/interview/[id]/initialize
  * Initialize interview session with question, Modal sandbox, and file structure
  */
-export async function POST(
+export const POST = withErrorHandling(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id: candidateId } = await params;
+) => {
+  const { id: candidateId } = await params;
 
-    // Demo mode shortcut - return mock data
-    if (candidateId === "demo") {
+  // Demo mode shortcut - return mock data (skip auth and rate limiting)
+  if (candidateId === "demo") {
       return NextResponse.json({
         sessionId: "demo",
         candidateId: "demo",
@@ -145,16 +148,22 @@ module.exports = longestPalindrome;`,
         timeLimit: 3600, // 1 hour in seconds
         startedAt: new Date().toISOString(),
       });
-    }
+  }
 
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Apply rate limiting (after demo check)
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    // Get candidate and verify access
-    const candidate = await prisma.candidate.findUnique({
+  // Check authentication
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError();
+  }
+
+  // Get candidate and verify access with performance logging
+  const candidate = await logger.time(
+    'fetchCandidate',
+    () => prisma.candidate.findUnique({
       where: { id: candidateId },
       include: {
         organization: {
@@ -172,76 +181,77 @@ module.exports = longestPalindrome;`,
         sessionRecording: true,
         generatedQuestions: true,
       },
-    });
+    }),
+    { candidateId }
+  );
 
-    if (!candidate) {
-      return NextResponse.json(
-        { error: "Interview session not found" },
-        { status: 404 }
-      );
+  if (!candidate) {
+    throw new NotFoundError("Interview session", candidateId);
+  }
+
+  // Check authorization (user must be member of candidate's organization)
+  // OR candidate is interviewing themselves (candidate.email === session.user.email)
+  const isOrgMember = candidate.organization.members.length > 0;
+  const isSelfInterview = candidate.email === session.user.email;
+
+  if (!isOrgMember && !isSelfInterview) {
+    throw new AuthorizationError("Access denied to this interview session");
+  }
+
+  // Check if session is already active or completed
+  if (candidate.status === "COMPLETED") {
+    throw new ValidationError("Interview already completed");
+  }
+
+  // Get or create session recording using upsert to handle existing records
+  const sessionRecording = await prisma.sessionRecording.upsert({
+    where: {
+      candidateId,
+    },
+    update: {
+      // If record exists, ensure it's active
+      status: "ACTIVE",
+    },
+    create: {
+      candidateId,
+      status: "ACTIVE",
+    },
+  });
+
+  // Get or generate question
+  let question = candidate.generatedQuestions?.[0];
+  if (!question) {
+    // Generate question based on assessment configuration
+    const assessment = candidate.assessment;
+    if (!assessment) {
+      throw new NotFoundError("Assessment for candidate");
     }
 
-    // Check authorization (user must be member of candidate's organization)
-    // OR candidate is interviewing themselves (candidate.email === session.user.email)
-    const isOrgMember = candidate.organization.members.length > 0;
-    const isSelfInterview = candidate.email === session.user.email;
-
-    if (!isOrgMember && !isSelfInterview) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
-
-    // Check if session is already active or completed
-    if (candidate.status === "COMPLETED") {
-      return NextResponse.json(
-        { error: "Interview already completed" },
-        { status: 400 }
-      );
-    }
-
-    // Get or create session recording using upsert to handle existing records
-    const sessionRecording = await prisma.sessionRecording.upsert({
-      where: {
-        candidateId,
-      },
-      update: {
-        // If record exists, ensure it's active
-        status: "ACTIVE",
-      },
-      create: {
-        candidateId,
-        status: "ACTIVE",
-      },
-    });
-
-    // Get or generate question
-    let question = candidate.generatedQuestions?.[0];
-    if (!question) {
-      // Generate question based on assessment configuration
-      const assessment = candidate.assessment;
-      if (!assessment) {
-        return NextResponse.json(
-          { error: "Assessment not found for candidate" },
-          { status: 400 }
-        );
-      }
-
-      // Use questions service to generate appropriate question (creates it in DB)
-      const generatedQuestionData = await questions.generateQuestion({
+    // Use questions service to generate appropriate question (creates it in DB)
+    const generatedQuestionData = await logger.time(
+      'generateQuestion',
+      () => questions.generateQuestion({
         candidateId,
         difficulty: mapSeniorityToDifficulty(assessment.seniority),
         language: assessment.techStack?.[0]?.toLowerCase() || "typescript",
-      });
+      }),
+      { candidateId, difficulty: assessment.seniority }
+    );
 
-      // Question is already created in the database by generateQuestion
-      question = generatedQuestionData.question as any;
-    }
+    // Question is already created in the database by generateQuestion
+    question = generatedQuestionData.question as any;
+  }
 
-    // Create or get Modal volume for sandbox
-    let volumeId = candidate.volumeId;
-    if (!volumeId) {
-      // Create Modal volume with starter files
-      const volume = await modal.createVolume(candidateId);
-      volumeId = volume.id;
+  // Create or get Modal volume for sandbox
+  let volumeId = candidate.volumeId;
+  if (!volumeId) {
+    // Create Modal volume with starter files
+    const volume = await logger.time(
+      'createModalVolume',
+      () => modal.createVolume(candidateId),
+      { candidateId }
+    );
+    volumeId = volume.id;
 
       // Write starter files to volume
       // Parse starterCode - supports both string and array of {fileName, content} formats
@@ -349,47 +359,46 @@ module.exports = longestPalindrome;`,
       })
       : [];
 
-    // Return initialization data
-    return NextResponse.json({
-      sessionId: sessionRecording.id,
-      candidateId,
-      totalQuestions, // Include total questions for progress tracking
-      question: {
-        id: question.id,
-        title: question.title,
-        description: question.description,
-        difficulty: question.difficulty,
-        language: question.language.toLowerCase(),
-        starterCode: question.starterCode,
-        testCases: transformedTestCases,
-      },
-      sandbox: {
-        volumeId,
-        workspaceDir: "/workspace",
-        status: "ready",
-      },
-      files: files.map((file, index) => ({
-        id: `file-${index}`,
-        name: file.name,
-        type: file.type,
-        path: file.path,
-        language: getLanguageFromExtension(file.name),
-      })),
-      timeLimit,
-      timeRemaining,
-      startedAt: startedAt.toISOString(),
-    });
-  } catch (error) {
-    console.error("Initialize interview error:", error);
-    return NextResponse.json(
-      {
-        error: "Failed to initialize interview",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
-}
+  // Log successful initialization
+  logger.info('Interview initialized', {
+    candidateId,
+    sessionId: sessionRecording.id,
+    questionId: question.id,
+    volumeId,
+    timeRemaining,
+  });
+
+  // Return initialization data
+  return success({
+    sessionId: sessionRecording.id,
+    candidateId,
+    totalQuestions, // Include total questions for progress tracking
+    question: {
+      id: question.id,
+      title: question.title,
+      description: question.description,
+      difficulty: question.difficulty,
+      language: question.language.toLowerCase(),
+      starterCode: question.starterCode,
+      testCases: transformedTestCases,
+    },
+    sandbox: {
+      volumeId,
+      workspaceDir: "/workspace",
+      status: "ready",
+    },
+    files: files.map((file, index) => ({
+      id: `file-${index}`,
+      name: file.name,
+      type: file.type,
+      path: file.path,
+      language: getLanguageFromExtension(file.name),
+    })),
+    timeLimit,
+    timeRemaining,
+    startedAt: startedAt.toISOString(),
+  });
+});
 
 /**
  * Helper to determine language from file extension

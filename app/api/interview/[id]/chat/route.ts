@@ -4,6 +4,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { publishAIInteraction } from "@/lib/queues";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
 
 // Request validation schema
 const chatRequestSchema = z.object({
@@ -27,33 +30,39 @@ const anthropic = new Anthropic({
  * Claude chat with Server-Sent Events streaming
  * Query params: message (required), fileName, content, language (optional)
  */
-export async function GET(
+export const GET = withErrorHandling(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    // Await params (Next.js 15 requirement)
-    const { id } = await params;
+) => {
+  // Await params (Next.js 15 requirement)
+  const { id } = await params;
 
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    // Parse query parameters
-    const { searchParams } = new URL(request.url);
-    const message = searchParams.get("message");
-    const fileName = searchParams.get("fileName");
-    const content = searchParams.get("content");
-    const language = searchParams.get("language");
+  // Check authentication
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError();
+  }
 
-    if (!message) {
-      return NextResponse.json(
-        { error: "Message is required" },
-        { status: 400 }
-      );
-    }
+  // Parse query parameters
+  const { searchParams } = new URL(request.url);
+  const message = searchParams.get("message");
+  const fileName = searchParams.get("fileName");
+  const content = searchParams.get("content");
+  const language = searchParams.get("language");
+
+  if (!message) {
+    throw new ValidationError("Message is required");
+  }
+
+  logger.debug('[Chat] Request received', {
+    candidateId: id,
+    messageLength: message.length,
+    hasCodeContext: !!(fileName || content || language),
+  });
 
     const codeContext = (fileName || content || language) ? {
       fileName: fileName || undefined,
@@ -77,10 +86,7 @@ export async function GET(
     });
 
     if (!candidate) {
-      return NextResponse.json(
-        { error: "Interview session not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Interview session", id);
     }
 
     // Check authorization (user must be member of candidate's organization)
@@ -89,7 +95,7 @@ export async function GET(
     const isSelfInterview = candidate.email === session.user.email;
 
     if (!isOrgMember && !isSelfInterview) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      throw new AuthorizationError("Access denied to this interview session");
     }
 
     // Get or create session recording
@@ -216,7 +222,20 @@ export async function GET(
             filesModified, // Files modified by Write/Edit tools
           }).catch((error) => {
             // Log error but don't fail the request
-            console.error('Failed to publish AI interaction event:', error);
+            logger.warn('Failed to publish AI interaction event', {
+              sessionId: sessionRecording.id,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+          });
+
+          logger.info('[Chat] Interaction completed', {
+            candidateId: id,
+            sessionId: sessionRecording.id,
+            promptQuality,
+            inputTokens,
+            outputTokens,
+            latency,
+            toolsUsed: toolsUsed.length,
           });
 
           // Send usage event (frontend expects this format)
@@ -231,7 +250,10 @@ export async function GET(
 
           controller.close();
         } catch (error) {
-          console.error("Claude API error:", error);
+          logger.error("Claude API error", error as Error, {
+            candidateId: id,
+            sessionId: sessionRecording?.id,
+          });
           const errorData = JSON.stringify({
             type: "error",
             error: error instanceof Error ? error.message : "Unknown error",
@@ -250,17 +272,7 @@ export async function GET(
         Connection: "keep-alive",
       },
     });
-  } catch (error) {
-    console.error("Chat API error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
-}
+});
 
 /**
  * Build context-aware system prompt

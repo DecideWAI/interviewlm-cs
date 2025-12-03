@@ -1,21 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import { withErrorHandling, AuthorizationError, NotFoundError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
 
 /**
  * GET /api/organization/current
  * Get current user's organization information
  */
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getSession();
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    if (!session?.user?.id) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+  const session = await getSession();
+
+  if (!session?.user?.id) {
+    throw new AuthorizationError();
+  }
+
+  logger.debug('[Org Current] Fetching organization', { userId: session.user.id });
 
     // Get user's organization membership
     const membership = await prisma.organizationMember.findFirst({
@@ -38,24 +44,18 @@ export async function GET(request: NextRequest) {
     });
 
     if (!membership) {
-      return NextResponse.json(
-        { error: "No organization found for user" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Organization for user");
     }
 
-    return NextResponse.json({
+    logger.info('[Org Current] Organization retrieved', {
+      userId: session.user.id,
+      organizationId: membership.organization.id,
+      role: membership.role,
+      plan: membership.organization.plan,
+    });
+
+    return success({
       organization: membership.organization,
       role: membership.role,
     });
-  } catch (error) {
-    console.error("Error fetching current organization:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
-}
+});

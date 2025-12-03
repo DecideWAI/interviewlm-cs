@@ -3,51 +3,54 @@
  * GET /api/analytics/overview - Get comprehensive analytics dashboard data
  */
 
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { getSession } from '@/lib/auth-helpers';
 import { getAnalyticsOverview } from '@/lib/services/analytics';
 import prisma from '@/lib/prisma';
+import { withErrorHandling, AuthorizationError, NotFoundError } from '@/lib/utils/errors';
+import { success } from '@/lib/utils/api-response';
+import { logger } from '@/lib/utils/logger';
+import { standardRateLimit } from '@/lib/middleware/rate-limit';
 
 /**
  * GET /api/analytics/overview
  * Returns KPIs, trend data, and performance metrics for the organization
  */
-export async function GET(request: NextRequest) {
-  try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+export const GET = withErrorHandling(async (request: NextRequest) => {
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    // Get user's organization
-    const userOrg = await prisma.organizationMember.findFirst({
-      where: { userId: session.user.id },
-    });
-
-    if (!userOrg) {
-      return NextResponse.json(
-        { error: 'User not associated with any organization' },
-        { status: 400 }
-      );
-    }
-
-    const { searchParams } = new URL(request.url);
-    const dateRange = searchParams.get('dateRange') || 'last_30_days';
-
-    const analytics = await getAnalyticsOverview(
-      userOrg.organizationId,
-      dateRange
-    );
-
-    return NextResponse.json(analytics);
-  } catch (error) {
-    console.error('[Analytics Overview] Error:', error);
-    return NextResponse.json(
-      {
-        error: 'Failed to fetch analytics',
-        details: error instanceof Error ? error.message : 'Unknown error',
-      },
-      { status: 500 }
-    );
+  // Check authentication
+  const session = await getSession();
+  if (!session?.user?.id) {
+    throw new AuthorizationError('Authentication required');
   }
-}
+
+  // Get user's organization
+  const userOrg = await prisma.organizationMember.findFirst({
+    where: { userId: session.user.id },
+  });
+
+  if (!userOrg) {
+    throw new NotFoundError('Organization membership');
+  }
+
+  const { searchParams } = new URL(request.url);
+  const dateRange = searchParams.get('dateRange') || 'last_30_days';
+
+  // Fetch analytics with performance logging
+  const analytics = await logger.time(
+    'getAnalyticsOverview',
+    () => getAnalyticsOverview(userOrg.organizationId, dateRange),
+    { organizationId: userOrg.organizationId, dateRange }
+  );
+
+  logger.info('Analytics overview fetched', {
+    userId: session.user.id,
+    organizationId: userOrg.organizationId,
+    dateRange,
+  });
+
+  return success(analytics);
+});

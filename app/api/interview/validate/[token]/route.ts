@@ -1,19 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { withErrorHandling, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { relaxedRateLimit } from "@/lib/middleware/rate-limit";
 
-export async function GET(
+export const GET = withErrorHandling(async (
   req: NextRequest,
   { params }: { params: Promise<{ token: string }> }
-) {
-  try {
-    const { token } = await params;
+) => {
+  const { token } = await params;
 
-    if (!token) {
-      return NextResponse.json(
-        { error: "Invalid invitation token" },
-        { status: 400 }
-      );
-    }
+  // Apply relaxed rate limiting (public endpoint for candidates)
+  const rateLimited = await relaxedRateLimit(req);
+  if (rateLimited) return rateLimited;
+
+  if (!token) {
+    throw new ValidationError("Invalid invitation token");
+  }
+
+  logger.debug('[Validate Token] Validating invitation', { token: token.substring(0, 8) + '...' });
 
     // Find candidate by invitation token
     const candidate = await prisma.candidate.findFirst({
@@ -35,10 +41,7 @@ export async function GET(
     });
 
     if (!candidate) {
-      return NextResponse.json(
-        { error: "Invalid invitation link" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Invitation link");
     }
 
     // Check if invitation has expired
@@ -54,7 +57,15 @@ export async function GET(
     // Can start if: not expired, not completed, and either INVITED or IN_PROGRESS
     const canStart = !isExpired && !isCompleted;
 
-    return NextResponse.json({
+    logger.info('[Validate Token] Token validated', {
+      candidateId: candidate.id,
+      status: candidate.status,
+      isExpired,
+      isCompleted,
+      canStart,
+    });
+
+    return success({
       candidate: {
         id: candidate.id,
         name: candidate.name,
@@ -84,11 +95,4 @@ export async function GET(
       canStart,
       sessionId: candidate.sessionId || undefined,
     });
-  } catch (error) {
-    console.error("Token validation error:", error);
-    return NextResponse.json(
-      { error: "Failed to validate invitation" },
-      { status: 500 }
-    );
-  }
-}
+});

@@ -1,40 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import prisma from "@/lib/prisma";
+import { z } from "zod";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
+
+// Validation schema for role update
+const updateRoleSchema = z.object({
+  role: z.enum(["OWNER", "ADMIN", "MEMBER"], {
+    errorMap: () => ({ message: "Invalid role. Must be OWNER, ADMIN, or MEMBER" }),
+  }),
+});
 
 // Update team member
-export async function PATCH(
+export const PATCH = withErrorHandling(async (
   req: NextRequest,
   { params }: { params: Promise<{ memberId: string }> }
-) {
-  try {
-    // Check authentication
-    const session = await auth();
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+) => {
+  const { memberId } = await params;
 
-    const { memberId } = await params;
-    const { role } = await req.json();
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(req);
+  if (rateLimited) return rateLimited;
 
-    if (!role || typeof role !== "string") {
-      return NextResponse.json(
-        { error: "Role is required" },
-        { status: 400 }
-      );
-    }
+  // Check authentication
+  const session = await auth();
+  if (!session?.user?.email) {
+    throw new AuthorizationError();
+  }
 
-    // Validate role
-    const validRoles = ["OWNER", "ADMIN", "MEMBER"];
-    if (!validRoles.includes(role)) {
-      return NextResponse.json(
-        { error: "Invalid role" },
-        { status: 400 }
-      );
-    }
+  // Parse and validate request body
+  const body = await req.json();
+  const { role } = updateRoleSchema.parse(body);
+
+  logger.info('[Team] Updating member role', {
+    memberId,
+    newRole: role,
+    requestedBy: session.user.email,
+  });
 
     // Get current user
     const currentUser = await prisma.user.findUnique({
@@ -45,20 +50,14 @@ export async function PATCH(
     });
 
     if (!currentUser || !currentUser.organizationMember[0]) {
-      return NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Organization");
     }
 
     const currentMembership = currentUser.organizationMember[0];
 
     // Check if current user has permission (OWNER or ADMIN)
     if (!["OWNER", "ADMIN"].includes(currentMembership.role)) {
-      return NextResponse.json(
-        { error: "You don't have permission to update team members" },
-        { status: 403 }
-      );
+      throw new AuthorizationError("You don't have permission to update team members");
     }
 
     // Get the membership being updated
@@ -70,34 +69,22 @@ export async function PATCH(
     });
 
     if (!membershipToUpdate) {
-      return NextResponse.json(
-        { error: "Team member not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Team member", memberId);
     }
 
     // Check if membership belongs to the same organization
     if (membershipToUpdate.organizationId !== currentMembership.organizationId) {
-      return NextResponse.json(
-        { error: "Team member not found in your organization" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Team member in your organization", memberId);
     }
 
     // Prevent changing own role
     if (membershipToUpdate.userId === currentUser.id) {
-      return NextResponse.json(
-        { error: "You cannot change your own role" },
-        { status: 400 }
-      );
+      throw new ValidationError("You cannot change your own role");
     }
 
     // Only OWNER can promote to OWNER or demote OWNER
     if ((role === "OWNER" || membershipToUpdate.role === "OWNER") && currentMembership.role !== "OWNER") {
-      return NextResponse.json(
-        { error: "Only organization owners can manage owner roles" },
-        { status: 403 }
-      );
+      throw new AuthorizationError("Only organization owners can manage owner roles");
     }
 
     // Update the membership
@@ -109,7 +96,14 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json({
+    logger.info('[Team] Member role updated', {
+      memberId,
+      previousRole: membershipToUpdate.role,
+      newRole: role,
+      updatedBy: session.user.email,
+    });
+
+    return success({
       message: "Team member updated successfully",
       member: {
         id: updatedMembership.id,
@@ -118,31 +112,29 @@ export async function PATCH(
         role: updatedMembership.role,
       },
     });
-  } catch (error) {
-    console.error("Team member update error:", error);
-    return NextResponse.json(
-      { error: "Failed to update team member" },
-      { status: 500 }
-    );
-  }
-}
+});
 
 // Delete team member
-export async function DELETE(
+export const DELETE = withErrorHandling(async (
   req: NextRequest,
   { params }: { params: Promise<{ memberId: string }> }
-) {
-  try {
-    // Check authentication
-    const session = await auth();
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+) => {
+  const { memberId } = await params;
 
-    const { memberId } = await params;
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(req);
+  if (rateLimited) return rateLimited;
+
+  // Check authentication
+  const session = await auth();
+  if (!session?.user?.email) {
+    throw new AuthorizationError();
+  }
+
+  logger.info('[Team] Removing member', {
+    memberId,
+    requestedBy: session.user.email,
+  });
 
     // Get current user
     const currentUser = await prisma.user.findUnique({
@@ -153,20 +145,14 @@ export async function DELETE(
     });
 
     if (!currentUser || !currentUser.organizationMember[0]) {
-      return NextResponse.json(
-        { error: "Organization not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Organization");
     }
 
     const currentMembership = currentUser.organizationMember[0];
 
     // Check if current user has permission (OWNER or ADMIN)
     if (!["OWNER", "ADMIN"].includes(currentMembership.role)) {
-      return NextResponse.json(
-        { error: "You don't have permission to remove team members" },
-        { status: 403 }
-      );
+      throw new AuthorizationError("You don't have permission to remove team members");
     }
 
     // Get the membership being deleted
@@ -175,34 +161,22 @@ export async function DELETE(
     });
 
     if (!membershipToDelete) {
-      return NextResponse.json(
-        { error: "Team member not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Team member", memberId);
     }
 
     // Check if membership belongs to the same organization
     if (membershipToDelete.organizationId !== currentMembership.organizationId) {
-      return NextResponse.json(
-        { error: "Team member not found in your organization" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Team member in your organization", memberId);
     }
 
     // Prevent removing self
     if (membershipToDelete.userId === currentUser.id) {
-      return NextResponse.json(
-        { error: "You cannot remove yourself from the organization" },
-        { status: 400 }
-      );
+      throw new ValidationError("You cannot remove yourself from the organization");
     }
 
     // Only OWNER can remove other OWNERS
     if (membershipToDelete.role === "OWNER" && currentMembership.role !== "OWNER") {
-      return NextResponse.json(
-        { error: "Only organization owners can remove other owners" },
-        { status: 403 }
-      );
+      throw new AuthorizationError("Only organization owners can remove other owners");
     }
 
     // Prevent removing the last owner
@@ -215,10 +189,7 @@ export async function DELETE(
       });
 
       if (ownerCount <= 1) {
-        return NextResponse.json(
-          { error: "Cannot remove the last owner from the organization" },
-          { status: 400 }
-        );
+        throw new ValidationError("Cannot remove the last owner from the organization");
       }
     }
 
@@ -227,14 +198,14 @@ export async function DELETE(
       where: { id: memberId },
     });
 
-    return NextResponse.json({
+    logger.info('[Team] Member removed', {
+      memberId,
+      role: membershipToDelete.role,
+      removedBy: session.user.email,
+      organizationId: currentMembership.organizationId,
+    });
+
+    return success({
       message: "Team member removed successfully",
     });
-  } catch (error) {
-    console.error("Team member delete error:", error);
-    return NextResponse.json(
-      { error: "Failed to remove team member" },
-      { status: 500 }
-    );
-  }
-}
+});

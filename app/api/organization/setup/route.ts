@@ -1,86 +1,82 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { auth } from "@/auth";
+import { z } from "zod";
 import prisma from "@/lib/prisma";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
 
-export async function POST(req: NextRequest) {
-  try {
-    // Check authentication
-    const session = await auth();
-    if (!session?.user?.email) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
-      );
-    }
+// Request validation schema
+const setupSchema = z.object({
+  name: z.string().min(1, "Organization name is required").max(100),
+  description: z.string().max(500).optional(),
+});
 
-    const { name, description } = await req.json();
+export const POST = withErrorHandling(async (req: NextRequest) => {
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(req);
+  if (rateLimited) return rateLimited;
 
-    if (!name || typeof name !== "string") {
-      return NextResponse.json(
-        { error: "Organization name is required" },
-        { status: 400 }
-      );
-    }
+  // Check authentication
+  const session = await auth();
+  if (!session?.user?.email) {
+    throw new AuthorizationError();
+  }
 
-    // Get user with organization
-    const user = await prisma.user.findUnique({
-      where: { email: session.user.email },
-      include: {
-        organizationMember: {
-          include: {
-            organization: true,
-          },
+  // Parse and validate request body
+  const body = await req.json();
+  const { name, description } = setupSchema.parse(body);
+
+  // Get user with organization
+  const user = await prisma.user.findUnique({
+    where: { email: session.user.email },
+    include: {
+      organizationMember: {
+        include: {
+          organization: true,
         },
       },
-    });
+    },
+  });
 
-    if (!user) {
-      return NextResponse.json(
-        { error: "User not found" },
-        { status: 404 }
-      );
-    }
-
-    // Get user's organization (first one if they have multiple)
-    const organizationMember = user.organizationMember[0];
-    if (!organizationMember) {
-      return NextResponse.json(
-        { error: "No organization found" },
-        { status: 404 }
-      );
-    }
-
-    // Check if user has permission to update (OWNER or ADMIN)
-    if (!["OWNER", "ADMIN"].includes(organizationMember.role)) {
-      return NextResponse.json(
-        { error: "You don't have permission to update organization settings" },
-        { status: 403 }
-      );
-    }
-
-    // Update organization
-    const updatedOrganization = await prisma.organization.update({
-      where: { id: organizationMember.organizationId },
-      data: {
-        name,
-        description: description || null,
-      },
-    });
-
-    return NextResponse.json({
-      message: "Organization updated successfully",
-      organization: {
-        id: updatedOrganization.id,
-        name: updatedOrganization.name,
-        description: updatedOrganization.description,
-        slug: updatedOrganization.slug,
-      },
-    });
-  } catch (error) {
-    console.error("Organization setup error:", error);
-    return NextResponse.json(
-      { error: "Failed to update organization" },
-      { status: 500 }
-    );
+  if (!user) {
+    throw new NotFoundError("User", session.user.email);
   }
-}
+
+  // Get user's organization (first one if they have multiple)
+  const organizationMember = user.organizationMember[0];
+  if (!organizationMember) {
+    throw new NotFoundError("Organization membership");
+  }
+
+  // Check if user has permission to update (OWNER or ADMIN)
+  if (!["OWNER", "ADMIN"].includes(organizationMember.role)) {
+    throw new AuthorizationError("You don't have permission to update organization settings");
+  }
+
+  // Update organization
+  const updatedOrganization = await prisma.organization.update({
+    where: { id: organizationMember.organizationId },
+    data: {
+      name,
+      description: description || null,
+    },
+  });
+
+  logger.info('Organization updated', {
+    userId: user.id,
+    organizationId: updatedOrganization.id,
+    name,
+  });
+
+  return success({
+    message: "Organization updated successfully",
+    organization: {
+      id: updatedOrganization.id,
+      name: updatedOrganization.name,
+      description: updatedOrganization.description,
+      slug: updatedOrganization.slug,
+    },
+  });
+});
