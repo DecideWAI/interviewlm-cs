@@ -126,15 +126,22 @@ Given a string s, return the longest palindromic substring in s.`,
 
     // If requesting specific file content
     if (filePath) {
-      const content = await modal.readFile(volumeId, filePath);
+      const result = await modal.readFile(volumeId, filePath);
+      if (!result.success) {
+        return NextResponse.json(
+          { error: result.error || "Failed to read file" },
+          { status: 500 }
+        );
+      }
       return NextResponse.json({
-        content,
+        content: result.content || "",
         path: filePath,
       });
     }
 
     // Get files from Modal volume (file list)
-    const files = await modal.getFileSystem(candidateId, "/");
+    // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
+    const files = await modal.getFileSystem(candidateId, "/workspace");
 
     return NextResponse.json({
       files: files.map((file, index) => ({

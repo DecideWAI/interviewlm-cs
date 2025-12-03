@@ -278,6 +278,7 @@ model ClaudeInteraction {
   latency       Int?
   stopReason    String?          @map("stop_reason")
   promptQuality Float?           @map("prompt_quality")
+  metadata      Json?            // Stores tool use blocks, file modifications, etc.
   session       SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([sessionId, timestamp])

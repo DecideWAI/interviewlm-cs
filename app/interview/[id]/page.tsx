@@ -17,6 +17,27 @@ import { QuestionTransition } from "@/components/interview/QuestionTransition";
 import type { QuestionPerformance } from "@/components/interview/QuestionTransition";
 import { resetConversation } from "@/lib/chat-resilience";
 import { useSessionRecovery, SessionState } from "@/hooks/useSessionRecovery";
+
+/**
+ * Safely extract starter code from various API response formats
+ * API may return string, array of {content}, or object with {content}
+ */
+function extractStarterCode(starterCode: unknown): string {
+  if (typeof starterCode === "string") {
+    return starterCode;
+  }
+  if (Array.isArray(starterCode) && starterCode.length > 0) {
+    const first = starterCode[0];
+    if (typeof first === "string") return first;
+    if (first && typeof first === "object" && "content" in first) {
+      return String(first.content || "");
+    }
+  }
+  if (starterCode && typeof starterCode === "object" && "content" in starterCode) {
+    return String((starterCode as { content?: unknown }).content || "");
+  }
+  return "";
+}
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { useIsMobile } from "@/lib/device-detection";
 import { MobileBlocker } from "@/components/interview/MobileBlocker";
@@ -131,7 +152,9 @@ export default function InterviewPage() {
     // Auto-restore session state without showing prompt
     console.log('Auto-restoring session from:', new Date(state.lastSaved));
 
-    setCode(state.code);
+    // Defensive check: ensure code is a string (could be corrupted by bad API responses)
+    const restoredCode = typeof state.code === 'string' ? state.code : '';
+    setCode(restoredCode);
     setTestResults(state.testResults);
     setTimeRemaining(state.timeRemaining);
     setCurrentQuestionIndex(state.currentQuestionIndex);
@@ -267,12 +290,14 @@ export default function InterviewPage() {
                 const fileResponseJson = await fileResponse.json();
                 // Handle both wrapped { success, data } and direct response formats
                 const fileData = fileResponseJson.data || fileResponseJson;
-                setCode(fileData.content || data.question.starterCode);
+                // Ensure content is a string (defensive check)
+                const fileContent = typeof fileData.content === 'string' ? fileData.content : '';
+                setCode(fileContent || extractStarterCode(data.question.starterCode));
               } else {
-                setCode(data.question.starterCode);
+                setCode(extractStarterCode(data.question.starterCode));
               }
             } catch {
-              setCode(data.question.starterCode);
+              setCode(extractStarterCode(data.question.starterCode));
             }
           } else {
             // Clear the flag after using it
@@ -280,7 +305,7 @@ export default function InterviewPage() {
             console.log('Skipped loading file content - using restored session code');
           }
         } else {
-          setCode(data.question.starterCode);
+          setCode(extractStarterCode(data.question.starterCode));
         }
       } catch (err) {
         console.error("Session initialization error:", err);
@@ -678,6 +703,7 @@ export default function InterviewPage() {
       }
 
       // Update session with new question
+      const newStarterCode = extractStarterCode(data.question.starterCode);
       setSessionData({
         ...sessionData,
         question: {
@@ -686,7 +712,7 @@ export default function InterviewPage() {
           description: data.question.description,
           difficulty: data.question.difficulty.toUpperCase(),
           language: data.question.language,
-          starterCode: data.question.starterCode[0]?.content || "",
+          starterCode: newStarterCode,
           testCases: data.question.testCases,
         },
       });
@@ -698,7 +724,7 @@ export default function InterviewPage() {
       setTestResults({ passed: 0, total: 0 });
 
       // Reset editor with new starter code
-      setCode(data.question.starterCode[0]?.content || "");
+      setCode(newStarterCode);
 
       // CRITICAL: Reset AI conversation history for new question
       // This prevents context leakage between questions
@@ -789,16 +815,18 @@ export default function InterviewPage() {
           const responseJson = await response.json();
           // Handle both wrapped { success, data } and direct response formats
           const data = responseJson.data || responseJson;
-          setCode(data.content || "");
+          // Ensure content is a string (defensive check)
+          const fileContent = typeof data.content === 'string' ? data.content : '';
+          setCode(fileContent || extractStarterCode(sessionData?.question.starterCode));
         } else {
           // Fallback to starter code if file read fails
           console.error("Failed to load file content");
-          setCode(sessionData?.question.starterCode || "");
+          setCode(extractStarterCode(sessionData?.question.starterCode));
         }
       } catch (err) {
         console.error("Error loading file:", err);
         // Fallback to starter code
-        setCode(sessionData?.question.starterCode || "");
+        setCode(extractStarterCode(sessionData?.question.starterCode));
       }
     }
   };
@@ -1074,7 +1102,9 @@ export default function InterviewPage() {
                             const responseJson = await response.json();
                             // Handle both wrapped { success, data } and direct response formats
                             const data = responseJson.data || responseJson;
-                            setCode(data.content || "");
+                            // Ensure content is a string (defensive check)
+                            const fileContent = typeof data.content === 'string' ? data.content : '';
+                            setCode(fileContent);
                           }
                         } catch (err) {
                           console.error("Failed to reload file:", err);

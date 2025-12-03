@@ -45,6 +45,11 @@ export function CodeEditor({
   height = "100%",
   showTestButton = true,
 }: CodeEditorProps) {
+  // Defensive check: ensure value is always a string
+  const safeValue = typeof value === "string" ? value : "";
+  if (typeof value !== "string" && value !== undefined && value !== null) {
+    console.warn("[CodeEditor] Received non-string value:", typeof value, value);
+  }
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [isRunningTests, setIsRunningTests] = useState(false);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -313,7 +318,7 @@ export function CodeEditor({
       <div className="flex-1 min-h-0 relative">
         <div className="absolute inset-0 overflow-auto">
           <CodeMirror
-            value={value}
+            value={safeValue}
             height="auto"
             theme={vscodeDark}
             extensions={extensions}
