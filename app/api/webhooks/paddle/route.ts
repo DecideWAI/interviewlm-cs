@@ -1,56 +1,59 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { paddleService } from "@/lib/services/paddle";
+import { withErrorHandling } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
 
 /**
  * POST /api/webhooks/paddle
  * Handle Paddle webhook events
+ * NOTE: No rate limiting for webhooks (they come from trusted source)
  */
-export async function POST(request: NextRequest) {
-  try {
-    // Parse webhook payload
-    const payload = await request.json();
+export const POST = withErrorHandling(async (request: NextRequest) => {
+  // Parse webhook payload
+  const payload = await request.json();
 
-    console.log("Received Paddle webhook:", {
+  logger.info("Received Paddle webhook", {
+    event: payload.alert_name || payload.event_type,
+    id: payload.alert_id || payload.event_id,
+  });
+
+  // Process webhook with timing
+  const result = await logger.time(
+    'processPaddleWebhook',
+    () => paddleService.handleWebhook(payload),
+    {
       event: payload.alert_name || payload.event_type,
-      id: payload.alert_id || payload.event_id,
+    }
+  );
+
+  if (result.success) {
+    logger.info("Paddle webhook processed successfully", {
+      event: payload.alert_name || payload.event_type,
+      message: result.message,
     });
 
-    // Process webhook
-    const result = await paddleService.handleWebhook(payload);
+    return success({ message: result.message });
+  } else {
+    logger.warn("Paddle webhook processing failed", {
+      event: payload.alert_name || payload.event_type,
+      message: result.message,
+    });
 
-    if (result.success) {
-      return NextResponse.json(
-        { message: result.message },
-        { status: 200 }
-      );
-    } else {
-      return NextResponse.json(
-        { error: result.message },
-        { status: 400 }
-      );
-    }
-  } catch (error) {
-    console.error("Paddle webhook error:", error);
-    return NextResponse.json(
-      {
-        error: "Webhook processing failed",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
+    return success(
+      { error: result.message },
+      { status: 400 }
     );
   }
-}
+});
 
 /**
  * GET /api/webhooks/paddle
  * Health check endpoint
  */
-export async function GET() {
-  return NextResponse.json(
-    {
-      status: "ok",
-      message: "Paddle webhook endpoint is active",
-    },
-    { status: 200 }
-  );
-}
+export const GET = withErrorHandling(async () => {
+  return success({
+    status: "ok",
+    message: "Paddle webhook endpoint is active",
+  });
+});

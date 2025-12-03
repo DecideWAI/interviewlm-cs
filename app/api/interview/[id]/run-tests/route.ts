@@ -4,6 +4,10 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { modalService as modal, sessionService as sessions } from "@/lib/services";
 import Anthropic from "@anthropic-ai/sdk";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { strictRateLimit } from "@/lib/middleware/rate-limit";
 
 // Initialize Anthropic client
 const anthropic = new Anthropic({
@@ -50,68 +54,69 @@ interface ExecutionResponse {
 /**
  * POST /api/interview/[id]/run-tests
  * Execute code in Modal AI Sandbox and return test results
+ * NOTE: Uses strict rate limiting (5 req/min) due to expensive code execution
  */
-export async function POST(
+export const POST = withErrorHandling(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    // Await params (Next.js 15 requirement)
-    const { id } = await params;
+) => {
+  // Await params (Next.js 15 requirement)
+  const { id } = await params;
 
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Apply STRICT rate limiting (expensive operation - code execution)
+  const rateLimited = await strictRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    // Parse and validate request body
-    const body = await request.json();
-    console.log("[RunTests] Request body:", JSON.stringify(body, null, 2));
+  // Check authentication
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError();
+  }
 
-    const validationResult = runTestsRequestSchema.safeParse(body);
+  // Parse and validate request body
+  const body = await request.json();
+  logger.debug("[RunTests] Request received", { candidateId: id, language: body.language });
 
-    if (!validationResult.success) {
-      console.error("[RunTests] Validation error:", JSON.stringify(validationResult.error.errors, null, 2));
-      return NextResponse.json(
-        { error: "Invalid request", details: validationResult.error.errors },
-        { status: 400 }
-      );
-    }
+  const validationResult = runTestsRequestSchema.safeParse(body);
 
-    const { code, language, testCases, fileName, questionId } =
-      validationResult.data;
+  if (!validationResult.success) {
+    logger.warn("[RunTests] Validation failed", {
+      candidateId: id,
+      errors: validationResult.error.errors,
+    });
+    throw new ValidationError("Invalid request: " + validationResult.error.errors.map(e => e.message).join(", "));
+  }
 
-    // Verify candidate exists and belongs to authorized organization
-    const candidate = await prisma.candidate.findUnique({
-      where: { id },
-      include: {
-        organization: {
-          include: {
-            members: {
-              where: { userId: session.user.id },
-            },
+  const { code, language, testCases, fileName, questionId } =
+    validationResult.data;
+
+  // Verify candidate exists and belongs to authorized organization
+  const candidate = await prisma.candidate.findUnique({
+    where: { id },
+    include: {
+      organization: {
+        include: {
+          members: {
+            where: { userId: session.user.id },
           },
         },
-        sessionRecording: true,
       },
-    });
+      sessionRecording: true,
+    },
+  });
 
-    if (!candidate) {
-      return NextResponse.json(
-        { error: "Interview session not found" },
-        { status: 404 }
-      );
-    }
+  if (!candidate) {
+    throw new NotFoundError("Interview session", id);
+  }
 
-    // Check authorization (user must be member of candidate's organization)
-    // OR candidate is interviewing themselves (candidate.email === session.user.email)
-    const isOrgMember = candidate.organization.members.length > 0;
-    const isSelfInterview = candidate.email === session.user.email;
+  // Check authorization (user must be member of candidate's organization)
+  // OR candidate is interviewing themselves (candidate.email === session.user.email)
+  const isOrgMember = candidate.organization.members.length > 0;
+  const isSelfInterview = candidate.email === session.user.email;
 
-    if (!isOrgMember && !isSelfInterview) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
+  if (!isOrgMember && !isSelfInterview) {
+    throw new AuthorizationError("Access denied to this interview session");
+  }
 
     // Fetch question details for AI evaluation or test cases
     let questionDetails = null;
@@ -139,7 +144,10 @@ export async function POST(
       ) || false;
 
       if (isBackendQuestion && questionDetails) {
-        console.log('[RunTests] Detected backend question, using AI evaluation');
+        logger.info('[RunTests] Using AI evaluation for backend question', {
+          candidateId: id,
+          questionId,
+        });
         return await evaluateWithAI({
           id,
           code,
@@ -164,35 +172,29 @@ export async function POST(
       }
     }
 
-    // Validate that we have test cases for traditional problems
-    if (!resolvedTestCases || resolvedTestCases.length === 0) {
-      return NextResponse.json(
-        { error: "No test cases found for this question" },
-        { status: 400 }
-      );
-    }
+  // Validate that we have test cases for traditional problems
+  if (!resolvedTestCases || resolvedTestCases.length === 0) {
+    throw new ValidationError("No test cases found for this question");
+  }
 
-    // Get or create session recording
-    let sessionRecording = candidate.sessionRecording;
-    if (!sessionRecording) {
-      sessionRecording = await prisma.sessionRecording.create({
-        data: {
-          candidateId: id,
-          status: "ACTIVE",
-        },
-      });
-    }
+  // Get or create session recording
+  let sessionRecording = candidate.sessionRecording;
+  if (!sessionRecording) {
+    sessionRecording = await prisma.sessionRecording.create({
+      data: {
+        candidateId: id,
+        status: "ACTIVE",
+      },
+    });
+  }
 
-    // Execute code in Modal sandbox
-    const executionStart = Date.now();
+  // Execute code in Modal sandbox
+  const executionStart = Date.now();
 
-    // Get volumeId from candidate
-    if (!candidate.volumeId) {
-      return NextResponse.json(
-        { error: "Sandbox not initialized. Please refresh the interview." },
-        { status: 400 }
-      );
-    }
+  // Get volumeId from candidate
+  if (!candidate.volumeId) {
+    throw new ValidationError("Sandbox not initialized. Please refresh the interview.");
+  }
 
     // Write code to sandbox volume before running tests
     const fileToWrite = fileName || `solution.${language === "python" ? "py" : "js"}`;
@@ -209,16 +211,20 @@ export async function POST(
       },
     });
 
-    // Execute tests in Modal sandbox
-    const executionResult = await modal.executeCode(
-      id, // session ID (candidate ID)
-      code,
-      resolvedTestCases.map(tc => ({
-        name: tc.name,
-        input: tc.input,
-        expected: tc.expectedOutput,
-        hidden: tc.hidden || false,
-      }))
+    // Execute tests in Modal sandbox with performance timing
+    const executionResult = await logger.time(
+      'executeCode',
+      () => modal.executeCode(
+        id, // session ID (candidate ID)
+        code,
+        resolvedTestCases.map(tc => ({
+          name: tc.name,
+          input: tc.input,
+          expected: tc.expectedOutput,
+          hidden: tc.hidden || false,
+        }))
+      ),
+      { candidateId: id, testCount: resolvedTestCases.length, language }
     );
 
     const executionTime = Date.now() - executionStart;
@@ -251,6 +257,15 @@ export async function POST(
       },
     });
 
+    // Log successful test execution
+    logger.info('[RunTests] Tests executed', {
+      candidateId: id,
+      passed: executionResult.passedTests,
+      failed: executionResult.failedTests,
+      total: executionResult.totalTests,
+      executionTime,
+    });
+
     // Return execution results
     const response: ExecutionResponse = {
       passed: executionResult.passedTests,
@@ -267,18 +282,8 @@ export async function POST(
       executionTime,
     };
 
-    return NextResponse.json(response, { status: 200 });
-  } catch (error) {
-    console.error("Run tests API error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
-  }
-}
+    return success(response);
+});
 
 /**
  * AI-based code evaluation for real-world scenarios
@@ -294,7 +299,11 @@ async function evaluateWithAI(params: {
   const { id, code, language, fileName, questionDetails, sessionRecording } = params;
 
   try {
-    console.log('[AI Evaluation] Starting evaluation for:', questionDetails.title);
+    logger.info('[AI Evaluation] Starting evaluation', {
+      candidateId: id,
+      questionTitle: questionDetails.title,
+      language,
+    });
 
     // Create or get session recording
     let recording = sessionRecording;
@@ -309,8 +318,10 @@ async function evaluateWithAI(params: {
 
     const evaluationStart = Date.now();
 
-    // Use Claude to evaluate the code
-    const evaluation = await anthropic.messages.create({
+    // Use Claude to evaluate the code with performance timing
+    const evaluation = await logger.time(
+      'claudeEvaluation',
+      () => anthropic.messages.create({
       model: "claude-sonnet-4-5-20250929",
       max_tokens: 2048,
       messages: [{
@@ -351,7 +362,9 @@ Return ONLY valid JSON (no markdown):
   "improvements": ["improvement 1", "improvement 2"]
 }`
       }]
-    });
+    }),
+      { candidateId: id, questionTitle: questionDetails.title, language }
+    );
 
     const evaluationTime = Date.now() - evaluationStart;
 
@@ -379,7 +392,12 @@ Return ONLY valid JSON (no markdown):
       throw new Error("Unexpected content type from AI");
     }
 
-    console.log('[AI Evaluation] Result:', aiResult.overallScore, '/', 100);
+    logger.info('[AI Evaluation] Evaluation completed', {
+      candidateId: id,
+      overallScore: aiResult.overallScore,
+      passed: aiResult.passed,
+      evaluationTime,
+    });
 
     // Record code snapshot
     await prisma.codeSnapshot.create({
@@ -420,14 +438,11 @@ Return ONLY valid JSON (no markdown):
     }, { status: 200 });
 
   } catch (error) {
-    console.error('[AI Evaluation] Error:', error);
-    return NextResponse.json(
-      {
-        error: "AI evaluation failed",
-        message: error instanceof Error ? error.message : "Unknown error",
-      },
-      { status: 500 }
-    );
+    logger.error('[AI Evaluation] Error', error as Error, {
+      candidateId: id,
+      questionTitle: questionDetails.title,
+    });
+    throw error; // Re-throw to be handled by withErrorHandling
   }
 }
 

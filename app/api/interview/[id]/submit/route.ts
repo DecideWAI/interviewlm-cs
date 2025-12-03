@@ -14,6 +14,10 @@ import {
 import { CandidateProfile } from "@/types/analytics";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import pako from "pako";
+import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
+import { success } from "@/lib/utils/api-response";
+import { logger } from "@/lib/utils/logger";
+import { standardRateLimit } from "@/lib/middleware/rate-limit";
 
 // Request validation schema
 const submitRequestSchema = z.object({
@@ -34,32 +38,38 @@ const s3Client = new S3Client({
  * POST /api/interview/[id]/submit
  * Finalize assessment, calculate scores, and generate hiring recommendation
  */
-export async function POST(
+export const POST = withErrorHandling(async (
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    // Await params (Next.js 15 requirement)
-    const { id } = await params;
+) => {
+  // Await params (Next.js 15 requirement)
+  const { id } = await params;
 
-    // Check authentication
-    const session = await getSession();
-    if (!session?.user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+  // Apply rate limiting
+  const rateLimited = await standardRateLimit(request);
+  if (rateLimited) return rateLimited;
 
-    // Parse and validate request body
-    const body = await request.json();
-    const validationResult = submitRequestSchema.safeParse(body);
+  // Check authentication
+  const session = await getSession();
+  if (!session?.user) {
+    throw new AuthorizationError();
+  }
 
-    if (!validationResult.success) {
-      return NextResponse.json(
-        { error: "Invalid request", details: validationResult.error.errors },
-        { status: 400 }
-      );
-    }
+  // Parse and validate request body
+  const body = await request.json();
+  const validationResult = submitRequestSchema.safeParse(body);
 
-    const { finalCode, notes } = validationResult.data;
+  if (!validationResult.success) {
+    logger.warn('[Submit] Validation failed', {
+      candidateId: id,
+      errors: validationResult.error.errors,
+    });
+    throw new ValidationError("Invalid request: " + validationResult.error.errors.map(e => e.message).join(", "));
+  }
+
+  const { finalCode, notes } = validationResult.data;
+
+  logger.info('[Submit] Starting submission', { candidateId: id, userId: session.user.id });
 
     // Fetch candidate with all related data
     const candidate = await prisma.candidate.findUnique({
@@ -86,10 +96,7 @@ export async function POST(
     });
 
     if (!candidate) {
-      return NextResponse.json(
-        { error: "Interview session not found" },
-        { status: 404 }
-      );
+      throw new NotFoundError("Interview session", id);
     }
 
     // Check authorization (user must be member of candidate's organization)
@@ -98,22 +105,16 @@ export async function POST(
     const isSelfInterview = candidate.email === session.user.email;
 
     if (!isOrgMember && !isSelfInterview) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+      throw new AuthorizationError("Access denied to this interview session");
     }
 
     // Check if already completed
     if (candidate.status === "COMPLETED" || candidate.status === "EVALUATED") {
-      return NextResponse.json(
-        { error: "Assessment already submitted" },
-        { status: 400 }
-      );
+      throw new ValidationError("Assessment already submitted");
     }
 
     if (!candidate.sessionRecording) {
-      return NextResponse.json(
-        { error: "No session recording found" },
-        { status: 400 }
-      );
+      throw new ValidationError("No session recording found");
     }
 
     const sessionRecording = candidate.sessionRecording;
@@ -136,15 +137,19 @@ export async function POST(
         }>;
 
         if (testCases && testCases.length > 0) {
-          finalTestResults = await modal.executeCode(
-            id,
-            finalCodeContent,
-            testCases.map(tc => ({
-              name: tc.name,
-              input: tc.input,
-              expected: tc.expectedOutput,
-              hidden: tc.hidden || false,
-            }))
+          finalTestResults = await logger.time(
+            'executeFinalTests',
+            () => modal.executeCode(
+              id,
+              finalCodeContent,
+              testCases.map(tc => ({
+                name: tc.name,
+                input: tc.input,
+                expected: tc.expectedOutput,
+                hidden: tc.hidden || false,
+              }))
+            ),
+            { candidateId: id, testCount: testCases.length }
           );
 
           // Record final test results
@@ -163,7 +168,10 @@ export async function POST(
           await Promise.all(testResultPromises);
         }
       } catch (error) {
-        console.error("Error running final tests:", error);
+        logger.warn("Error running final tests", {
+          candidateId: id,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
         // Continue with submission even if final test execution fails
       }
     }
@@ -346,9 +354,13 @@ export async function POST(
         timestamp: new Date(),
         priority: 5, // Normal priority
       });
-      console.log(`[Submit] Queued evaluation for session ${sessionRecording.id}`);
+      logger.info(`[Submit] Queued evaluation`, { sessionId: sessionRecording.id, candidateId: id });
     } catch (error) {
-      console.error('[Submit] Failed to queue evaluation:', error);
+      logger.warn('[Submit] Failed to queue evaluation', {
+        sessionId: sessionRecording.id,
+        candidateId: id,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
       // Don't fail submission if queue fails
     }
 
@@ -381,40 +393,36 @@ export async function POST(
       },
     });
 
+    logger.info('[Submit] Submission completed', {
+      candidateId: id,
+      sessionId: sessionRecording.id,
+      overallScore: overallScore.overall,
+      recommendation: recommendation.decision,
+      testsPassed: finalTestResults?.passed,
+      testsFailed: finalTestResults?.failed,
+    });
+
     // Return evaluation results
-    return NextResponse.json(
-      {
-        success: true,
-        evaluation: {
-          overallScore: overallScore.overall,
-          breakdown: overallScore.breakdown,
-          aiCollaborationScore: aiCollaborationScore.overall,
-          recommendation: recommendation.decision,
-          confidence: recommendation.confidence,
-          percentileRank,
-          redFlags,
-          greenFlags,
-        },
-        candidate: {
-          id: updatedCandidate.id,
-          name: updatedCandidate.name,
-          email: updatedCandidate.email,
-          status: updatedCandidate.status,
-        },
+    return success({
+      success: true,
+      evaluation: {
+        overallScore: overallScore.overall,
+        breakdown: overallScore.breakdown,
+        aiCollaborationScore: aiCollaborationScore.overall,
+        recommendation: recommendation.decision,
+        confidence: recommendation.confidence,
+        percentileRank,
+        redFlags,
+        greenFlags,
       },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error("Submit API error:", error);
-    return NextResponse.json(
-      {
-        error: "Internal server error",
-        message: error instanceof Error ? error.message : "Unknown error",
+      candidate: {
+        id: updatedCandidate.id,
+        name: updatedCandidate.name,
+        email: updatedCandidate.email,
+        status: updatedCandidate.status,
       },
-      { status: 500 }
-    );
-  }
-}
+    });
+});
 
 /**
  * Calculate session metrics from candidate and session data
@@ -539,9 +547,14 @@ async function uploadSessionToS3(
 
     await s3Client.send(command);
 
+    logger.info('[Submit] Session uploaded to S3', { candidateId, sessionId: sessionRecording.id, key });
     return key;
   } catch (error) {
-    console.error("S3 upload error:", error);
+    logger.warn("S3 upload error", {
+      candidateId,
+      sessionId: sessionRecording.id,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
     // Return empty string if upload fails (non-critical)
     return "";
   }
