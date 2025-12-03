@@ -350,6 +350,7 @@ async function handlePaymentFailed(
         organizationId,
         type: "PURCHASE",
         amount: 0, // Failed payment - no credits
+        balanceAfter: organization.credits, // Balance unchanged
         paddleOrderId: payload.order_id,
         metadata: {
           status: "FAILED",
@@ -570,21 +571,6 @@ async function handleRefundCompleted(
       };
     }
 
-    // Create refund transaction
-    await prisma.creditTransaction.create({
-      data: {
-        organizationId,
-        type: "REFUND",
-        amount: -originalTransaction.amount, // Negative to deduct credits
-        paddleOrderId: payload.order_id,
-        metadata: {
-          refundAmount: refundAmount,
-          currency: payload.currency,
-          refundReason: payload.refund_reason,
-        },
-      },
-    });
-
     // Update organization credits (deduct if not used)
     const organization = await prisma.organization.findUnique({
       where: { id: organizationId },
@@ -596,14 +582,32 @@ async function handleRefundCompleted(
       },
     });
 
+    let newBalance = organization?.credits || 0;
     if (organization && organization.credits >= originalTransaction.amount) {
-      await prisma.organization.update({
+      const updated = await prisma.organization.update({
         where: { id: organizationId },
         data: {
           credits: { decrement: originalTransaction.amount },
         },
       });
+      newBalance = updated.credits;
     }
+
+    // Create refund transaction record
+    await prisma.creditTransaction.create({
+      data: {
+        organizationId,
+        type: "REFUND",
+        amount: -originalTransaction.amount, // Negative to deduct credits
+        balanceAfter: newBalance,
+        paddleOrderId: payload.order_id,
+        metadata: {
+          refundAmount: refundAmount,
+          currency: payload.currency,
+          refundReason: payload.refund_reason,
+        },
+      },
+    });
 
     // Send warning alert about refund
     await alerting.warning(

@@ -179,14 +179,14 @@ export class AgentRouter {
 
       return {
         text: result.text,
-        toolsUsed: result.toolsUsed,
-        filesModified: result.filesModified,
+        toolsUsed: result.toolsUsed ?? [],
+        filesModified: result.filesModified ?? [],
         backend: 'claude-sdk',
         latencyMs: Date.now() - startTime,
         tokenUsage: result.metadata?.usage
           ? {
-              input: result.metadata.usage.input_tokens,
-              output: result.metadata.usage.output_tokens,
+              input: (result.metadata.usage as any).input_tokens,
+              output: (result.metadata.usage as any).output_tokens,
             }
           : undefined,
         metadata: result.metadata,

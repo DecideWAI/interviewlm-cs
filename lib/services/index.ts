@@ -14,15 +14,15 @@ export type {
 } from "./claude";
 
 // Modal AI Sandbox Service
-// Production implementation using deployed Modal.com web endpoints
-// Real sandboxed code execution with file storage
-export * as modalService from "./modal-production";
+// Production implementation using Modal TypeScript SDK
+// Real sandboxed code execution with direct SDK access
+export * as modalService from "./modal";
 export type {
   TestResult,
   ExecutionResult,
   FileNode,
   SandboxInstance,
-} from "./modal-production";
+} from "./modal";
 
 // S3 Storage Service
 export * as s3Service from "./s3";
@@ -60,7 +60,9 @@ export {
   createSandbox,
   listActiveSandboxes,
   runCommand,
-} from "./modal-production";
+  executeCommand,
+  healthCheck as modalHealthCheck,
+} from "./modal";
 
 export {
   uploadSessionRecording,

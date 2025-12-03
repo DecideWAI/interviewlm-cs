@@ -218,7 +218,7 @@ export class IncrementalQuestionGenerator {
       {
         problemTitle: seed.title,
         problemDescription: prompt,
-        language: requiredTech.languages[0] || 'typescript',
+        language: requiredTech.languages[0]?.name || 'typescript',
       }
     );
 

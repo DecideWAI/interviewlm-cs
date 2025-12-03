@@ -15,7 +15,7 @@ export type SeedType = 'legacy' | 'incremental';
  * - required: Should use, flagged in evaluation but not blocking
  * - recommended: Optional, bonus points if used
  */
-export type TechPriority = 'critical' | 'required' | 'recommended';
+export type TechPriority = 'critical' | 'required' | 'recommended' | 'optional';
 
 /**
  * Technology specification with priority

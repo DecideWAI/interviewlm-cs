@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
     const organizationId = primaryOrg?.organizationId;
 
     // Get team members if in an organization
-    let teamMembers = [];
+    let teamMembers: Array<{ id: string; name: string | null; email: string; role: string; status: string }> = [];
     if (organizationId) {
       const members = await prisma.organizationMember.findMany({
         where: { organizationId },

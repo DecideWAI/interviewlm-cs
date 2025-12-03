@@ -198,11 +198,18 @@ class SupervisorState(TypedDict):
     session_id: str
     candidate_id: str | None
     task_type: str | None
+    task_info: dict | None  # Additional task details for routing
 
     # Results from sub-agents
     coding_result: dict | None
     interview_result: dict | None
     evaluation_result: dict | None
+
+    # Session data for evaluation
+    code_snapshots: list[dict] | None
+    test_results: list[dict] | None
+    claude_interactions: list[dict] | None
+    terminal_commands: list[dict] | None
 
     # Processing state
     workflow_complete: bool

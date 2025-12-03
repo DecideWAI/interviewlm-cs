@@ -283,7 +283,7 @@ module.exports = longestPalindrome;`,
           // Fallback: treat as plain string content
           starterFiles = [{
             path: `solution.${question.language === 'python' ? 'py' : 'js'}`,
-            content: question.starterCode,
+            content: String(question.starterCode),
           }];
         }
       } else {

@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     const user = await prisma.user.findUnique({
       where: { id: session.user.id },
       include: {
-        organizationMembers: {
+        organizationMember: {
           include: {
             organization: true,
           },
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const primaryOrg = user.organizationMembers?.[0];
+    const primaryOrg = user.organizationMember?.[0];
 
     return NextResponse.json({
       profile: {

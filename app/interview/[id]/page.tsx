@@ -215,11 +215,13 @@ export default function InterviewPage() {
         });
 
         if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.error || "Failed to initialize session");
+          const errorResponse = await response.json();
+          throw new Error(errorResponse.error?.message || errorResponse.error || "Failed to initialize session");
         }
 
-        const data: SessionData = await response.json();
+        const responseJson = await response.json();
+        // API returns { success: true, data: {...}, meta: {...} } format
+        const data: SessionData = responseJson.data || responseJson;
         setSessionData(data);
         setTimeRemaining(data.timeRemaining);
 
@@ -233,19 +235,22 @@ export default function InterviewPage() {
         const restoredFilePath = sessionStorage.getItem(`restore-file-${candidateId}`);
         let fileToSelect: FileNode | undefined;
 
-        if (data.files.length > 0) {
+        // Ensure files array exists (defensive check)
+        const files = data.files || [];
+
+        if (files.length > 0) {
           if (restoredFilePath) {
             // Restore previously selected file
-            fileToSelect = data.files.find(f => f.path === restoredFilePath);
+            fileToSelect = files.find(f => f.path === restoredFilePath);
             sessionStorage.removeItem(`restore-file-${candidateId}`);
             console.log('Restored previously selected file:', fileToSelect?.name);
           }
 
           if (!fileToSelect) {
             // Default to main file if no restoration or file not found
-            fileToSelect = data.files.find(
+            fileToSelect = files.find(
               (f) => f.name.includes("solution") || f.name.includes("index")
-            ) || data.files[0];
+            ) || files[0];
           }
 
           setSelectedFile(fileToSelect);
@@ -259,7 +264,9 @@ export default function InterviewPage() {
                 `/api/interview/${candidateId}/files?path=${encodeURIComponent(fileToSelect.path)}`
               );
               if (fileResponse.ok) {
-                const fileData = await fileResponse.json();
+                const fileResponseJson = await fileResponse.json();
+                // Handle both wrapped { success, data } and direct response formats
+                const fileData = fileResponseJson.data || fileResponseJson;
                 setCode(fileData.content || data.question.starterCode);
               } else {
                 setCode(data.question.starterCode);
@@ -481,7 +488,9 @@ export default function InterviewPage() {
       });
 
       if (response.ok) {
-        const results = await response.json();
+        const responseJson = await response.json();
+        // Handle both wrapped { success, data } and direct response formats
+        const results = responseJson.data || responseJson;
         setTestResults({
           passed: results.passed,
           total: results.total,
@@ -520,11 +529,13 @@ export default function InterviewPage() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Submission failed");
+        const errorResponse = await response.json();
+        throw new Error(errorResponse.error?.message || errorResponse.error || "Submission failed");
       }
 
-      const result = await response.json();
+      const responseJson = await response.json();
+      // Handle both wrapped { success, data } and direct response formats
+      const result = responseJson.data || responseJson;
 
       // Clear session state - assessment is complete
       clearSessionState();
@@ -636,11 +647,13 @@ export default function InterviewPage() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate next question");
+        const errorResponse = await response.json();
+        throw new Error(errorResponse.error?.message || errorResponse.error || "Failed to generate next question");
       }
 
-      const data = await response.json();
+      const responseJson = await response.json();
+      // Handle both wrapped { success, data } and direct response formats
+      const data = responseJson.data || responseJson;
 
       // Check if this was the last question
       if (data.completed) {
@@ -773,7 +786,9 @@ export default function InterviewPage() {
         );
 
         if (response.ok) {
-          const data = await response.json();
+          const responseJson = await response.json();
+          // Handle both wrapped { success, data } and direct response formats
+          const data = responseJson.data || responseJson;
           setCode(data.content || "");
         } else {
           // Fallback to starter code if file read fails
@@ -1056,7 +1071,9 @@ export default function InterviewPage() {
                             `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
                           );
                           if (response.ok) {
-                            const data = await response.json();
+                            const responseJson = await response.json();
+                            // Handle both wrapped { success, data } and direct response formats
+                            const data = responseJson.data || responseJson;
                             setCode(data.content || "");
                           }
                         } catch (err) {

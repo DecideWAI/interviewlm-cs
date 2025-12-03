@@ -681,16 +681,21 @@ Return a JSON object with this structure:
   "estimatedTime": ${params.seed.estimatedTime}
 }`;
 
-  const response = await getChatCompletion(
-    [
+  // Use Anthropic SDK directly for question generation
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic();
+
+  const response = await client.messages.create({
+    model: "claude-sonnet-4-5-20250929",
+    max_tokens: 4096,
+    system: systemPrompt,
+    messages: [
       {
         role: "user",
         content: "Generate a coding question based on the seed template.",
       },
     ],
-    systemPrompt,
-    "claude-3-5-sonnet-20241022"
-  );
+  });
 
   const content = response.content[0];
   if (content.type !== "text") {

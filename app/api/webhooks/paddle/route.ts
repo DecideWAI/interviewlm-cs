@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { paddleService } from "@/lib/services/paddle";
 import { withErrorHandling } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
@@ -40,7 +40,7 @@ export const POST = withErrorHandling(async (request: NextRequest) => {
       message: result.message,
     });
 
-    return success(
+    return NextResponse.json(
       { error: result.message },
       { status: 400 }
     );

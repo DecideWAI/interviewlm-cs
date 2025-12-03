@@ -61,7 +61,15 @@ export async function executeReadFile(
     : filePathOrInput.path;
 
   try {
-    let content = await modal.readFile(sessionId, filePath);
+    const readResult = await modal.readFile(sessionId, filePath);
+    if (!readResult.success || !readResult.content) {
+      return {
+        success: false,
+        error: readResult.error || "Failed to read file",
+        path: filePath,
+      };
+    }
+    let content = readResult.content;
 
     // Apply offset and limit if provided
     if (offset !== undefined && offset > 0) {

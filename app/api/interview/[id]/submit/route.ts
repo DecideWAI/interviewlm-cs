@@ -126,7 +126,11 @@ export const POST = withErrorHandling(async (
       try {
         // Read final code from Modal volume
         const fileName = `solution.${firstQuestion.language === "python" ? "py" : "js"}`;
-        const finalCodeContent = finalCode?.[fileName] || await modal.readFile(candidate.volumeId, fileName);
+        let finalCodeContent = finalCode?.[fileName];
+        if (!finalCodeContent) {
+          const readResult = await modal.readFile(candidate.volumeId, fileName);
+          finalCodeContent = readResult.success ? readResult.content || '' : '';
+        }
 
         // Run final tests
         const testCases = firstQuestion.testCases as Array<{
@@ -311,11 +315,11 @@ export const POST = withErrorHandling(async (
         problemSolvingConfidence: 0.8,
 
         aiCollaborationScore: Math.round(aiCollaborationScore.overall),
-        aiCollaborationEvidence: {
+        aiCollaborationEvidence: JSON.parse(JSON.stringify({
           interactions: metrics.claudeInteractions || 0,
           avgPromptQuality: metrics.avgPromptQuality || 3,
           breakdown: aiCollaborationScore,
-        },
+        })),
         aiCollaborationConfidence: 0.75,
 
         communicationScore: Math.round(aiCollaborationScore.overall),
@@ -332,12 +336,12 @@ export const POST = withErrorHandling(async (
         // Hiring recommendation
         hiringRecommendation: recommendation.decision,
         hiringConfidence: recommendation.confidence,
-        hiringReasoning: {
+        hiringReasoning: JSON.parse(JSON.stringify({
           recommendation,
           percentileRank,
           redFlags,
           greenFlags,
-        },
+        })),
 
         evaluatedAt: new Date(),
       },

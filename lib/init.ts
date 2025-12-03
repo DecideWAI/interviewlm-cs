@@ -7,7 +7,7 @@
 
 import { env, features, logMissingFeatures, isProd } from "@/lib/config/env";
 import { logger } from "@/lib/utils/logger";
-import { modalService } from "@/lib/services/modal.production";
+import { modalService } from "@/lib/services/modal";
 
 let initialized = false;
 

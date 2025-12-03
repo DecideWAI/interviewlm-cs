@@ -1,0 +1,93 @@
+# Docker Compose for LangGraph Agents
+# Includes all required services for production deployment
+
+version: '3.8'
+
+services:
+  # LangGraph Agents API Server
+  agents:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: langgraph-agents
+    ports:
+      - "8000:8000"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/interviewlm
+      - REDIS_URL=redis://redis:6379
+      # Model configuration
+      - CODING_AGENT_MODEL=${CODING_AGENT_MODEL:-claude-sonnet-4-20250514}
+      - EVALUATION_AGENT_MODEL=${EVALUATION_AGENT_MODEL:-claude-sonnet-4-20250514}
+      - INTERVIEW_AGENT_MODEL=${INTERVIEW_AGENT_MODEL:-claude-3-5-haiku-20241022}
+      # Modal service URLs
+      - MODAL_EXECUTE_URL=${MODAL_EXECUTE_URL}
+      - MODAL_WRITE_FILE_URL=${MODAL_WRITE_FILE_URL}
+      - MODAL_READ_FILE_URL=${MODAL_READ_FILE_URL}
+      - MODAL_LIST_FILES_URL=${MODAL_LIST_FILES_URL}
+      - MODAL_EXECUTE_COMMAND_URL=${MODAL_EXECUTE_COMMAND_URL}
+      # LangSmith configuration
+      - LANGCHAIN_TRACING_V2=${LANGCHAIN_TRACING_V2:-false}
+      - LANGCHAIN_API_KEY=${LANGCHAIN_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGCHAIN_PROJECT:-interviewlm-agents}
+      # Feature flags
+      - ENABLE_OBSERVABILITY=${ENABLE_OBSERVABILITY:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - langgraph-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: langgraph-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=interviewlm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langgraph-network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: langgraph-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langgraph-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  langgraph-network:
+    driver: bridge

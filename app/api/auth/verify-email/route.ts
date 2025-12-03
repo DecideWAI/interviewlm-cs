@@ -61,7 +61,7 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   });
 
   if (!user) {
-    logger.error('[Verify Email] User not found for token', { email: verificationToken.identifier });
+    logger.error('[Verify Email] User not found for token', undefined, { email: verificationToken.identifier });
     throw new NotFoundError("User");
   }
 

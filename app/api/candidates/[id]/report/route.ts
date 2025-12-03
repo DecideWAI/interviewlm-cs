@@ -73,17 +73,11 @@ export const GET = withErrorHandling(async (
             },
           },
         },
-        evaluations: {
-          orderBy: { evaluatedAt: 'desc' },
-          take: 1,
-        },
+        evaluation: true,
         generatedQuestions: {
           orderBy: { order: 'asc' },
         },
-        sessions: {
-          orderBy: { endedAt: 'desc' },
-          take: 1,
-        },
+        sessionRecording: true,
       },
     });
 
@@ -92,7 +86,7 @@ export const GET = withErrorHandling(async (
     }
 
     // Check if candidate has been evaluated
-    const evaluation = candidate.evaluations[0];
+    const evaluation = candidate.evaluation;
 
     if (!evaluation) {
       throw new ValidationError("Candidate has not been evaluated yet");
@@ -100,7 +94,7 @@ export const GET = withErrorHandling(async (
 
     // Check if we have a cached actionable report
     if (evaluation.actionableReport) {
-      const cachedReport = evaluation.actionableReport as ActionableReport & { candidateName?: string };
+      const cachedReport = evaluation.actionableReport as unknown as ActionableReport & { candidateName?: string };
       cachedReport.candidateName = candidate.name;
 
       logger.info('[Report] Returning cached report', {

@@ -436,26 +436,11 @@ function SeedCard({ seed }: { seed: import("@/hooks/useSeeds").ProblemSeed }) {
                 <BarChart3 className="h-3 w-3" />
                 Avg Score
               </div>
-              <p className={cn("text-sm font-medium", getScoreColor(seed.avgCandidateScore))}>
+              <p className={cn("text-sm font-medium", getScoreColor(seed.avgCandidateScore ?? undefined))}>
                 {seed.avgCandidateScore || "-"}
               </p>
             </div>
 
-            {/* Rating */}
-            <div>
-              <div className="flex items-center gap-1 text-xs text-text-tertiary mb-1">
-                <Star className="h-3 w-3" />
-                Rating
-              </div>
-              <div className="flex items-center gap-1">
-                <p className="text-sm font-medium text-text-primary">
-                  {seed.rating?.toFixed(1) || "-"}
-                </p>
-                {seed.rating && (
-                  <Star className="h-3 w-3 fill-warning text-warning" />
-                )}
-              </div>
-            </div>
           </div>
         </div>
 

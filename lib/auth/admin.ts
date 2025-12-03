@@ -24,7 +24,8 @@ export async function isAdmin(): Promise<boolean> {
     select: { role: true },
   });
 
-  return user?.role === 'ADMIN' || user?.role === 'SUPER_ADMIN';
+  const role = user?.role as string;
+  return role === 'ADMIN' || role === 'SUPER_ADMIN';
 }
 
 /**

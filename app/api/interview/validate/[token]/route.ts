@@ -37,6 +37,11 @@ export const GET = withErrorHandling(async (
             },
           },
         },
+        sessionRecording: {
+          select: {
+            id: true,
+          },
+        },
       },
     });
 
@@ -48,8 +53,9 @@ export const GET = withErrorHandling(async (
     const now = new Date();
     const isExpired = candidate.invitationExpiresAt && candidate.invitationExpiresAt < now;
 
-    // Check if already completed
-    const isCompleted = candidate.status === "COMPLETED" || candidate.status === "SUBMITTED";
+    // Check if already completed (use type assertion since Prisma client may be out of sync)
+    const status = candidate.status as string;
+    const isCompleted = status === "COMPLETED" || status === "EVALUATED";
 
     // Check if already in progress
     const isInProgress = candidate.status === "IN_PROGRESS";
@@ -93,6 +99,6 @@ export const GET = withErrorHandling(async (
       isCompleted,
       isInProgress,
       canStart,
-      sessionId: candidate.sessionId || undefined,
+      sessionId: candidate.sessionRecording?.id || undefined,
     });
 });

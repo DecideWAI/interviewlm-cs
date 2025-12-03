@@ -212,8 +212,8 @@ function defaultKeyGenerator(request: NextRequest): string {
     return realIp;
   }
 
-  // Fallback to direct IP (not reliable behind proxies)
-  return request.ip || "unknown";
+  // Fallback to "unknown" when IP cannot be determined
+  return "unknown";
 }
 
 /**

@@ -456,8 +456,8 @@ export async function getCandidateAnalytics(
     const claudeInteractions = sessionRecording?.claudeInteractions || [];
     const testResults = sessionRecording?.testResults || [];
 
-    const totalTests = testResults.reduce((sum, t) => sum + (t.total || 0), 0);
-    const passedTests = testResults.reduce((sum, t) => sum + (t.passed || 0), 0);
+    const totalTests = testResults.length;
+    const passedTests = testResults.filter(t => t.passed).length;
 
     return {
       id: candidate.id,

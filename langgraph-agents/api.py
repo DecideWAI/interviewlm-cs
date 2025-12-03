@@ -18,9 +18,12 @@ from datetime import datetime
 from typing import AsyncGenerator, Literal, Optional
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+import os
+import secrets
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
 import uvicorn
 
@@ -31,6 +34,45 @@ from agents import (
     create_supervisor,
 )
 from config import settings
+
+
+# =============================================================================
+# Authentication
+# =============================================================================
+
+# API key for authenticating requests from Next.js server
+# In production, this should be a secure, randomly generated key
+LANGGRAPH_API_KEY = os.environ.get("LANGGRAPH_API_KEY", "")
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:3003").split(",")
+
+security = HTTPBearer(auto_error=False)
+
+
+async def verify_api_key(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> bool:
+    """Verify API key from Authorization header."""
+    # Skip auth in development mode if no API key is configured
+    if not LANGGRAPH_API_KEY:
+        return True
+
+    if not credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Compare using constant-time comparison to prevent timing attacks
+    if not secrets.compare_digest(credentials.credentials, LANGGRAPH_API_KEY):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API key",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return True
 
 
 # =============================================================================
@@ -157,13 +199,13 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS configuration
+# CORS configuration - restrict origins in production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=ALLOWED_ORIGINS if LANGGRAPH_API_KEY else ["*"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 
@@ -247,7 +289,7 @@ async def stream_coding_response(
         yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
 
 
-@app.post("/api/coding/chat")
+@app.post("/api/coding/chat", dependencies=[Depends(verify_api_key)])
 async def coding_chat_stream(request: CodingChatRequest):
     """
     Chat with the Coding Agent (SSE streaming).
@@ -279,7 +321,7 @@ async def coding_chat_stream(request: CodingChatRequest):
     )
 
 
-@app.post("/api/coding/chat/sync", response_model=CodingChatResponse)
+@app.post("/api/coding/chat/sync", response_model=CodingChatResponse, dependencies=[Depends(verify_api_key)])
 async def coding_chat_sync(request: CodingChatRequest):
     """
     Chat with the Coding Agent (non-streaming).
@@ -316,7 +358,7 @@ async def coding_chat_sync(request: CodingChatRequest):
 # Interview Agent Endpoints
 # =============================================================================
 
-@app.post("/api/interview/event", response_model=InterviewMetricsResponse)
+@app.post("/api/interview/event", response_model=InterviewMetricsResponse, dependencies=[Depends(verify_api_key)])
 async def record_interview_event(request: InterviewEventRequest):
     """
     Record an interview event and get updated metrics.
@@ -364,7 +406,7 @@ async def record_interview_event(request: InterviewEventRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/interview/{session_id}/metrics", response_model=InterviewMetricsResponse)
+@app.get("/api/interview/{session_id}/metrics", response_model=InterviewMetricsResponse, dependencies=[Depends(verify_api_key)])
 async def get_interview_metrics(session_id: str):
     """
     Get current interview metrics for a session.
@@ -391,7 +433,7 @@ async def get_interview_metrics(session_id: str):
 # Evaluation Agent Endpoints
 # =============================================================================
 
-@app.post("/api/evaluation/evaluate", response_model=EvaluationResponse)
+@app.post("/api/evaluation/evaluate", response_model=EvaluationResponse, dependencies=[Depends(verify_api_key)])
 async def evaluate_session(request: EvaluationRequest):
     """
     Evaluate a completed interview session.
@@ -432,7 +474,7 @@ async def evaluate_session(request: EvaluationRequest):
 # Supervisor Endpoints
 # =============================================================================
 
-@app.post("/api/supervisor/workflow", response_model=SupervisorWorkflowResponse)
+@app.post("/api/supervisor/workflow", response_model=SupervisorWorkflowResponse, dependencies=[Depends(verify_api_key)])
 async def run_supervisor_workflow(request: SupervisorWorkflowRequest):
     """
     Run a multi-agent workflow through the Supervisor.
@@ -463,7 +505,7 @@ async def run_supervisor_workflow(request: SupervisorWorkflowRequest):
 # Session Management
 # =============================================================================
 
-@app.delete("/api/sessions/{session_id}")
+@app.delete("/api/sessions/{session_id}", dependencies=[Depends(verify_api_key)])
 async def clear_session(session_id: str):
     """
     Clear cached data for a session.

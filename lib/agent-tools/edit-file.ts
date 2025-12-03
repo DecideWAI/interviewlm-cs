@@ -54,7 +54,16 @@ export async function executeEditFile(
 ): Promise<EditFileToolOutput> {
   try {
     // Read the current file content
-    const currentContent = await modal.readFile(sessionId, filePath);
+    const readResult = await modal.readFile(sessionId, filePath);
+    if (!readResult.success || !readResult.content) {
+      return {
+        success: false,
+        path: filePath,
+        matchFound: false,
+        error: readResult.error || `Could not read file: ${filePath}`,
+      };
+    }
+    const currentContent = readResult.content;
 
     // Check if the old string exists in the file
     if (!currentContent.includes(oldString)) {

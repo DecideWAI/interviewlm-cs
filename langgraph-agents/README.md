@@ -1,6 +1,6 @@
 # LangGraph Agents for InterviewLM
 
-Multi-agent system built with LangGraph v1.0 for AI-powered technical interviews.
+Production-ready multi-agent system built with LangGraph v1.0 for AI-powered technical interviews.
 
 ## Overview
 
@@ -15,7 +15,26 @@ This module reimplements the InterviewLM agent system using [LangGraph](https://
 | **Evaluation Agent** | Evaluates sessions with evidence-based scoring | `workers/evaluation-agent.ts` |
 | **Supervisor** | Coordinates multi-agent workflows | New |
 
-## Installation
+## Quick Start
+
+### Using Docker (Recommended)
+
+```bash
+# Clone and navigate to the directory
+cd langgraph-agents
+
+# Copy environment file and configure
+cp .env.example .env
+# Edit .env with your API keys
+
+# Start all services
+docker-compose up -d
+
+# Check health
+curl http://localhost:8000/health
+```
+
+### Manual Installation
 
 ```bash
 # Create virtual environment
@@ -28,30 +47,20 @@ pip install -r requirements.txt
 # Set up environment variables
 cp .env.example .env
 # Edit .env with your API keys
-```
 
-## Quick Start
-
-```python
-import asyncio
-from agents import create_coding_agent, create_evaluation_agent
-
-# Create a Coding Agent
-async def main():
-    agent = create_coding_agent(
-        session_id="session-001",
-        candidate_id="candidate-001",
-        helpfulness_level="pair-programming",
-        problem_statement="Implement a binary search function.",
-    )
-
-    response = await agent.send_message("How should I approach this problem?")
-    print(response["text"])
-
-asyncio.run(main())
+# Run the API server
+uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
 ## Architecture
+
+### Services
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| LangGraph Agents API | 8000 | FastAPI server for agent operations |
+| PostgreSQL | 5432 | Shared database with Next.js app |
+| Redis | 6379 | Session caching and metrics |
 
 ### LangGraph v1.0 Features Used
 
@@ -84,28 +93,83 @@ START → supervisor → coding ─────┐
                    → evaluation ─┘
 ```
 
+## API Endpoints
+
+### Health & Status
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+
+### Coding Agent
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/coding/chat` | Streaming SSE responses |
+| POST | `/api/coding/chat/sync` | Non-streaming responses |
+
+### Interview Agent
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/interview/event` | Record interview event |
+| GET | `/api/interview/{session_id}/metrics` | Get session metrics |
+
+### Evaluation Agent
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/evaluation/evaluate` | Evaluate completed session |
+
+### Supervisor
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/supervisor/workflow` | Run multi-agent workflow |
+
+### Session Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| DELETE | `/api/sessions/{session_id}` | Clear session data |
+
 ## Configuration
 
-### Environment Variables
+### Required Environment Variables
 
 ```bash
-# Required
-ANTHROPIC_API_KEY=sk-ant-...
+# API Keys
+ANTHROPIC_API_KEY=sk-ant-api03-...
 
-# Model Configuration
+# Modal Service URLs (for file/code operations)
+MODAL_EXECUTE_URL=https://your-modal-app.modal.run/execute
+MODAL_WRITE_FILE_URL=https://your-modal-app.modal.run/write-file
+MODAL_READ_FILE_URL=https://your-modal-app.modal.run/read-file
+MODAL_LIST_FILES_URL=https://your-modal-app.modal.run/list-files
+MODAL_EXECUTE_COMMAND_URL=https://your-modal-app.modal.run/execute-command
+```
+
+### Model Configuration
+
+```bash
 CODING_AGENT_MODEL=claude-sonnet-4-20250514
 EVALUATION_AGENT_MODEL=claude-sonnet-4-20250514
 INTERVIEW_AGENT_MODEL=claude-3-5-haiku-20241022
+```
 
-# Agent Settings
-MAX_AGENT_ITERATIONS=25
-TOOL_TIMEOUT_SECONDS=30
-DEFAULT_HELPFULNESS_LEVEL=pair-programming
+### Infrastructure
 
-# Optional: Observability
-ENABLE_OBSERVABILITY=false
-LANGFUSE_PUBLIC_KEY=...
-LANGFUSE_SECRET_KEY=...
+```bash
+DATABASE_URL=postgresql://user:password@localhost:5432/interviewlm
+REDIS_URL=redis://localhost:6379
+```
+
+### LangSmith Observability
+
+```bash
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_API_KEY=lsv2_pt_...
+LANGCHAIN_PROJECT=interviewlm-agents
 ```
 
 ### Helpfulness Levels
@@ -116,7 +180,7 @@ LANGFUSE_SECRET_KEY=...
 | `pair-programming` | Collaborative coding | All tools |
 | `full-copilot` | Maximum assistance | All tools |
 
-## API Reference
+## SDK Usage
 
 ### Coding Agent
 
@@ -124,11 +188,10 @@ LANGFUSE_SECRET_KEY=...
 from agents import create_coding_agent
 
 agent = create_coding_agent(
-    session_id: str,           # Required: Session identifier
-    candidate_id: str,         # Required: Candidate identifier
-    helpfulness_level: str,    # Optional: consultant/pair-programming/full-copilot
-    problem_statement: str,    # Optional: Current problem description
-    workspace_root: str,       # Optional: Root directory (default: /workspace)
+    session_id="session-001",
+    candidate_id="candidate-001",
+    helpfulness_level="pair-programming",
+    problem_statement="Implement a binary search function.",
 )
 
 # Send message and get response
@@ -177,19 +240,41 @@ result = await agent.evaluate_session(
 # Returns: EvaluationResult with scores for all 4 dimensions
 ```
 
-### Supervisor
+### Database Service
 
 ```python
-from agents import create_supervisor
+from services import get_database
 
-supervisor = create_supervisor()
+db = await get_database()
 
-# Run a multi-agent workflow
-result = await supervisor.run_workflow(
-    task="Help with coding and track metrics",
-    session_id="...",
-    candidate_id="...",
-)
+# Get full session data for evaluation
+session_data = await db.get_full_session_data(session_id)
+
+# Save evaluation result
+await db.save_evaluation(candidate_id, session_id, evaluation_result)
+
+# Update candidate scores
+await db.update_candidate_scores(candidate_id, overall_score)
+```
+
+### Cache Service
+
+```python
+from services import get_cache
+
+cache = await get_cache()
+
+# Cache interview metrics (hot path)
+await cache.set_metrics(session_id, metrics)
+metrics = await cache.get_metrics(session_id)
+
+# Distributed locking
+if await cache.acquire_lock(f"eval:{session_id}"):
+    try:
+        # Do evaluation
+        pass
+    finally:
+        await cache.release_lock(f"eval:{session_id}")
 ```
 
 ## Testing
@@ -200,33 +285,48 @@ pytest tests/ -v
 
 # Run with coverage
 pytest tests/ --cov=. --cov-report=html
+
+# Run specific test file
+pytest tests/test_coding_tools.py -v
 ```
 
 ## Deployment
 
-### As a Standalone Service
+### Docker Compose (Recommended)
 
 ```bash
-# Run the demo
-python main.py
+# Start all services
+docker-compose up -d
 
-# Or use with uvicorn for a FastAPI wrapper
-uvicorn api:app --host 0.0.0.0 --port 8000
+# View logs
+docker-compose logs -f agents
+
+# Stop services
+docker-compose down
+
+# Rebuild after changes
+docker-compose up -d --build
 ```
 
-### With Modal
+### Production Considerations
 
-See the main project's Modal deployment configuration.
+1. **Environment Variables**: Use secrets management (AWS Secrets Manager, HashiCorp Vault)
+2. **Database**: Use managed PostgreSQL (AWS RDS, Supabase)
+3. **Redis**: Use managed Redis (AWS ElastiCache, Upstash)
+4. **Scaling**: Run multiple API workers (`--workers 4`)
+5. **Monitoring**: Enable LangSmith tracing (`LANGCHAIN_TRACING_V2=true`)
 
-### With Docker
+### Health Monitoring
 
-```dockerfile
-FROM python:3.11-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["python", "main.py"]
+```bash
+# Check API health
+curl http://localhost:8000/health
+
+# Check Redis health
+redis-cli ping
+
+# Check PostgreSQL health
+pg_isready -h localhost -p 5432
 ```
 
 ## Key Differences from TypeScript Implementation
@@ -238,13 +338,15 @@ CMD ["python", "main.py"]
 | Tool Execution | Manual loop | ToolNode + tools_condition |
 | Parallel Execution | Promise.all | StateGraph parallel edges |
 | Message History | Array manipulation | add_messages reducer |
+| Database | Prisma | asyncpg |
+| Caching | Custom | Redis async |
 
 ## Resources
 
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
 - [LangGraph v1.0 Announcement](https://blog.langchain.com/langchain-langgraph-1dot0/)
 - [Multi-Agent Tutorial](https://langchain-ai.github.io/langgraph/tutorials/multi_agent/multi-agent-collaboration/)
-- [LangGraph Supervisor](https://github.com/langchain-ai/langgraph-supervisor-py)
+- [LangSmith Documentation](https://docs.smith.langchain.com/)
 
 ## License
 

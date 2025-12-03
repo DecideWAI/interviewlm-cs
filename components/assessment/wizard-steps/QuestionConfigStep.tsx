@@ -195,7 +195,7 @@ export function QuestionConfigStep({
 
               <IncrementalSeedForm
                 config={config.incrementalConfig || {}}
-                onUpdate={(updates) => onUpdate({ incrementalConfig: updates })}
+                onUpdate={(updates) => onUpdate({ incrementalConfig: updates as any })}
                 errors={errors}
               />
 
