@@ -25,6 +25,11 @@ from langgraph.prebuilt import create_react_agent
 from ..models.state import SupervisorState
 from ..config import settings
 
+# Import actual agents
+from .coding_agent import create_coding_agent, CodingAgentGraph
+from .interview_agent import create_interview_agent, InterviewAgentGraph
+from .evaluation_agent import create_evaluation_agent, EvaluationAgentGraph
+
 
 # =============================================================================
 # Handoff Tools for Agent Routing
@@ -168,6 +173,58 @@ Use `complete_workflow` when all tasks are done."""
 
 
 # =============================================================================
+# Agent Instance Cache
+# =============================================================================
+
+# Cache for agent instances (per session)
+_coding_agents: dict[str, CodingAgentGraph] = {}
+_interview_agent: InterviewAgentGraph | None = None
+_evaluation_agent: EvaluationAgentGraph | None = None
+
+
+def get_coding_agent(
+    session_id: str,
+    candidate_id: str,
+    helpfulness_level: str = "pair-programming",
+    problem_statement: str | None = None,
+) -> CodingAgentGraph:
+    """Get or create a coding agent for a session."""
+    global _coding_agents
+
+    cache_key = f"{session_id}:{helpfulness_level}"
+
+    if cache_key not in _coding_agents:
+        _coding_agents[cache_key] = create_coding_agent(
+            session_id=session_id,
+            candidate_id=candidate_id,
+            helpfulness_level=helpfulness_level,
+            problem_statement=problem_statement,
+        )
+
+    return _coding_agents[cache_key]
+
+
+def get_interview_agent() -> InterviewAgentGraph:
+    """Get or create the interview agent (singleton)."""
+    global _interview_agent
+
+    if _interview_agent is None:
+        _interview_agent = create_interview_agent()
+
+    return _interview_agent
+
+
+def get_evaluation_agent() -> EvaluationAgentGraph:
+    """Get or create the evaluation agent (singleton)."""
+    global _evaluation_agent
+
+    if _evaluation_agent is None:
+        _evaluation_agent = create_evaluation_agent()
+
+    return _evaluation_agent
+
+
+# =============================================================================
 # Node Functions
 # =============================================================================
 
@@ -195,21 +252,41 @@ async def supervisor_node(state: SupervisorState) -> dict:
 
     # Determine next agent based on tool calls
     next_agent = None
+    task_info = {}
+
     if response.tool_calls:
         for tool_call in response.tool_calls:
             tool_name = tool_call["name"]
+            args = tool_call.get("args", {})
+
             if tool_name == "handoff_to_coding_agent":
                 next_agent = "coding"
+                task_info = {
+                    "task_description": args.get("task_description", ""),
+                    "helpfulness_level": args.get("helpfulness_level", "pair-programming"),
+                    "session_id": args.get("session_id", state.get("session_id", "")),
+                }
             elif tool_name == "handoff_to_interview_agent":
                 next_agent = "interview"
+                task_info = {
+                    "event_type": args.get("event_type", ""),
+                    "event_data": args.get("event_data", {}),
+                    "session_id": args.get("session_id", state.get("session_id", "")),
+                }
             elif tool_name == "handoff_to_evaluation_agent":
                 next_agent = "evaluation"
+                task_info = {
+                    "session_id": args.get("session_id", state.get("session_id", "")),
+                    "candidate_id": args.get("candidate_id", state.get("candidate_id", "")),
+                }
             elif tool_name == "complete_workflow":
                 next_agent = "end"
+                task_info = {"summary": args.get("summary", "")}
 
     return {
         "messages": [response],
         "next_agent": next_agent,
+        "task_info": task_info,
     }
 
 
@@ -217,58 +294,147 @@ async def coding_worker_node(state: SupervisorState) -> dict:
     """
     Execute coding agent tasks.
 
-    In a full implementation, this would instantiate and run the CodingAgentGraph.
+    Invokes the actual CodingAgentGraph to handle coding requests.
     """
-    # Extract task from last tool call
-    messages = state.get("messages", [])
-    task_info = "Coding task completed"
+    task_info = state.get("task_info", {})
+    session_id = task_info.get("session_id", state.get("session_id", ""))
+    candidate_id = state.get("candidate_id", "")
+    helpfulness_level = task_info.get("helpfulness_level", "pair-programming")
+    task_description = task_info.get("task_description", "")
 
-    # Simulate coding agent execution
-    # In production: coding_agent = create_coding_agent(...); result = await coding_agent.send_message(...)
+    try:
+        # Get or create coding agent
+        coding_agent = get_coding_agent(
+            session_id=session_id,
+            candidate_id=candidate_id,
+            helpfulness_level=helpfulness_level,
+        )
 
-    return {
-        "coding_result": {"status": "completed", "task": task_info},
-        "messages": [AIMessage(content=f"Coding Agent: {task_info}")],
-    }
+        # Send the task to the coding agent
+        result = await coding_agent.send_message(task_description)
+
+        response_text = result.get("text", "Task completed")
+        tools_used = result.get("tools_used", [])
+
+        return {
+            "coding_result": {
+                "status": "completed",
+                "response": response_text,
+                "tools_used": tools_used,
+                "metadata": result.get("metadata", {}),
+            },
+            "messages": [AIMessage(content=f"Coding Agent: {response_text}")],
+        }
+
+    except Exception as e:
+        error_msg = f"Coding Agent error: {str(e)}"
+        return {
+            "coding_result": {"status": "error", "error": str(e)},
+            "messages": [AIMessage(content=error_msg)],
+        }
 
 
 async def interview_worker_node(state: SupervisorState) -> dict:
     """
     Execute interview agent tasks.
 
-    In a full implementation, this would instantiate and run the InterviewAgentGraph.
+    Invokes the actual InterviewAgentGraph to process events.
     """
-    # Simulate interview agent execution
-    # In production: interview_agent = create_interview_agent(); metrics = await interview_agent.process_event(...)
+    task_info = state.get("task_info", {})
+    session_id = task_info.get("session_id", state.get("session_id", ""))
+    candidate_id = state.get("candidate_id", "")
+    event_type = task_info.get("event_type", "")
+    event_data = task_info.get("event_data", {})
 
-    return {
-        "interview_result": {"status": "event_recorded"},
-        "messages": [AIMessage(content="Interview Agent: Event recorded for metrics tracking")],
-    }
+    try:
+        # Get interview agent
+        interview_agent = get_interview_agent()
+
+        # Process the event
+        metrics = await interview_agent.process_event(
+            session_id=session_id,
+            candidate_id=candidate_id,
+            event_type=event_type,
+            event_data=event_data,
+        )
+
+        return {
+            "interview_result": {
+                "status": "event_recorded",
+                "event_type": event_type,
+                "irt_theta": metrics.get("irt_theta", 0.0),
+                "recommended_difficulty": metrics.get("recommended_next_difficulty", 5),
+                "struggling_indicators": metrics.get("struggling_indicators", []),
+            },
+            "messages": [AIMessage(
+                content=f"Interview Agent: Recorded {event_type} event. "
+                        f"IRT theta: {metrics.get('irt_theta', 0.0):.2f}"
+            )],
+        }
+
+    except Exception as e:
+        error_msg = f"Interview Agent error: {str(e)}"
+        return {
+            "interview_result": {"status": "error", "error": str(e)},
+            "messages": [AIMessage(content=error_msg)],
+        }
 
 
 async def evaluation_worker_node(state: SupervisorState) -> dict:
     """
     Execute evaluation agent tasks.
 
-    In a full implementation, this would instantiate and run the EvaluationAgentGraph.
+    Invokes the actual EvaluationAgentGraph to evaluate sessions.
     """
-    # Simulate evaluation agent execution
-    # In production: eval_agent = create_evaluation_agent(); result = await eval_agent.evaluate_session(...)
+    task_info = state.get("task_info", {})
+    session_id = task_info.get("session_id", state.get("session_id", ""))
+    candidate_id = task_info.get("candidate_id", state.get("candidate_id", ""))
 
-    return {
-        "evaluation_result": {
-            "status": "completed",
-            "overall_score": 75,
-            "dimensions": {
-                "code_quality": 80,
-                "problem_solving": 70,
-                "ai_collaboration": 75,
-                "communication": 72,
+    # Get session data from state (in production, would load from database)
+    code_snapshots = state.get("code_snapshots", [])
+    test_results = state.get("test_results", [])
+    claude_interactions = state.get("claude_interactions", [])
+    terminal_commands = state.get("terminal_commands", [])
+
+    try:
+        # Get evaluation agent
+        evaluation_agent = get_evaluation_agent()
+
+        # Evaluate the session
+        result = await evaluation_agent.evaluate_session(
+            session_id=session_id,
+            candidate_id=candidate_id,
+            code_snapshots=code_snapshots,
+            test_results=test_results,
+            claude_interactions=claude_interactions,
+            terminal_commands=terminal_commands,
+        )
+
+        return {
+            "evaluation_result": {
+                "status": "completed",
+                "overall_score": result.get("overall_score", 0),
+                "overall_confidence": result.get("overall_confidence", 0.0),
+                "dimensions": {
+                    "code_quality": result.get("code_quality", {}).get("score", 0),
+                    "problem_solving": result.get("problem_solving", {}).get("score", 0),
+                    "ai_collaboration": result.get("ai_collaboration", {}).get("score", 0),
+                    "communication": result.get("communication", {}).get("score", 0),
+                },
+                "bias_flags": result.get("bias_flags", []),
             },
-        },
-        "messages": [AIMessage(content="Evaluation Agent: Session evaluated successfully")],
-    }
+            "messages": [AIMessage(
+                content=f"Evaluation Agent: Session evaluated. "
+                        f"Overall score: {result.get('overall_score', 0)}/100"
+            )],
+        }
+
+    except Exception as e:
+        error_msg = f"Evaluation Agent error: {str(e)}"
+        return {
+            "evaluation_result": {"status": "error", "error": str(e)},
+            "messages": [AIMessage(content=error_msg)],
+        }
 
 
 def route_to_agent(state: SupervisorState) -> Literal["coding", "interview", "evaluation", "supervisor", "end"]:
@@ -355,6 +521,10 @@ class SupervisorGraph:
         task: str,
         session_id: str,
         candidate_id: str | None = None,
+        code_snapshots: list[dict] | None = None,
+        test_results: list[dict] | None = None,
+        claude_interactions: list[dict] | None = None,
+        terminal_commands: list[dict] | None = None,
     ) -> dict:
         """
         Run a multi-agent workflow.
@@ -363,6 +533,10 @@ class SupervisorGraph:
             task: Description of the task to perform
             session_id: Session identifier
             candidate_id: Optional candidate identifier
+            code_snapshots: Optional code snapshots for evaluation
+            test_results: Optional test results for evaluation
+            claude_interactions: Optional AI interactions for evaluation
+            terminal_commands: Optional terminal commands for evaluation
 
         Returns:
             Dict with results from all agents involved
@@ -373,10 +547,16 @@ class SupervisorGraph:
             "session_id": session_id,
             "candidate_id": candidate_id,
             "task_type": None,
+            "task_info": {},
             "coding_result": None,
             "interview_result": None,
             "evaluation_result": None,
             "workflow_complete": False,
+            # Session data for evaluation
+            "code_snapshots": code_snapshots or [],
+            "test_results": test_results or [],
+            "claude_interactions": claude_interactions or [],
+            "terminal_commands": terminal_commands or [],
         }
 
         config = {"configurable": {"thread_id": f"supervisor-{session_id}"}}
@@ -394,3 +574,11 @@ class SupervisorGraph:
 def create_supervisor(checkpointer=None) -> SupervisorGraph:
     """Factory function to create a Supervisor."""
     return SupervisorGraph(checkpointer=checkpointer)
+
+
+def clear_agent_cache():
+    """Clear the agent cache (useful for testing)."""
+    global _coding_agents, _interview_agent, _evaluation_agent
+    _coding_agents = {}
+    _interview_agent = None
+    _evaluation_agent = None

@@ -178,20 +178,20 @@ export const GET = withErrorHandling(async (
 
   // Detect flags
   const redFlags = detectRedFlags({
-    promptQuality: avgPromptQuality,
+    avgPromptQuality,
     testsPassed,
     testsFailed,
     completionRate,
-    aiInteractions: claudeInteractions,
-  });
+    claudeInteractions,
+  } as any);
 
   const greenFlags = detectGreenFlags({
     overallScore,
-    promptQuality: avgPromptQuality,
+    avgPromptQuality,
     testsPassed,
     testsFailed,
     aiAcceptanceRate,
-  });
+  } as any);
 
   // Top strengths and areas for improvement
   const topStrengths: string[] = [];

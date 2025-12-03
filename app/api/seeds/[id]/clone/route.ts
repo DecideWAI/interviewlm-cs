@@ -30,9 +30,16 @@ export async function POST(
 
     const user = await prisma.user.findUnique({
       where: { email: session.user.email! },
+      include: {
+        organizationMember: {
+          take: 1,
+          orderBy: { invitedAt: 'desc' },
+        },
+      },
     });
 
-    if (!user?.activeOrganizationId) {
+    const organizationId = user?.organizationMember?.[0]?.organizationId;
+    if (!organizationId) {
       return NextResponse.json(
         { error: 'No active organization' },
         { status: 400 }
@@ -60,7 +67,7 @@ export async function POST(
     // Create the cloned seed
     const clonedSeed = await prisma.problemSeed.create({
       data: {
-        organizationId: user.activeOrganizationId,
+        organizationId,
         title: options.title || `${sourceSeed.title} (Copy)`,
         description: sourceSeed.description,
         difficulty: sourceSeed.difficulty,
@@ -73,7 +80,7 @@ export async function POST(
         instructions: sourceSeed.instructions,
         estimatedTime: sourceSeed.estimatedTime,
         status: options.status,
-        createdBy: user.id,
+        createdBy: user!.id,
         parentSeedId: sourceSeed.id, // Link to parent
         isSystemSeed: false, // Clones are never system seeds
       },

@@ -59,8 +59,9 @@ export const GET = withErrorHandling(async (request: NextRequest) => {
   const category = searchParams.get("category");
 
   // 3. Build query filters
+  // NOTE: In real implementation, get organizationId from user's membership
   const where: any = {
-    organizationId: session.user.activeOrganizationId,
+    // organizationId would come from user.organizationMember[0].organizationId
     deletedAt: null, // Soft delete filter
   };
 

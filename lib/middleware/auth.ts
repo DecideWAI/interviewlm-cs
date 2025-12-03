@@ -139,7 +139,7 @@ export async function checkSessionOwnership(
 
   // Candidates can only access their own interviews
   if (session.user.role === 'candidate') {
-    const interviewSession = await prisma.interviewSession.findUnique({
+    const interviewSession = await prisma.sessionRecording.findUnique({
       where: { id: sessionId },
       select: { candidateId: true },
     });

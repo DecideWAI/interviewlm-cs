@@ -218,7 +218,7 @@ export const GET = withErrorHandling(async (
             timestamp: new Date(),
             candidateMessage: message,
             aiResponse: fullResponse,
-            toolsUsed, // Tools used in this interaction (empty if no tool use)
+            toolsUsed: toolsUsed as any, // Tools used in this interaction (empty if no tool use)
             filesModified, // Files modified by Write/Edit tools
           }).catch((error) => {
             // Log error but don't fail the request

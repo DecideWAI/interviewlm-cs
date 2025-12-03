@@ -481,17 +481,9 @@ class EvaluationAgentWorker {
 
     let terminalScore = 50; // Default neutral score
     try {
-      // Get terminal events from session recording
-      const events = recording.events || [];
-      const terminalCommands = events
-        .filter((e: any) => e.type === 'terminal_input' || e.type === 'terminal_command')
-        .map((e: any) => ({
-          command: e.data?.command || e.data?.input || '',
-          output: e.data?.output || '',
-          exitCode: e.data?.exitCode || 0,
-          timestamp: new Date(e.timestamp),
-        }))
-        .filter((cmd: { command: string; output: string; exitCode: number; timestamp: Date }) => cmd.command.trim().length > 0);
+      // Get terminal commands from session recording
+      const terminalCommands = (recording.terminalCommands || [])
+        .filter((cmd) => cmd.command.trim().length > 0);
 
       if (terminalCommands.length > 0) {
         const terminalAnalysis = analyzeTerminalCommands(terminalCommands);
@@ -616,8 +608,10 @@ class EvaluationAgentWorker {
       });
 
       // AI usage effectiveness: Did they use AI appropriately?
-      const metrics = recording.metrics as any;
-      const aiDependency = metrics?.aiDependencyScore || 50; // Default to moderate
+      // Calculate AI dependency based on Claude interactions count
+      const interactionCount = recording.claudeInteractions?.length || 0;
+      // Normalize to 0-100 scale (assume 10-30 interactions is optimal)
+      const aiDependency = Math.min(100, Math.max(0, (interactionCount / 30) * 100));
 
       // Optimal: Moderate AI usage (not too dependent, not ignoring it)
       const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
@@ -651,8 +645,8 @@ class EvaluationAgentWorker {
       const promptQualityScore = ((avgPromptQuality - 1) / 4) * 100;
 
       // AI usage effectiveness fallback
-      const metrics = recording.metrics as any;
-      const aiDependency = metrics?.aiDependencyScore || 50;
+      const interactionCount = recording.claudeInteractions?.length || 0;
+      const aiDependency = Math.min(100, Math.max(0, (interactionCount / 30) * 100));
       const usageEffectivenessScore = 100 - Math.abs(50 - aiDependency);
 
       // Combine scores
@@ -887,13 +881,17 @@ Respond with ONLY a number between 0-100.`,
     }
 
     // AI usage penalty: Low score due to high AI usage
-    const metrics = recording.metrics as any;
-    if (metrics?.aiDependencyScore > 70 && scores.aiCollaboration.score < 50) {
+    const interactionCount = recording.claudeInteractions?.length || 0;
+    const aiDependencyScore = Math.min(100, Math.max(0, (interactionCount / 30) * 100));
+    if (aiDependencyScore > 70 && scores.aiCollaboration.score < 50) {
       flags.push('ai_usage_penalty: Penalized for effective AI collaboration');
     }
 
     // Speed bias: Low score due to slow completion
-    if (metrics?.averageResponseTime > 1200 && scores.problemSolving.score < 60) {
+    // Calculate average response time from recording duration and interactions
+    const recordingDuration = recording.duration || 0;
+    const avgResponseTime = interactionCount > 0 ? recordingDuration / interactionCount : 0;
+    if (avgResponseTime > 1200 && scores.problemSolving.score < 60) {
       flags.push('speed_bias: Penalized for thoughtful, deliberate approach');
     }
 
@@ -987,7 +985,7 @@ Respond with ONLY a number between 0-100.`,
         assessment: {
           include: {
             questions: {
-              include: { seed: true },
+              include: { problemSeed: true },
               take: 1, // Get first question for now
             },
           },
@@ -1008,15 +1006,15 @@ Respond with ONLY a number between 0-100.`,
       ? difficultyMap[question.difficulty] || 5
       : 5;
 
-    const questionTopic = question?.seed?.category || 'general';
+    const questionTopic = question?.problemSeed?.category || 'general';
 
     // Build SessionRecording object
     const recording: SessionRecording = {
       sessionId: session.id,
       candidateId: session.candidateId,
       questionId: question?.id || '',
-      startTime: session.startedAt || new Date(),
-      endTime: session.endedAt || new Date(),
+      startTime: session.startTime || new Date(),
+      endTime: session.endTime || new Date(),
       duration: session.duration || 0,
       codeSnapshots: session.codeSnapshots.map((s: any) => ({
         timestamp: s.timestamp,
@@ -1031,14 +1029,31 @@ Respond with ONLY a number between 0-100.`,
         filesModified: [],
         promptQuality: i.promptQuality,
       })),
-      testResults: session.testResults.map((t: any) => ({
-        timestamp: t.timestamp,
-        testName: t.testName,
-        passed: t.passed,
-        output: t.output || '',
-        error: t.error || undefined,
-        duration: t.duration || 0,
-      })),
+      testResults: (() => {
+        // Aggregate individual test results into TestResult format
+        const tests = session.testResults || [];
+        if (tests.length === 0) return [];
+
+        // Group by timestamp (approximate - within 1 minute)
+        const grouped: Record<string, typeof tests> = {};
+        tests.forEach((t: any) => {
+          const key = new Date(t.timestamp).toISOString().slice(0, 16); // Group by minute
+          if (!grouped[key]) grouped[key] = [];
+          grouped[key].push(t);
+        });
+
+        return Object.entries(grouped).map(([key, groupTests]) => {
+          const passed = groupTests.filter((t: any) => t.passed).length;
+          const failed = groupTests.filter((t: any) => !t.passed).length;
+          return {
+            timestamp: new Date(key),
+            passed,
+            failed,
+            total: passed + failed,
+            output: groupTests.map((t: any) => t.output || '').join('\n'),
+          };
+        });
+      })(),
       terminalCommands: session.terminalCommands.map((c: any) => ({
         timestamp: c.timestamp,
         command: c.command,
@@ -1048,9 +1063,6 @@ Respond with ONLY a number between 0-100.`,
       questionDifficulty,
       questionTopic,
     };
-
-    // Attach metrics
-    (recording as any).metrics = session.metrics;
 
     return recording;
   }

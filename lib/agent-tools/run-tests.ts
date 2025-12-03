@@ -93,7 +93,18 @@ export async function executeRunTests(
       `solution.${question.language === "python" ? "py" : "js"}`;
 
     // Read current code
-    const code = await modal.readFile(candidate.volumeId, fileName);
+    const readResult = await modal.readFile(candidate.volumeId, fileName);
+    if (!readResult.success || !readResult.content) {
+      return {
+        success: false,
+        passed: 0,
+        failed: 0,
+        total: 0,
+        results: [],
+        error: readResult.error || `Failed to read code file: ${fileName}`,
+      };
+    }
+    const code = readResult.content;
 
     // Parse test cases
     const testCases =

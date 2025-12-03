@@ -54,7 +54,7 @@ export function TeamInviteDialog({ open, onClose, onSuccess }: TeamInviteDialogP
   };
 
   return (
-    <Dialog open={open} onClose={onClose}>
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <div className="bg-background-secondary border border-border rounded-lg p-6 w-full max-w-md">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">

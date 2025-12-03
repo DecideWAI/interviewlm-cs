@@ -360,7 +360,7 @@ export function calculateTechnologyScores(
   const recommendedScore: Record<string, number> = {};
   const optionalScore: Record<string, number> = {};
 
-  const detectedNames = detectedTech.map(t => t.name.toLowerCase());
+  const detectedNames = detectedTech.map(t => t.tech.name.toLowerCase());
   const missing: string[] = [];
 
   // Check required technologies
@@ -396,7 +396,7 @@ export function calculateTechnologyScores(
       required: requiredScore,
       recommended: recommendedScore,
       optional: optionalScore,
-      detected: detectedTech.map(t => t.name),
+      detected: detectedTech.map(t => t.tech.name),
       missing,
       extra: [],
     },

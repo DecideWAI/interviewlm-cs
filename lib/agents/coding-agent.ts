@@ -794,13 +794,14 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
 
     try {
       // Import Modal service dynamically
-      const { readFile } = await import('../services/modal-production');
+      const { readFile } = await import('../services/modal');
 
-      // Get volume ID from session
-      const volumeId = `vol-${this.config.sessionId}`;
-
-      // Read file from Modal
-      const fullContent = await readFile(volumeId, filePath);
+      // Read file from Modal using session ID
+      const result = await readFile(this.config.sessionId, filePath);
+      if (!result.success || !result.content) {
+        throw new Error(result.error || 'Failed to read file');
+      }
+      const fullContent = result.content;
       const totalSize = fullContent.length;
 
       // Apply offset and limit
@@ -836,11 +837,8 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
 
     try {
       // Import services dynamically
-      const { writeFile } = await import('../services/modal-production');
+      const { writeFile } = await import('../services/modal');
       const { streamCodeGeneration } = await import('../services/code-streaming');
-
-      // Get volume ID from session
-      const volumeId = `vol-${this.config.sessionId}`;
 
       // Stream code generation to frontend in real-time (if enabled)
       const fileName = filePath.split('/').pop() || filePath;
@@ -858,7 +856,10 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       }
 
       // Write file to Modal (happens immediately, streaming is for visual effect)
-      await writeFile(volumeId, filePath, content);
+      const writeResult = await writeFile(this.config.sessionId, filePath, content);
+      if (!writeResult.success) {
+        throw new Error(writeResult.error || 'Failed to write file');
+      }
 
       return {
         success: true,
@@ -886,13 +887,14 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
 
     try {
       // Import Modal service dynamically
-      const { readFile, writeFile } = await import('../services/modal-production');
-
-      // Get volume ID from session
-      const volumeId = `vol-${this.config.sessionId}`;
+      const { readFile, writeFile } = await import('../services/modal');
 
       // Read current file content
-      const currentContent = await readFile(volumeId, filePath);
+      const readResult = await readFile(this.config.sessionId, filePath);
+      if (!readResult.success || !readResult.content) {
+        throw new Error(readResult.error || 'Failed to read file');
+      }
+      const currentContent = readResult.content;
 
       // Count occurrences to validate uniqueness
       // Use indexOf for exact string matching (not regex)
@@ -921,7 +923,10 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       const newContent = currentContent.replace(oldString, newString);
 
       // Write back to Modal
-      await writeFile(volumeId, filePath, newContent);
+      const writeResult = await writeFile(this.config.sessionId, filePath, newContent);
+      if (!writeResult.success) {
+        throw new Error(writeResult.error || 'Failed to write file');
+      }
 
       return {
         success: true,
@@ -939,14 +944,10 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   private async toolGrep(pattern: string, path?: string): Promise<unknown> {
     try {
       // Import Modal service dynamically
-      const { getFileSystem, readFile } = await import('../services/modal-production');
-
-      // Get volume ID from session
-      const volumeId = `vol-${this.config.sessionId}`;
-      const sessionId = this.config.sessionId;
+      const { getFileSystem, readFile } = await import('../services/modal');
 
       // Get all files
-      const files = await getFileSystem(sessionId, path || '/');
+      const files = await getFileSystem(this.config.sessionId, path || '/');
 
       const matches: Array<{ file: string; line: number; text: string }> = [];
       const regex = new RegExp(pattern);
@@ -955,8 +956,9 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       for (const file of files) {
         if (file.type === 'file') {
           try {
-            const content = await readFile(volumeId, file.path);
-            const lines = content.split('\n');
+            const readResult = await readFile(this.config.sessionId, file.path);
+            if (!readResult.success || !readResult.content) continue;
+            const lines = readResult.content.split('\n');
 
             lines.forEach((line, index) => {
               if (regex.test(line)) {
@@ -989,7 +991,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   private async toolGlob(pattern: string): Promise<unknown> {
     try {
       // Import Modal service dynamically
-      const { getFileSystem } = await import('../services/modal-production');
+      const { getFileSystem } = await import('../services/modal');
 
       const sessionId = this.config.sessionId;
 
@@ -1025,7 +1027,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   private async toolListFiles(path?: string, recursive?: boolean): Promise<unknown> {
     try {
       // Import Modal service dynamically
-      const { getFileSystem } = await import('../services/modal-production');
+      const { getFileSystem } = await import('../services/modal');
 
       const sessionId = this.config.sessionId;
       const targetPath = path || '/workspace';
@@ -1079,7 +1081,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
 
     try {
       // Import Modal service dynamically
-      const { runCommand } = await import('../services/modal-production');
+      const { runCommand } = await import('../services/modal');
 
       const sessionId = this.config.sessionId;
 

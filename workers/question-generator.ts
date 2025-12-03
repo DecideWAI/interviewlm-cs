@@ -13,7 +13,7 @@
 import { Worker, Job, Queue } from 'bullmq';
 import { redisConnection, getQueue } from '../lib/queues/config';
 import { generateQuestionFromSeed } from '../lib/services/questions';
-import { setQuestionCache } from '../lib/services/question-cache';
+import { cacheQuestion } from '../lib/services/question-cache';
 import prisma from '../lib/prisma';
 
 export const QUESTION_GENERATION_QUEUE = 'question-generation';
@@ -125,8 +125,7 @@ class QuestionGeneratorWorker {
             });
 
             // Cache the generated question
-            const cacheKey = `seed:${seedId}:lang:${lang}:diff:${difficulty}:var:${variant}`;
-            await setQuestionCache(cacheKey, question, 7 * 24 * 60 * 60); // 7 days TTL
+            await cacheQuestion(difficulty, lang, question, seed.category);
 
             generatedCount++;
 

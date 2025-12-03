@@ -69,13 +69,13 @@ export const GET = withErrorHandling(async (
       sessionId: candidate.sessionRecording.id,
     },
     orderBy: {
-      createdAt: "asc",
+      timestamp: "asc",
     },
     select: {
       id: true,
       role: true,
       content: true,
-      createdAt: true,
+      timestamp: true,
       inputTokens: true,
       outputTokens: true,
     },
@@ -86,7 +86,7 @@ export const GET = withErrorHandling(async (
     id: interaction.id,
     role: interaction.role as "user" | "assistant",
     content: interaction.content,
-    timestamp: interaction.createdAt,
+    timestamp: interaction.timestamp,
     tokenUsage:
       interaction.inputTokens || interaction.outputTokens
         ? {

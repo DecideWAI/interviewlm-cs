@@ -162,7 +162,7 @@ export async function POST(
           // Load conversation history
           const previousInteractions = await prisma.claudeInteraction.findMany({
             where: { sessionId: sessionRecording!.id },
-            orderBy: { createdAt: "asc" },
+            orderBy: { timestamp: "asc" },
             select: { role: true, content: true },
           });
 
@@ -189,6 +189,8 @@ export async function POST(
           });
 
           const latency = Date.now() - startTime;
+          const modelName = agentResponse.metadata?.model as string | undefined;
+          const usage = agentResponse.metadata?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
 
           // Record interactions to database
           const interaction = await prisma.claudeInteraction.create({
@@ -196,9 +198,9 @@ export async function POST(
               sessionId: sessionRecording!.id,
               role: "user",
               content: message,
-              model: agentResponse.metadata.model,
-              inputTokens: agentResponse.metadata.usage.input_tokens,
-              outputTokens: agentResponse.metadata.usage.output_tokens,
+              model: modelName,
+              inputTokens: usage?.input_tokens,
+              outputTokens: usage?.output_tokens,
               latency,
             },
           });
@@ -208,7 +210,7 @@ export async function POST(
               sessionId: sessionRecording!.id,
               role: "assistant",
               content: agentResponse.text,
-              model: agentResponse.metadata.model,
+              model: modelName,
             },
           });
 
@@ -225,25 +227,23 @@ export async function POST(
             timestamp: new Date(),
             candidateMessage: message,
             aiResponse: agentResponse.text,
-            toolsUsed: agentResponse.toolsUsed,
-            filesModified: agentResponse.filesModified,
+            toolsUsed: agentResponse.toolsUsed ?? [],
+            filesModified: agentResponse.filesModified ?? [],
           }).catch(console.error);
 
           // Send final done event
           sendEvent("done", {
             response: agentResponse.text,
-            toolsUsed: agentResponse.toolsUsed,
-            filesModified: agentResponse.filesModified,
+            toolsUsed: agentResponse.toolsUsed ?? [],
+            filesModified: agentResponse.filesModified ?? [],
             usage: {
-              inputTokens: agentResponse.metadata.usage.input_tokens,
-              outputTokens: agentResponse.metadata.usage.output_tokens,
-              totalTokens:
-                agentResponse.metadata.usage.input_tokens +
-                agentResponse.metadata.usage.output_tokens,
+              inputTokens: usage?.input_tokens ?? 0,
+              outputTokens: usage?.output_tokens ?? 0,
+              totalTokens: (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0),
             },
             metadata: {
-              model: agentResponse.metadata.model,
-              toolCallCount: agentResponse.metadata.toolCallCount,
+              model: modelName,
+              toolCallCount: agentResponse.metadata?.toolCallCount as number | undefined,
               latency,
             },
           });

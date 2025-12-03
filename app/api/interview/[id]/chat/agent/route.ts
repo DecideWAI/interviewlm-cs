@@ -163,7 +163,7 @@ export const POST = withErrorHandling(
           sessionId: sessionRecording.id,
         },
         orderBy: {
-          createdAt: "asc",
+          timestamp: "asc",
         },
         select: {
           role: true,
@@ -194,14 +194,16 @@ export const POST = withErrorHandling(
       const latency = Date.now() - startTime;
 
       // Record interaction to database
+      const modelName = agentResponse.metadata?.model as string | undefined;
+      const usage = agentResponse.metadata?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
       const interaction = await prisma.claudeInteraction.create({
         data: {
           sessionId: sessionRecording.id,
           role: "user",
           content: message,
-          model: agentResponse.metadata.model,
-          inputTokens: agentResponse.metadata.usage.input_tokens,
-          outputTokens: agentResponse.metadata.usage.output_tokens,
+          model: modelName,
+          inputTokens: usage?.input_tokens,
+          outputTokens: usage?.output_tokens,
           latency,
         },
       });
@@ -212,7 +214,7 @@ export const POST = withErrorHandling(
           sessionId: sessionRecording.id,
           role: "assistant",
           content: agentResponse.text,
-          model: agentResponse.metadata.model,
+          model: modelName,
         },
       });
 
@@ -229,12 +231,12 @@ export const POST = withErrorHandling(
         candidateId: id,
         sessionId: sessionRecording.id,
         interactionId: interaction.id,
-        inputTokens: agentResponse.metadata.usage.input_tokens,
-        outputTokens: agentResponse.metadata.usage.output_tokens,
+        inputTokens: usage?.input_tokens,
+        outputTokens: usage?.output_tokens,
         latency,
         promptQuality,
-        toolsUsed: agentResponse.toolsUsed.length,
-        filesModified: agentResponse.filesModified.length,
+        toolsUsed: agentResponse.toolsUsed?.length ?? 0,
+        filesModified: agentResponse.filesModified?.length ?? 0,
       });
 
       // Publish AI interaction event to BullMQ for Interview Agent
@@ -243,8 +245,8 @@ export const POST = withErrorHandling(
         timestamp: new Date(),
         candidateMessage: message,
         aiResponse: agentResponse.text,
-        toolsUsed: agentResponse.toolsUsed,
-        filesModified: agentResponse.filesModified,
+        toolsUsed: agentResponse.toolsUsed ?? [],
+        filesModified: agentResponse.filesModified ?? [],
       }).catch((error) => {
         // Log error but don't fail the request
         logger.error("Failed to publish AI interaction event", error as Error, {
@@ -256,16 +258,16 @@ export const POST = withErrorHandling(
       // Return response with metadata
       return success({
         response: agentResponse.text,
-        toolsUsed: agentResponse.toolsUsed,
-        filesModified: agentResponse.filesModified,
+        toolsUsed: agentResponse.toolsUsed ?? [],
+        filesModified: agentResponse.filesModified ?? [],
         usage: {
-          inputTokens: agentResponse.metadata.usage.input_tokens,
-          outputTokens: agentResponse.metadata.usage.output_tokens,
-          totalTokens: agentResponse.metadata.usage.input_tokens + agentResponse.metadata.usage.output_tokens,
+          inputTokens: usage?.input_tokens ?? 0,
+          outputTokens: usage?.output_tokens ?? 0,
+          totalTokens: (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0),
         },
         metadata: {
-          model: agentResponse.metadata.model,
-          toolCallCount: agentResponse.metadata.toolCallCount,
+          model: modelName,
+          toolCallCount: agentResponse.metadata?.toolCallCount as number | undefined,
           latency,
         },
       });

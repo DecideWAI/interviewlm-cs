@@ -70,6 +70,7 @@ interface InterviewMetrics {
  */
 class InterviewAgentWorker {
   private worker: Worker;
+  private metricsCache: Map<string, InterviewMetrics> = new Map();
 
   constructor() {
     this.worker = new Worker(
@@ -202,15 +203,27 @@ class InterviewAgentWorker {
     // Track code change for proactive assistance
     proactiveAssistance.recordCodeChange(sessionId, Math.max(1, Math.floor(totalLines / 10)));
 
-    // Track code snapshot for evaluation later
-    await prisma.codeSnapshot.create({
-      data: {
-        sessionRecordingId: sessionId,
-        files: files as any,
-        trigger,
-        timestamp: new Date(),
-      },
-    });
+    // Track code snapshots for evaluation later
+    // Create individual snapshots for each file
+    for (const [fileName, content] of Object.entries(files)) {
+      if (typeof content !== 'string') continue;
+      const contentStr = content;
+      await prisma.codeSnapshot.create({
+        data: {
+          sessionId,
+          fileId: `${sessionId}-${fileName}`,
+          fileName,
+          language: fileName.endsWith('.ts') ? 'typescript' :
+                   fileName.endsWith('.js') ? 'javascript' :
+                   fileName.endsWith('.py') ? 'python' : 'unknown',
+          contentHash: Buffer.from(contentStr).toString('base64').slice(0, 64),
+          fullContent: contentStr.slice(0, 100000), // Limit size
+          linesAdded: contentStr.split('\n').length,
+          linesDeleted: 0,
+          timestamp: new Date(),
+        },
+      });
+    }
   }
 
   /**
@@ -267,7 +280,13 @@ class InterviewAgentWorker {
     });
 
     if (question) {
-      const difficulty = question.difficulty || 5; // 1-10 scale
+      // Convert difficulty enum to 1-10 scale
+      const difficultyMap: Record<string, number> = {
+        'EASY': 3,
+        'MEDIUM': 5,
+        'HARD': 7,
+      };
+      const difficulty = difficultyMap[question.difficulty] || 5; // 1-10 scale
       const difficultyNormalized = (difficulty - 5.5) / 1.5; // Convert to IRT scale (-3 to +3)
 
       // IRT update formula (simplified)
@@ -361,16 +380,14 @@ class InterviewAgentWorker {
 
   /**
    * Get metrics for a session
-   * Loads from database or returns defaults
+   * Note: Metrics are stored in memory during session -
+   * SessionRecording doesn't have a metrics field in current schema
    */
   private async getMetrics(sessionId: string): Promise<InterviewMetrics> {
-    const session = await prisma.sessionRecording.findUnique({
-      where: { id: sessionId },
-      select: { metrics: true },
-    });
-
-    if (session?.metrics) {
-      return session.metrics as unknown as InterviewMetrics;
+    // Check in-memory cache first
+    const cached = this.metricsCache?.get(sessionId);
+    if (cached) {
+      return cached;
     }
 
     // Return default metrics if not found
@@ -394,17 +411,15 @@ class InterviewAgentWorker {
   }
 
   /**
-   * Save metrics to database
+   * Save metrics to in-memory cache
+   * Note: SessionRecording doesn't have a metrics field in current schema
+   * Metrics are stored in memory during the session
    */
   private async saveMetrics(sessionId: string, metrics: InterviewMetrics): Promise<void> {
     metrics.lastUpdated = new Date();
 
-    await prisma.sessionRecording.update({
-      where: { id: sessionId },
-      data: {
-        metrics: metrics as any,
-      },
-    });
+    // Store in memory cache
+    this.metricsCache.set(sessionId, metrics);
   }
 
   /**

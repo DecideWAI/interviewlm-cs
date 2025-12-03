@@ -1,718 +1,433 @@
 /**
- * Modal Service with Volume-Based File Storage
+ * Modal Service - TypeScript SDK Implementation
  *
- * Production-ready implementation using Modal Volumes API:
- * - Modal Volumes for persistent file storage
- * - Redis for operation tracking and metadata caching
- * - HTTP endpoint for code execution
- * - Full terminal and sandbox management
- *
- * Architecture:
- * - Files: Stored in Modal Volumes (persistent across sessions)
- * - Operation tracking: Redis (who changed what, when)
- * - Sandbox metadata: Redis (quick lookups)
- * - Code execution: Modal HTTP endpoint
+ * Uses Modal's official TypeScript SDK for sandbox operations.
+ * Each session gets an isolated container from the deployed interviewlm-executor app.
+ * Supports any language/framework - candidates can install what they need.
  */
 
-import { z } from "zod";
-import { Redis } from "ioredis";
+import { ModalClient } from "modal";
+
+// Sandbox session cache
+const sandboxes = new Map<string, { sandbox: any; createdAt: Date }>();
 
 // Configuration
-const MODAL_API_URL = process.env.MODAL_API_URL || "https://api.modal.com/v1";
-const MODAL_EXECUTE_URL = process.env.MODAL_EXECUTE_URL;
-const MODAL_VOLUME_NAMESPACE = process.env.MODAL_VOLUME_NAMESPACE || "interviewlm";
-const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
+const SANDBOX_TIMEOUT_MS = 3600 * 1000; // 1 hour
+const MAX_OUTPUT_SIZE = 1024 * 1024; // 1MB
 
-// Redis client singleton (for metadata only)
-let redisClient: Redis | null = null;
+// Security: blocked command patterns
+const BLOCKED_PATTERNS = [
+  "rm -rf /",
+  "rm -rf /*",
+  ":(){ :|:& };:",
+  "mkfs",
+  "dd if=/dev",
+  "> /dev/sda",
+  "chmod -R 777 /",
+  "shutdown",
+  "reboot",
+];
 
-function getRedisClient(): Redis {
-  if (!redisClient) {
-    redisClient = new Redis(REDIS_URL, {
-      maxRetriesPerRequest: 3,
-      retryStrategy: (times) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
-      },
-    });
+// Modal client singleton
+let modalClient: ModalClient | null = null;
 
-    redisClient.on("error", (err) => {
-      console.error("Redis client error:", err);
-    });
+function getModalClient(): ModalClient {
+  if (!modalClient) {
+    modalClient = new ModalClient();
   }
-  return redisClient;
+  return modalClient;
 }
 
-/**
- * Get Modal authentication headers
- */
-function getAuthHeaders(): Record<string, string> {
-  const tokenId = process.env.MODAL_TOKEN_ID;
-  const tokenSecret = process.env.MODAL_TOKEN_SECRET;
-
-  if (!tokenId || !tokenSecret) {
-    throw new Error("MODAL_TOKEN_ID and MODAL_TOKEN_SECRET must be set");
+function sanitizeOutput(text: string): string {
+  if (text.length > MAX_OUTPUT_SIZE) {
+    return text.slice(0, MAX_OUTPUT_SIZE) + `\n... (truncated)`;
   }
+  return text;
+}
+
+function isCommandSafe(cmd: string): { safe: boolean; reason?: string } {
+  const cmdLower = cmd.toLowerCase();
+  for (const pattern of BLOCKED_PATTERNS) {
+    if (cmdLower.includes(pattern.toLowerCase())) {
+      return { safe: false, reason: `Blocked: ${pattern}` };
+    }
+  }
+  return { safe: true };
+}
+
+// Modal SDK exec wrapper
+function exec(sandbox: any, args: string[]): Promise<any> {
+  return sandbox["exec"](args);
+}
+
+// ============================================================================
+// TYPES
+// ============================================================================
+
+export interface CommandResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  error?: string;
+}
+
+export interface FileNode {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size?: number;
+}
+
+// ============================================================================
+// CORE API
+// ============================================================================
+
+/**
+ * Create a sandbox for a session
+ */
+export async function createSandbox(sessionId: string): Promise<SandboxInstance> {
+  const modal = getModalClient();
+
+  // Get or create the app
+  const app = await modal.apps.fromName("interviewlm-executor", { createIfMissing: true });
+
+  // Create image with development tools
+  // Using Debian as base - candidates can install any language/framework they need
+  const image = modal.images.fromRegistry("debian:bookworm-slim");
+
+  // Create sandbox with the image
+  const sandbox = await modal.sandboxes.create(app, image, {
+    timeoutMs: SANDBOX_TIMEOUT_MS,
+    cpu: 2.0,
+    memoryMiB: 2048,
+  });
+
+  // Initialize workspace
+  await exec(sandbox, ["mkdir", "-p", "/workspace"]);
+
+  const createdAt = new Date();
+  sandboxes.set(sessionId, { sandbox, createdAt });
+  console.log(`[Modal] Created sandbox for ${sessionId}`);
 
   return {
-    "Authorization": `Bearer ${tokenId}:${tokenSecret}`,
-    "Content-Type": "application/json",
+    id: sandbox.sandboxId,
+    sessionId,
+    status: "ready",
+    createdAt,
+    environment: {},
   };
 }
 
-// Validation schemas
-const testCaseSchema = z.object({
-  name: z.string(),
-  input: z.any(),
-  expected: z.any(),
-  hidden: z.boolean().default(false),
-});
+/**
+ * Get or create sandbox for a session
+ */
+export async function getOrCreateSandbox(sessionId: string): Promise<any> {
+  const cached = sandboxes.get(sessionId);
+  if (cached) return cached.sandbox;
 
-type TestCase = z.infer<typeof testCaseSchema>;
+  await createSandbox(sessionId);
+  return sandboxes.get(sessionId)!.sandbox;
+}
 
 /**
- * Test execution result
+ * Run a command in the sandbox
  */
+export async function runCommand(
+  sessionId: string,
+  command: string,
+  workingDir = "/workspace"
+): Promise<CommandResult> {
+  const safety = isCommandSafe(command);
+  if (!safety.safe) {
+    return { success: false, stdout: "", stderr: safety.reason!, exitCode: 1, error: safety.reason };
+  }
+
+  try {
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const fullCmd = `cd ${workingDir} 2>/dev/null || mkdir -p ${workingDir} && cd ${workingDir} && ${command}`;
+    const proc = await exec(sandbox, ["bash", "-c", fullCmd]);
+
+    const stdout = await proc.stdout.readText();
+    const stderr = await proc.stderr.readText();
+    const exitCode = await proc.exitCode();
+
+    return {
+      success: exitCode === 0,
+      stdout: sanitizeOutput(stdout),
+      stderr: sanitizeOutput(stderr),
+      exitCode,
+    };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    return { success: false, stdout: "", stderr: msg, exitCode: 1, error: msg };
+  }
+}
+
+/**
+ * Write a file to the sandbox
+ */
+export async function writeFile(
+  sessionId: string,
+  filePath: string,
+  content: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
+    const parentDir = absPath.split("/").slice(0, -1).join("/");
+
+    await exec(sandbox, ["mkdir", "-p", parentDir]);
+
+    // Use base64 to handle special characters
+    const encoded = Buffer.from(content).toString("base64");
+    await exec(sandbox, ["bash", "-c", `echo '${encoded}' | base64 -d > '${absPath}'`]);
+
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+/**
+ * Read a file from the sandbox
+ */
+export async function readFile(
+  sessionId: string,
+  filePath: string
+): Promise<{ success: boolean; content?: string; error?: string }> {
+  try {
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
+
+    const proc = await exec(sandbox, ["cat", absPath]);
+    const content = await proc.stdout.readText();
+    const exitCode = await proc.exitCode();
+
+    if (exitCode !== 0) {
+      const stderr = await proc.stderr.readText();
+      return { success: false, error: stderr };
+    }
+
+    return { success: true, content };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+  }
+}
+
+/**
+ * List files in a directory
+ */
+export async function listFiles(
+  sessionId: string,
+  directory = "/workspace"
+): Promise<FileNode[]> {
+  try {
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const proc = await exec(sandbox, ["bash", "-c", `ls -la ${directory} 2>/dev/null`]);
+    const stdout = await proc.stdout.readText();
+
+    const files: FileNode[] = [];
+    for (const line of stdout.trim().split("\n")) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 9 && !line.startsWith("total")) {
+        const name = parts.slice(8).join(" ");
+        if (name !== "." && name !== "..") {
+          files.push({
+            name,
+            path: `${directory}/${name}`,
+            type: parts[0].startsWith("d") ? "directory" : "file",
+            size: parseInt(parts[4]) || 0,
+          });
+        }
+      }
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Get file system tree (alias for listFiles)
+ */
+export async function getFileSystem(sessionId: string, rootPath = "/workspace"): Promise<FileNode[]> {
+  return listFiles(sessionId, rootPath);
+}
+
+/**
+ * Terminate a sandbox
+ */
+export async function terminateSandbox(sessionId: string): Promise<boolean> {
+  const cached = sandboxes.get(sessionId);
+  if (cached) {
+    try {
+      await cached.sandbox.terminate();
+      sandboxes.delete(sessionId);
+      console.log(`[Modal] Terminated sandbox for ${sessionId}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+/**
+ * Test Modal connection
+ */
+export async function testConnection(): Promise<boolean> {
+  try {
+    return !!getModalClient();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Health check
+ */
+export async function healthCheck(): Promise<{ status: string }> {
+  const connected = await testConnection();
+  return { status: connected ? "healthy" : "unhealthy" };
+}
+
+// ============================================================================
+// LEGACY COMPATIBILITY (for existing code)
+// ============================================================================
+
 export interface TestResult {
   name: string;
   passed: boolean;
   output?: string;
   error?: string;
-  duration: number; // milliseconds
+  duration: number;
   hidden: boolean;
 }
 
-/**
- * Code execution response
- */
 export interface ExecutionResult {
   success: boolean;
   testResults: TestResult[];
   totalTests: number;
   passedTests: number;
   failedTests: number;
-  executionTime: number; // total milliseconds
+  executionTime: number;
   stdout?: string;
   stderr?: string;
   error?: string;
 }
 
-/**
- * File node for file tree
- */
-export interface FileNode {
-  name: string;
-  path: string;
-  type: "file" | "directory";
-  size?: number;
-  mtime?: string; // ISO timestamp
-  children?: FileNode[];
-}
-
-/**
- * Sandbox instance metadata
- */
 export interface SandboxInstance {
   id: string;
   sessionId: string;
-  volumeId: string;
-  status: "initializing" | "ready" | "running" | "stopped";
+  status: "ready" | "running" | "stopped";
   createdAt: Date;
-  language: string;
-  wsUrl?: string;
+  environment: Record<string, string>;
 }
 
-// ============================================================================
-// VOLUME MANAGEMENT
-// ============================================================================
+// Aliases for backward compatibility
+export const executeCommand = runCommand;
+export const getSandbox = (sessionId: string) => sandboxes.get(sessionId)?.sandbox || null;
+export const createVolume = async (sessionId: string) => { await createSandbox(sessionId); return { id: sessionId }; };
+export const listVolumes = async () => Array.from(sandboxes.keys()).map(id => ({ id }));
+export const listActiveSandboxes = async (): Promise<SandboxInstance[]> =>
+  Array.from(sandboxes.entries()).map(([sessionId, { sandbox, createdAt }]) => ({
+    id: sandbox.sandboxId, sessionId, status: "ready" as const, createdAt, environment: {},
+  }));
 
-/**
- * Generate volume name for a session
- */
-function getVolumeName(sessionId: string): string {
-  return `interview-${sessionId}`;
+// Run tests (auto-detects test framework)
+export async function runTests(sessionId: string, testCommand?: string) {
+  const cmd = testCommand || "npm test 2>&1 || python -m pytest -v 2>&1";
+  const result = await runCommand(sessionId, cmd);
+
+  // Parse passed/failed from output
+  const passedMatch = result.stdout.match(/(\d+) passed/);
+  const failedMatch = result.stdout.match(/(\d+) failed/);
+  const passed = passedMatch ? parseInt(passedMatch[1]) : 0;
+  const failed = failedMatch ? parseInt(failedMatch[1]) : 0;
+
+  return { ...result, success: result.success && failed === 0, passed, failed, total: passed + failed };
 }
 
-/**
- * Create a new Modal volume for an interview session
- *
- * @param sessionId - Unique session identifier
- * @returns Volume metadata
- */
-export async function createVolume(sessionId: string): Promise<{ id: string }> {
-  try {
-    const volumeName = getVolumeName(sessionId);
-
-    const response = await fetch(`${MODAL_API_URL}/volumes`, {
-      method: "POST",
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        name: volumeName,
-        namespace: MODAL_VOLUME_NAMESPACE,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to create volume (${response.status}): ${errorText}`);
-    }
-
-    const data = await response.json();
-
-    // Track volume creation in Redis for quick lookups
-    const redis = getRedisClient();
-    await redis.hset("modal:volumes", data.id, JSON.stringify({
-      id: data.id,
-      sessionId,
-      volumeName,
-      createdAt: new Date().toISOString(),
-    }));
-
-    console.log(`[Modal] Created volume: ${volumeName} (${data.id})`);
-    return { id: data.id };
-
-  } catch (error) {
-    console.error("Error creating Modal volume:", error);
-    throw new Error(
-      `Volume creation failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
-}
-
-/**
- * List all volumes in the namespace
- *
- * @returns Array of volume metadata
- */
-export async function listVolumes(): Promise<any[]> {
-  try {
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes?namespace=${MODAL_VOLUME_NAMESPACE}`,
-      {
-        method: "GET",
-        headers: getAuthHeaders(),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(`Failed to list volumes (${response.status})`);
-    }
-
-    const data = await response.json();
-    return data.volumes || [];
-
-  } catch (error) {
-    console.error("Error listing volumes:", error);
-    return [];
-  }
-}
-
-/**
- * Test Modal API connection
- */
-export async function testConnection(): Promise<boolean> {
-  try {
-    const response = await fetch(`${MODAL_API_URL}/health`, {
-      method: "GET",
-      headers: getAuthHeaders(),
-    });
-
-    // Also test Redis connection
-    const redis = getRedisClient();
-    await redis.ping();
-
-    console.log(`[Modal] Connection test: ${response.ok ? "OK" : "FAILED"}`);
-    return response.ok;
-  } catch (error) {
-    console.error("Modal API connection test failed:", error);
-    return false;
-  }
-}
-
-// ============================================================================
-// FILE SYSTEM OPERATIONS (Modal Volumes API)
-// ============================================================================
-
-/**
- * Write a file to the Modal volume
- *
- * @param volumeId - Volume identifier (format: "vol-{sessionId}")
- * @param filePath - Path to file within workspace
- * @param content - File content
- */
-export async function writeFile(
-  volumeId: string,
-  filePath: string,
-  content: string
-): Promise<void> {
-  try {
-    // Extract session ID from volumeId
-    const sessionId = volumeId.replace("vol-", "");
-    const volumeName = getVolumeName(sessionId);
-
-    // Normalize path (remove leading slashes)
-    const normalizedPath = filePath.replace(/^\/+/, "");
-
-    // Write to Modal Volume
-    const encodedPath = encodeURIComponent(normalizedPath);
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes/${MODAL_VOLUME_NAMESPACE}/${volumeName}/files/${encodedPath}`,
-      {
-        method: "PUT",
-        headers: {
-          ...getAuthHeaders(),
-          "Content-Type": "text/plain",
-        },
-        body: content,
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to write file (${response.status}): ${errorText}`);
-    }
-
-    // Track operation in Redis
-    const redis = getRedisClient();
-    await redis.lpush(
-      `modal:ops:${volumeId}`,
-      JSON.stringify({
-        type: "write",
-        path: normalizedPath,
-        size: Buffer.byteLength(content, "utf8"),
-        timestamp: new Date().toISOString(),
-      })
-    );
-    await redis.ltrim(`modal:ops:${volumeId}`, 0, 99); // Keep last 100 operations
-
-    console.log(`[Modal] Wrote file: ${normalizedPath} (${Buffer.byteLength(content, "utf8")} bytes)`);
-  } catch (error) {
-    console.error(`Error writing file ${filePath}:`, error);
-    throw new Error(
-      `File write failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
-}
-
-/**
- * Read a file from the Modal volume
- *
- * @param volumeId - Volume identifier (format: "vol-{sessionId}")
- * @param filePath - Path to file within workspace
- * @returns File content
- */
-export async function readFile(
-  volumeId: string,
-  filePath: string
-): Promise<string> {
-  try {
-    // Extract session ID from volumeId
-    const sessionId = volumeId.replace("vol-", "");
-    const volumeName = getVolumeName(sessionId);
-
-    // Normalize path
-    const normalizedPath = filePath.replace(/^\/+/, "");
-
-    // Read from Modal Volume
-    const encodedPath = encodeURIComponent(normalizedPath);
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes/${MODAL_VOLUME_NAMESPACE}/${volumeName}/files/${encodedPath}`,
-      {
-        method: "GET",
-        headers: getAuthHeaders(),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to read file (${response.status}): ${errorText}`);
-    }
-
-    const content = await response.text();
-
-    // Track operation in Redis
-    const redis = getRedisClient();
-    await redis.lpush(
-      `modal:ops:${volumeId}`,
-      JSON.stringify({
-        type: "read",
-        path: normalizedPath,
-        timestamp: new Date().toISOString(),
-      })
-    );
-    await redis.ltrim(`modal:ops:${volumeId}`, 0, 99);
-
-    console.log(`[Modal] Read file: ${normalizedPath} (${Buffer.byteLength(content, "utf8")} bytes)`);
-    return content;
-
-  } catch (error) {
-    console.error(`Error reading file ${filePath}:`, error);
-    throw new Error(
-      `File read failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
-}
-
-/**
- * Get file tree structure from the Modal volume
- *
- * @param sessionId - Session identifier (not volumeId for backward compatibility)
- * @param rootPath - Root path to list (defaults to "/")
- * @returns File tree structure
- */
-export async function getFileSystem(
-  sessionId: string,
-  rootPath: string = "/"
-): Promise<FileNode[]> {
-  try {
-    const volumeName = getVolumeName(sessionId);
-    const encodedPath = encodeURIComponent(rootPath);
-
-    const response = await fetch(
-      `${MODAL_API_URL}/volumes/${MODAL_VOLUME_NAMESPACE}/${volumeName}/tree?path=${encodedPath}`,
-      {
-        method: "GET",
-        headers: getAuthHeaders(),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to get file tree (${response.status}): ${errorText}`);
-    }
-
-    const data = await response.json();
-    console.log(`[Modal] Listed file tree for ${volumeName}`);
-    return data.tree || [];
-
-  } catch (error) {
-    console.error("Error getting file system:", error);
-    throw new Error(
-      `File system read failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
-}
-
-// ============================================================================
-// CODE EXECUTION
-// ============================================================================
-
-/**
- * Execute code with test cases using Modal web endpoint
- *
- * @param sessionId - Session identifier
- * @param code - The code to execute
- * @param testCases - Array of test cases to run
- * @returns Execution results with test outcomes
- */
+// Execute code with test cases (Python-specific legacy function)
 export async function executeCode(
   sessionId: string,
   code: string,
-  testCases: TestCase[]
+  testCases: Array<{ name: string; input: any; expected: any; hidden?: boolean }>
 ): Promise<ExecutionResult> {
   const startTime = Date.now();
 
   try {
-    if (!MODAL_EXECUTE_URL) {
-      throw new Error(
-        "MODAL_EXECUTE_URL environment variable is not set. Please deploy modal_function.py and set the endpoint URL."
-      );
-    }
+    await writeFile(sessionId, "solution.py", code);
 
-    // Call Modal web endpoint
-    const response = await fetch(MODAL_EXECUTE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        code,
-        testCases,
-        language: "python", // For MVP, only Python is supported
-      }),
+    // Generate pytest file
+    const testLines = ["import pytest", "from solution import *", ""];
+    testCases.forEach((tc, i) => {
+      const name = tc.name || `test_${i}`;
+      const args = Array.isArray(tc.input)
+        ? tc.input.map(v => JSON.stringify(v)).join(", ")
+        : JSON.stringify(tc.input);
+      testLines.push(`def ${name}():`, `    assert solution(${args}) == ${JSON.stringify(tc.expected)}`, "");
     });
+    await writeFile(sessionId, "test_solution.py", testLines.join("\n"));
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Modal execution failed (${response.status}): ${errorText}`);
-    }
+    const result = await runCommand(sessionId, "python -m pytest test_solution.py -v --tb=short 2>&1");
 
-    const data = await response.json();
+    const testResults: TestResult[] = testCases.map((tc, i) => ({
+      name: tc.name || `test_${i}`,
+      passed: result.stdout.includes(`${tc.name || `test_${i}`} PASSED`),
+      duration: 0,
+      hidden: tc.hidden || false,
+    }));
 
-    // Return in expected format
+    const passedTests = testResults.filter(t => t.passed).length;
+
     return {
-      success: data.success || false,
-      testResults: data.testResults || [],
-      totalTests: data.totalTests || testCases.length,
-      passedTests: data.passedTests || 0,
-      failedTests: data.failedTests || testCases.length,
-      executionTime: data.executionTime || (Date.now() - startTime),
-      stdout: data.stdout,
-      stderr: data.stderr,
-      error: data.error,
-    };
-
-  } catch (error) {
-    console.error("Error executing code in Modal:", error);
-
-    // Return error result
-    return {
-      success: false,
-      testResults: [],
+      success: passedTests === testCases.length,
+      testResults,
       totalTests: testCases.length,
-      passedTests: 0,
-      failedTests: testCases.length,
+      passedTests,
+      failedTests: testCases.length - passedTests,
       executionTime: Date.now() - startTime,
-      error: error instanceof Error ? error.message : "Unknown execution error",
+      stdout: result.stdout,
+      stderr: result.stderr,
     };
-  }
-}
-
-// ============================================================================
-// SANDBOX & TERMINAL
-// ============================================================================
-
-/**
- * Create a sandbox instance for a session
- *
- * @param sessionId - Session identifier
- * @param initialFiles - Initial files to populate (optional)
- * @returns Sandbox instance metadata
- */
-export async function createSandbox(
-  sessionId: string,
-  initialFiles: Record<string, string> = {}
-): Promise<SandboxInstance> {
-  const redis = getRedisClient();
-  const volumeId = `vol-${sessionId}`;
-  const sandboxId = `sandbox-${sessionId}`;
-
-  try {
-    // Create Modal volume
-    const volume = await createVolume(sessionId);
-
-    // Initialize files if provided
-    for (const [path, content] of Object.entries(initialFiles)) {
-      await writeFile(volumeId, path, content);
-    }
-
-    // Store sandbox metadata in Redis
-    const sandbox: SandboxInstance = {
-      id: sandboxId,
-      sessionId,
-      volumeId,
-      status: "ready",
-      createdAt: new Date(),
-      language: "multi", // Support multiple languages
-    };
-
-    await redis.hset(
-      "modal:sandboxes",
-      sandboxId,
-      JSON.stringify(sandbox)
-    );
-
-    console.log(`[Modal] Created sandbox: ${sandboxId} with volume ${volume.id}`);
-    return sandbox;
   } catch (error) {
-    console.error("Error creating sandbox:", error);
-    throw new Error(
-      `Sandbox creation failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
-}
-
-/**
- * List all active sandboxes
- *
- * @returns Array of sandbox instances
- */
-export async function listActiveSandboxes(): Promise<SandboxInstance[]> {
-  const redis = getRedisClient();
-
-  try {
-    const sandboxes = await redis.hgetall("modal:sandboxes");
-    return Object.values(sandboxes).map(s => {
-      const parsed = JSON.parse(s);
-      return {
-        ...parsed,
-        createdAt: new Date(parsed.createdAt),
-      };
-    });
-  } catch (error) {
-    console.error("Error listing sandboxes:", error);
-    return [];
-  }
-}
-
-/**
- * Run a command in the sandbox
- *
- * For MVP: Executes safe commands locally with validation
- * Future: Will execute in Modal sandbox container
- *
- * @param sessionId - Session identifier
- * @param command - Command to execute
- * @param workingDir - Working directory relative to workspace (default: "/")
- * @returns Command output
- */
-export async function runCommand(
-  sessionId: string,
-  command: string,
-  workingDir: string = "/"
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const { exec } = await import("child_process");
-  const { promisify } = await import("util");
-  const execAsync = promisify(exec);
-
-  try {
-    // Import security validation
-    const { isCommandAllowed } = await import("@/lib/constants/security");
-
-    // Validate command for security
-    const validation = isCommandAllowed(command);
-    if (!validation.allowed) {
-      return {
-        stdout: "",
-        stderr: `Security Error: ${validation.reason}`,
-        exitCode: 1,
-      };
-    }
-
-    // Handle built-in commands that use Modal Volume
-    const trimmedCmd = command.trim().toLowerCase();
-
-    // pwd - print working directory
-    if (trimmedCmd === "pwd") {
-      return {
-        stdout: `/workspace${workingDir}\n`,
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-
-    // ls - list files from Modal volume
-    if (trimmedCmd === "ls" || trimmedCmd === "ls -la" || trimmedCmd === "ls -l") {
-      const files = await getFileSystem(sessionId, workingDir);
-      const output = files
-        .map(f => {
-          if (trimmedCmd === "ls") {
-            return f.name;
-          } else {
-            const perms = f.type === "directory" ? "drwxr-xr-x" : "-rw-r--r--";
-            const size = f.size || 0;
-            const date = f.mtime ? new Date(f.mtime).toDateString() : new Date().toDateString();
-            return `${perms}  1 user user ${String(size).padStart(8)} ${date} ${f.name}`;
-          }
-        })
-        .join("\n");
-
-      return {
-        stdout: output + "\n",
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-
-    // cat - read file from Modal volume
-    if (trimmedCmd.startsWith("cat ")) {
-      const filePath = command.substring(4).trim();
-      try {
-        const volumeId = `vol-${sessionId}`;
-        const content = await readFile(volumeId, filePath);
-        return {
-          stdout: content + "\n",
-          stderr: "",
-          exitCode: 0,
-        };
-      } catch (error) {
-        return {
-          stdout: "",
-          stderr: `cat: ${filePath}: No such file or directory\n`,
-          exitCode: 1,
-        };
-      }
-    }
-
-    // clear - ANSI escape sequence
-    if (trimmedCmd === "clear" || trimmedCmd === "cls") {
-      return {
-        stdout: "\x1b[2J\x1b[H",
-        stderr: "",
-        exitCode: 0,
-      };
-    }
-
-    // For other commands, execute safely in subprocess with timeout
-    const timeout = 30000; // 30 seconds
-    const maxBuffer = 1024 * 1024; // 1MB
-
-    try {
-      const { stdout, stderr } = await execAsync(command, {
-        timeout,
-        maxBuffer,
-        shell: "/bin/bash",
-        cwd: process.cwd(), // Execute in app directory for now
-      });
-
-      return {
-        stdout: stdout || "",
-        stderr: stderr || "",
-        exitCode: 0,
-      };
-    } catch (execError: any) {
-      // Handle execution errors
-      if (execError.killed) {
-        return {
-          stdout: "",
-          stderr: "Error: Command timed out after 30 seconds\n",
-          exitCode: 124,
-        };
-      }
-
-      return {
-        stdout: execError.stdout || "",
-        stderr: execError.stderr || execError.message || "Command execution failed\n",
-        exitCode: execError.code || 1,
-      };
-    }
-  } catch (error) {
-    console.error("Error running command:", error);
     return {
-      stdout: "",
-      stderr: `Error: ${error instanceof Error ? error.message : "Unknown error"}\n`,
-      exitCode: 1,
+      success: false, testResults: [], totalTests: testCases.length,
+      passedTests: 0, failedTests: testCases.length,
+      executionTime: Date.now() - startTime,
+      error: error instanceof Error ? error.message : "Unknown error",
     };
   }
 }
 
 // ============================================================================
-// EXPORTS
+// SERVICE EXPORT
 // ============================================================================
 
-/**
- * Export as modalService for drop-in replacement
- */
 export const modalService = {
-  executeCode,
-  createVolume,
+  createSandbox,
+  getOrCreateSandbox,
+  getSandbox,
+  runCommand,
+  executeCommand,
   writeFile,
   readFile,
+  listFiles,
   getFileSystem,
-  listVolumes,
+  terminateSandbox,
+  runTests,
+  executeCode,
   testConnection,
-  createSandbox,
+  healthCheck,
+  createVolume,
+  listVolumes,
   listActiveSandboxes,
-  runCommand,
 };
 
-/**
- * Graceful shutdown
- */
 export async function closeConnection(): Promise<void> {
-  if (redisClient) {
-    await redisClient.quit();
-    redisClient = null;
-    console.log("[Modal] Redis connection closed");
+  for (const sessionId of sandboxes.keys()) {
+    await terminateSandbox(sessionId);
   }
 }

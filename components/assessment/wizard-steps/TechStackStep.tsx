@@ -119,16 +119,16 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
     onUpdate({ techStackRequirements: newTechStack });
   };
 
-  const getPriorityBadge = (priority: TechPriority) => {
+  const getPriorityBadge = (priority: TechPriority): "error" | "default" | "info" | "warning" | "primary" | "success" => {
     switch (priority) {
       case "critical":
-        return "destructive";
+        return "error";
       case "required":
-        return "default";
+        return "primary";
       case "recommended":
-        return "secondary";
+        return "info";
       case "optional":
-        return "outline";
+        return "default";
     }
   };
 

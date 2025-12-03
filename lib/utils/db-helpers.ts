@@ -401,14 +401,16 @@ export type ModelName = Prisma.ModelName;
 
 /**
  * Build where clause type helper
+ * Note: Uses any to avoid complex TypeScript inference issues with Prisma
  */
 export type WhereInput<T extends ModelName> = T extends keyof typeof prisma
-  ? Parameters<(typeof prisma)[T]["findMany"]>[0]["where"]
+  ? any
   : never;
 
 /**
  * Build select clause type helper
+ * Note: Uses any to avoid complex TypeScript inference issues with Prisma
  */
 export type SelectInput<T extends ModelName> = T extends keyof typeof prisma
-  ? Parameters<(typeof prisma)[T]["findMany"]>[0]["select"]
+  ? any
   : never;

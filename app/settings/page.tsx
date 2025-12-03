@@ -784,7 +784,7 @@ function TeamSection({ tierLimits, teamMembers }: any) {
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
                   <span className="text-sm font-medium text-primary">
-                    {member.name.split(" ").map(n => n[0]).join("")}
+                    {member.name.split(" ").map((n: string) => n[0]).join("")}
                   </span>
                 </div>
                 <div>

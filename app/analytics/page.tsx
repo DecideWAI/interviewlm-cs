@@ -25,6 +25,42 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
+// Types for analytics components
+interface ActionableInsight {
+  title: string;
+  description: string;
+  severity: "high" | "medium" | "low";
+  type: "opportunity" | "risk" | "trend" | "anomaly";
+  impact: string;
+  actions: Array<{ label: string; url?: string }>;
+}
+
+interface TrendDataPoint {
+  assessments: number;
+}
+
+interface RolePerformance {
+  role: string;
+  candidates: number;
+  avgScore: number;
+  passRate: number;
+}
+
+interface SourceEffectiveness {
+  source: string;
+  totalCandidates: number;
+  passRate: number;
+  roi: number;
+}
+
+interface OptimizationRecommendation {
+  priority: "high" | "medium" | "low";
+  title: string;
+  recommendation: string;
+  confidence: number;
+  expectedImpact: string;
+}
+
 export default function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState("overview");
   const [dateRange, setDateRange] = useState("last_30_days");
@@ -272,7 +308,7 @@ function MetricCard({
 }
 
 // Actionable Insight Card
-function ActionableInsightCard({ insight }: { insight: typeof MOCK_ACTIONABLE_INSIGHTS[0] }) {
+function ActionableInsightCard({ insight }: { insight: ActionableInsight }) {
   const severityConfig = {
     high: { bg: "bg-error/10", border: "border-error/30", icon: "text-error", badgeVariant: "error" as const },
     medium: { bg: "bg-warning/10", border: "border-warning/30", icon: "text-warning", badgeVariant: "warning" as const },
@@ -324,7 +360,7 @@ function ActionableInsightCard({ insight }: { insight: typeof MOCK_ACTIONABLE_IN
 }
 
 // Simple Trend Chart (SVG-based for simplicity)
-function SimpleTrendChart({ data }: { data: typeof MOCK_TREND_DATA }) {
+function SimpleTrendChart({ data }: { data: TrendDataPoint[] }) {
   const maxAssessments = Math.max(...data.map((d) => d.assessments));
   const points = data
     .map((d, i) => {
@@ -357,7 +393,7 @@ function SimpleTrendChart({ data }: { data: typeof MOCK_TREND_DATA }) {
 }
 
 // Role Performance Row
-function RolePerformanceRow({ data }: { data: typeof MOCK_PERFORMANCE_BY_ROLE[0] }) {
+function RolePerformanceRow({ data }: { data: RolePerformance }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-sm">
@@ -389,7 +425,7 @@ function RolePerformanceRow({ data }: { data: typeof MOCK_PERFORMANCE_BY_ROLE[0]
 }
 
 // Source Row
-function SourceRow({ data }: { data: typeof MOCK_SOURCE_EFFECTIVENESS[0] }) {
+function SourceRow({ data }: { data: SourceEffectiveness }) {
   return (
     <div className="flex items-center justify-between p-3 bg-background-tertiary rounded-lg">
       <div className="flex-1">
@@ -411,7 +447,7 @@ function SourceRow({ data }: { data: typeof MOCK_SOURCE_EFFECTIVENESS[0] }) {
 }
 
 // Optimization Card
-function OptimizationCard({ recommendation }: { recommendation: typeof MOCK_OPTIMIZATION_RECOMMENDATIONS[0] }) {
+function OptimizationCard({ recommendation }: { recommendation: OptimizationRecommendation }) {
   const priorityColors = {
     high: "border-error/30 bg-error/5",
     medium: "border-warning/30 bg-warning/5",

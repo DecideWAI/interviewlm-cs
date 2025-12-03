@@ -239,7 +239,8 @@ export async function POST(
       // IMPORTANT: Fetch previous content BEFORE writing new content
       // This allows us to calculate diffs
       try {
-        previousContent = await modal.readFile(volumeId, path);
+        const result = await modal.readFile(volumeId, path);
+        previousContent = result.success ? result.content : undefined;
       } catch (error) {
         // File doesn't exist yet, this is a new file
         previousContent = undefined;
