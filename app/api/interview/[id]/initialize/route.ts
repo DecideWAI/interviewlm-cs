@@ -315,7 +315,8 @@ module.exports = longestPalindrome;`,
     }
 
     // Get file structure from Modal volume
-    const files = await modal.getFileSystem(candidateId, "/");
+    // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
+    const files = await modal.getFileSystem(candidateId, "/workspace");
 
     // Calculate time remaining (convert minutes to seconds)
     const timeLimit = (candidate.assessment?.duration || 60) * 60; // Default 1 hour

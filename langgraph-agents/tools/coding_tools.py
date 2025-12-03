@@ -11,6 +11,7 @@ Each candidate gets their own isolated container where they can:
 import re
 import os
 import base64
+import asyncio
 from typing import Any, Optional
 from pathlib import Path
 from langchain_core.tools import tool
@@ -22,6 +23,14 @@ try:
 except ImportError:
     MODAL_AVAILABLE = False
     modal = None
+
+# Database for sandbox persistence
+try:
+    import asyncpg
+    ASYNCPG_AVAILABLE = True
+except ImportError:
+    ASYNCPG_AVAILABLE = False
+    asyncpg = None
 
 from ..config import settings
 
@@ -40,9 +49,13 @@ class SandboxManager:
     - 1 hour timeout
     - Persistent filesystem within session
     - Pre-installed: Python 3.11, Node 20, Go 1.21, Rust
+
+    Sandbox IDs are persisted to database to survive process restarts.
+    Priority: 1) In-memory cache, 2) Reconnect from DB, 3) Create new
     """
 
     _sandboxes: dict[str, "modal.Sandbox"] = {}
+    _sandbox_ids: dict[str, str] = {}  # session_id -> sandbox_id mapping
     _app: Optional["modal.App"] = None
     _image: Optional["modal.Image"] = None
 
@@ -85,9 +98,115 @@ class SandboxManager:
         return cls._image
 
     @classmethod
+    async def _get_sandbox_id_from_db(cls, session_id: str) -> Optional[str]:
+        """Get sandbox ID from database (volumeId field on candidates table)."""
+        if not ASYNCPG_AVAILABLE:
+            return None
+        try:
+            conn = await asyncpg.connect(settings.database_url)
+            try:
+                row = await conn.fetchrow(
+                    "SELECT volume_id FROM candidates WHERE id = $1",
+                    session_id
+                )
+                return row["volume_id"] if row and row["volume_id"] else None
+            finally:
+                await conn.close()
+        except Exception as e:
+            print(f"[SandboxManager] DB lookup failed: {e}")
+            return None
+
+    @classmethod
+    async def _save_sandbox_id_to_db(cls, session_id: str, sandbox_id: str) -> None:
+        """Persist sandbox ID to database for reconnection after restart."""
+        if not ASYNCPG_AVAILABLE:
+            return
+        try:
+            conn = await asyncpg.connect(settings.database_url)
+            try:
+                await conn.execute(
+                    'UPDATE candidates SET volume_id = $1, updated_at = NOW() WHERE id = $2',
+                    sandbox_id, session_id
+                )
+                print(f"[SandboxManager] Persisted sandbox {sandbox_id} to DB for session {session_id}")
+            finally:
+                await conn.close()
+        except Exception as e:
+            print(f"[SandboxManager] Failed to persist sandbox ID to DB: {e}")
+
+    @classmethod
+    async def _clear_sandbox_id_from_db(cls, session_id: str) -> None:
+        """Clear sandbox ID from database when sandbox is terminated."""
+        if not ASYNCPG_AVAILABLE:
+            return
+        try:
+            conn = await asyncpg.connect(settings.database_url)
+            try:
+                await conn.execute(
+                    'UPDATE candidates SET volume_id = NULL, updated_at = NOW() WHERE id = $1',
+                    session_id
+                )
+            finally:
+                await conn.close()
+        except Exception:
+            pass  # Non-critical
+
+    @classmethod
+    def _reconnect_to_sandbox(cls, sandbox_id: str) -> Optional["modal.Sandbox"]:
+        """Try to reconnect to an existing sandbox by ID."""
+        try:
+            # Modal Python SDK method to get sandbox by ID
+            sandbox = modal.Sandbox.from_id(sandbox_id)
+
+            # Verify sandbox is still alive
+            proc = run_in_sandbox(sandbox, "echo", "alive")
+            if proc.returncode == 0:
+                print(f"[SandboxManager] Reconnected to existing sandbox {sandbox_id}")
+                return sandbox
+            return None
+        except Exception as e:
+            print(f"[SandboxManager] Failed to reconnect to sandbox {sandbox_id}: {e}")
+            return None
+
+    @classmethod
+    def _create_new_sandbox(cls, session_id: str) -> "modal.Sandbox":
+        """Create a new sandbox for a session."""
+        sandbox = modal.Sandbox.create(
+            app=cls._get_app(),
+            image=cls._get_image(),
+            timeout=3600,  # 1 hour
+            workdir="/workspace",
+            cpu=2.0,
+            memory=2048,  # 2GB
+        )
+        # Initialize workspace
+        run_in_sandbox(sandbox, "mkdir", "-p", "/workspace")
+
+        # Get sandbox ID and persist
+        sandbox_id = sandbox.object_id
+        cls._sandbox_ids[session_id] = sandbox_id
+
+        # Persist to database (async, but we'll wait for it)
+        try:
+            asyncio.get_event_loop().run_until_complete(
+                cls._save_sandbox_id_to_db(session_id, sandbox_id)
+            )
+        except RuntimeError:
+            # No event loop running, create one
+            asyncio.run(cls._save_sandbox_id_to_db(session_id, sandbox_id))
+
+        print(f"[SandboxManager] Created new sandbox {sandbox_id} for session {session_id}")
+        return sandbox
+
+    @classmethod
     def get_sandbox(cls, session_id: str) -> "modal.Sandbox":
         """
         Get or create a sandbox for a session.
+
+        Priority:
+        1. Return from in-memory cache (fastest)
+        2. Reconnect to existing sandbox from database (survives restart)
+        3. Create new sandbox (fallback)
 
         Args:
             session_id: Unique session identifier
@@ -98,35 +217,66 @@ class SandboxManager:
         if not MODAL_AVAILABLE:
             raise RuntimeError("Modal SDK not available. Install with: pip install modal")
 
-        if session_id not in cls._sandboxes:
-            cls._sandboxes[session_id] = modal.Sandbox.create(
-                app=cls._get_app(),
-                image=cls._get_image(),
-                timeout=3600,  # 1 hour
-                workdir="/workspace",
-                cpu=2.0,
-                memory=2048,  # 2GB
-            )
-            # Initialize workspace using run_command helper
-            run_in_sandbox(cls._sandboxes[session_id], "mkdir", "-p", "/workspace")
+        # 1. Check in-memory cache first
+        if session_id in cls._sandboxes:
+            print(f"[SandboxManager] Using cached sandbox for session {session_id}")
+            return cls._sandboxes[session_id]
 
-        return cls._sandboxes[session_id]
+        # 2. Try to reconnect from database
+        try:
+            # Get sandbox ID from DB
+            try:
+                sandbox_id = asyncio.get_event_loop().run_until_complete(
+                    cls._get_sandbox_id_from_db(session_id)
+                )
+            except RuntimeError:
+                sandbox_id = asyncio.run(cls._get_sandbox_id_from_db(session_id))
+
+            if sandbox_id:
+                sandbox = cls._reconnect_to_sandbox(sandbox_id)
+                if sandbox:
+                    cls._sandboxes[session_id] = sandbox
+                    cls._sandbox_ids[session_id] = sandbox_id
+                    return sandbox
+                else:
+                    # Sandbox no longer exists, clear stale ID
+                    print(f"[SandboxManager] Clearing stale sandbox ID {sandbox_id}")
+        except Exception as e:
+            print(f"[SandboxManager] Error checking DB for sandbox: {e}")
+
+        # 3. Create new sandbox
+        sandbox = cls._create_new_sandbox(session_id)
+        cls._sandboxes[session_id] = sandbox
+        return sandbox
 
     @classmethod
     def terminate_sandbox(cls, session_id: str) -> bool:
-        """Terminate a sandbox session."""
+        """Terminate a sandbox session and clear from database."""
         if session_id in cls._sandboxes:
             try:
                 cls._sandboxes[session_id].terminate()
                 del cls._sandboxes[session_id]
+                if session_id in cls._sandbox_ids:
+                    del cls._sandbox_ids[session_id]
+
+                # Clear from database
+                try:
+                    asyncio.get_event_loop().run_until_complete(
+                        cls._clear_sandbox_id_from_db(session_id)
+                    )
+                except RuntimeError:
+                    asyncio.run(cls._clear_sandbox_id_from_db(session_id))
+
+                print(f"[SandboxManager] Terminated sandbox for session {session_id}")
                 return True
-            except Exception:
+            except Exception as e:
+                print(f"[SandboxManager] Error terminating sandbox: {e}")
                 return False
         return False
 
     @classmethod
     def sandbox_exists(cls, session_id: str) -> bool:
-        """Check if a sandbox exists for a session."""
+        """Check if a sandbox exists for a session (in memory only)."""
         return session_id in cls._sandboxes
 
 

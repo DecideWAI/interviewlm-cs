@@ -193,13 +193,18 @@ export const GET = withErrorHandling(async (
             },
           });
 
-          // Store assistant response
+          // Store assistant response with tool use metadata
           await prisma.claudeInteraction.create({
             data: {
               sessionId: sessionRecording.id,
               role: "assistant",
               content: fullResponse,
               model: "claude-sonnet-4-5-20250929",
+              metadata: toolBlocks.length > 0 ? {
+                toolBlocks,
+                toolsUsed,
+                filesModified,
+              } : undefined,
             },
           });
 

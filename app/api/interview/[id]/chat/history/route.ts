@@ -78,6 +78,7 @@ export const GET = withErrorHandling(async (
       timestamp: true,
       inputTokens: true,
       outputTokens: true,
+      metadata: true,
     },
   });
 
@@ -94,6 +95,7 @@ export const GET = withErrorHandling(async (
             outputTokens: interaction.outputTokens || 0,
           }
         : undefined,
+    metadata: interaction.metadata as any,
   }));
 
   logger.info('[Chat History] History retrieved', {

@@ -94,8 +94,39 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       try {
         const response = await fetch(`/api/interview/${sessionId}/chat/history`);
         if (response.ok) {
-          const data = await response.json();
-          setMessages(data.messages || []);
+          const jsonResponse = await response.json();
+          // Handle both wrapped { success, data: { messages } } and direct { messages } formats
+          const data = jsonResponse.data ?? jsonResponse;
+
+          // Expand messages with tool metadata into tool_use messages
+          const expandedMessages: Message[] = [];
+          for (const msg of (data.messages || [])) {
+            // For assistant messages with tool metadata, insert tool blocks before the text
+            if (msg.role === "assistant" && msg.metadata?.toolBlocks?.length > 0) {
+              // Add tool_use messages for each tool block
+              for (const tool of msg.metadata.toolBlocks) {
+                expandedMessages.push({
+                  id: `${msg.id}_tool_${tool.id}`,
+                  role: "assistant",
+                  content: "",
+                  timestamp: new Date(msg.timestamp),
+                  type: "tool_use",
+                  toolName: tool.name,
+                  toolInput: tool.input,
+                });
+              }
+            }
+            // Add the original message (text content)
+            expandedMessages.push({
+              id: msg.id,
+              role: msg.role,
+              content: msg.content,
+              timestamp: new Date(msg.timestamp),
+              tokenUsage: msg.tokenUsage,
+            });
+          }
+
+          setMessages(expandedMessages);
 
           // Build conversation history for Agent SDK
           conversationHistory.current = (data.messages || [])
@@ -169,7 +200,10 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
 
       if (contentType && contentType.includes("application/json")) {
         // Handle standard JSON response (non-streaming)
-        const data = await response.json();
+        const jsonResponse = await response.json();
+
+        // Handle wrapped response from success() helper: { success: true, data: {...} }
+        const data = jsonResponse.data ?? jsonResponse;
 
         // Process tool usage if present
         if (data.toolsUsed && data.toolsUsed.length > 0) {

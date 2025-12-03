@@ -7,9 +7,10 @@
  */
 
 import { ModalClient } from "modal";
+import prisma from "@/lib/prisma";
 
-// Sandbox session cache
-const sandboxes = new Map<string, { sandbox: any; createdAt: Date }>();
+// Sandbox session cache (in-memory for performance, but we also persist to DB)
+const sandboxes = new Map<string, { sandbox: any; sandboxId: string; createdAt: Date }>();
 
 // Configuration
 const SANDBOX_TIMEOUT_MS = 3600 * 1000; // 1 hour
@@ -84,9 +85,9 @@ export interface FileNode {
 // ============================================================================
 
 /**
- * Create a sandbox for a session
+ * Create a new sandbox for a session (internal use)
  */
-export async function createSandbox(sessionId: string): Promise<SandboxInstance> {
+async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sandboxId: string }> {
   const modal = getModalClient();
 
   // Get or create the app
@@ -106,12 +107,60 @@ export async function createSandbox(sessionId: string): Promise<SandboxInstance>
   // Initialize workspace
   await exec(sandbox, ["mkdir", "-p", "/workspace"]);
 
+  const sandboxId = sandbox.sandboxId;
+  console.log(`[Modal] Created new sandbox ${sandboxId} for session ${sessionId}`);
+
+  return { sandbox, sandboxId };
+}
+
+/**
+ * Try to reconnect to an existing sandbox by ID
+ */
+async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
+  try {
+    const modal = getModalClient();
+    // Try to get the sandbox by ID using Modal's lookup mechanism
+    const sandbox = await modal.sandboxes.get(sandboxId);
+
+    // Verify sandbox is still alive by running a simple command
+    const proc = await exec(sandbox, ["echo", "alive"]);
+    const exitCode = await proc.exitCode();
+
+    if (exitCode === 0) {
+      console.log(`[Modal] Reconnected to existing sandbox ${sandboxId}`);
+      return sandbox;
+    }
+    return null;
+  } catch (error) {
+    console.log(`[Modal] Failed to reconnect to sandbox ${sandboxId}:`, error instanceof Error ? error.message : 'Unknown error');
+    return null;
+  }
+}
+
+/**
+ * Create a sandbox for a session (public API)
+ */
+export async function createSandbox(sessionId: string): Promise<SandboxInstance> {
+  const { sandbox, sandboxId } = await createNewSandbox(sessionId);
   const createdAt = new Date();
-  sandboxes.set(sessionId, { sandbox, createdAt });
-  console.log(`[Modal] Created sandbox for ${sessionId}`);
+
+  // Store in memory cache
+  sandboxes.set(sessionId, { sandbox, sandboxId, createdAt });
+
+  // Persist sandbox ID to database for reconnection after server restart
+  try {
+    await prisma.candidate.update({
+      where: { id: sessionId },
+      data: { volumeId: sandboxId },
+    });
+    console.log(`[Modal] Persisted sandbox ID ${sandboxId} to database for session ${sessionId}`);
+  } catch (dbError) {
+    // Non-critical - sandbox still works, just won't survive server restart
+    console.warn(`[Modal] Failed to persist sandbox ID to database:`, dbError);
+  }
 
   return {
-    id: sandbox.sandboxId,
+    id: sandboxId,
     sessionId,
     status: "ready",
     createdAt,
@@ -121,11 +170,47 @@ export async function createSandbox(sessionId: string): Promise<SandboxInstance>
 
 /**
  * Get or create sandbox for a session
+ *
+ * Priority:
+ * 1. Return from in-memory cache (fastest)
+ * 2. Reconnect to existing sandbox from database (survives server restart)
+ * 3. Create new sandbox (fallback)
  */
 export async function getOrCreateSandbox(sessionId: string): Promise<any> {
+  // 1. Check in-memory cache first
   const cached = sandboxes.get(sessionId);
-  if (cached) return cached.sandbox;
+  if (cached) {
+    console.log(`[Modal] Using cached sandbox ${cached.sandboxId} for session ${sessionId}`);
+    return cached.sandbox;
+  }
 
+  // 2. Try to reconnect to existing sandbox from database
+  try {
+    const candidate = await prisma.candidate.findUnique({
+      where: { id: sessionId },
+      select: { volumeId: true },
+    });
+
+    if (candidate?.volumeId) {
+      const sandbox = await reconnectToSandbox(candidate.volumeId);
+      if (sandbox) {
+        // Cache for future use
+        sandboxes.set(sessionId, {
+          sandbox,
+          sandboxId: candidate.volumeId,
+          createdAt: new Date()
+        });
+        return sandbox;
+      }
+      // Sandbox no longer exists, clear the stale ID
+      console.log(`[Modal] Clearing stale sandbox ID ${candidate.volumeId} for session ${sessionId}`);
+    }
+  } catch (dbError) {
+    console.warn(`[Modal] Database lookup failed:`, dbError);
+  }
+
+  // 3. Create a new sandbox
+  console.log(`[Modal] Creating new sandbox for session ${sessionId}`);
   await createSandbox(sessionId);
   return sandboxes.get(sessionId)!.sandbox;
 }
@@ -264,7 +349,18 @@ export async function terminateSandbox(sessionId: string): Promise<boolean> {
     try {
       await cached.sandbox.terminate();
       sandboxes.delete(sessionId);
-      console.log(`[Modal] Terminated sandbox for ${sessionId}`);
+      console.log(`[Modal] Terminated sandbox ${cached.sandboxId} for session ${sessionId}`);
+
+      // Clear the volumeId from database
+      try {
+        await prisma.candidate.update({
+          where: { id: sessionId },
+          data: { volumeId: null },
+        });
+      } catch {
+        // Non-critical
+      }
+
       return true;
     } catch {
       return false;
@@ -328,11 +424,14 @@ export interface SandboxInstance {
 // Aliases for backward compatibility
 export const executeCommand = runCommand;
 export const getSandbox = (sessionId: string) => sandboxes.get(sessionId)?.sandbox || null;
-export const createVolume = async (sessionId: string) => { await createSandbox(sessionId); return { id: sessionId }; };
+export const createVolume = async (sessionId: string) => {
+  const instance = await createSandbox(sessionId);
+  return { id: instance.id }; // Return actual sandbox ID, not session ID
+};
 export const listVolumes = async () => Array.from(sandboxes.keys()).map(id => ({ id }));
 export const listActiveSandboxes = async (): Promise<SandboxInstance[]> =>
-  Array.from(sandboxes.entries()).map(([sessionId, { sandbox, createdAt }]) => ({
-    id: sandbox.sandboxId, sessionId, status: "ready" as const, createdAt, environment: {},
+  Array.from(sandboxes.entries()).map(([sessionId, { sandboxId, createdAt }]) => ({
+    id: sandboxId, sessionId, status: "ready" as const, createdAt, environment: {},
   }));
 
 // Run tests (auto-detects test framework)
