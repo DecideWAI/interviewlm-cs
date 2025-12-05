@@ -221,21 +221,94 @@ module.exports = longestPalindrome;`,
     },
   });
 
-  // Get or generate question
+  // Get assessment configuration (needed for question generation)
+  const assessment = candidate.assessment;
+  if (!assessment) {
+    throw new NotFoundError("Assessment for candidate");
+  }
+
+  const assessmentType: AssessmentType = assessment.assessmentType || 'REAL_WORLD';
+  const role = assessment.role || 'backend';
+  const seniority = assessment.seniority?.toLowerCase() || 'mid';
+  const language = assessment.techStack?.[0]?.toLowerCase() || 'typescript';
+
+  // Check what work needs to be done
   let question = candidate.generatedQuestions?.[0];
-  if (!question) {
-    // Generate question based on assessment configuration
-    const assessment = candidate.assessment;
-    if (!assessment) {
-      throw new NotFoundError("Assessment for candidate");
-    }
+  const needsQuestion = !question;
+  const needsSandbox = !candidate.volumeId;
+  let needsStarterFiles = false;
+  let volumeId = candidate.volumeId;
 
-    // Use DynamicQuestionGenerator with complexity profiles
-    const assessmentType: AssessmentType = assessment.assessmentType || 'REAL_WORLD';
-    const role = assessment.role || 'backend';
-    const seniority = assessment.seniority?.toLowerCase() || 'mid';
-    const language = assessment.techStack?.[0]?.toLowerCase() || 'typescript';
+  // OPTIMIZATION: Run question generation and sandbox creation in parallel
+  // These are independent operations that together take 47-56s + 13s sequentially
+  // Running in parallel saves ~13s (the sandbox creation time)
+  if (needsQuestion && needsSandbox) {
+    logger.info('[Initialize] Starting parallel question generation + sandbox creation', {
+      candidateId,
+      role,
+      seniority,
+      assessmentType,
+    });
 
+    const [generatedContent, volume] = await Promise.all([
+      // Question generation (~47-56s)
+      logger.time(
+        'dynamicQuestionGenerator',
+        () => dynamicQuestionGenerator.generate({
+          role,
+          seniority,
+          assessmentType,
+          techStack: assessment.techStack || [language],
+          organizationId: candidate.organizationId,
+        }),
+        { candidateId, role, seniority, assessmentType }
+      ),
+      // Sandbox creation (~13s)
+      logger.time(
+        'createModalVolume',
+        () => modal.createVolume(candidateId, language),
+        { candidateId, language }
+      ),
+    ]);
+
+    // Create question in database
+    question = await prisma.generatedQuestion.create({
+      data: {
+        candidateId,
+        questionSeedId: null,
+        order: 1,
+        title: generatedContent.title,
+        description: generatedContent.description,
+        difficulty: mapSeniorityToDifficulty(assessment.seniority),
+        language,
+        requirements: generatedContent.requirements,
+        estimatedTime: generatedContent.estimatedTime,
+        starterCode: generatedContent.starterCode,
+        testCases: [],
+        status: 'PENDING',
+      },
+    });
+
+    volumeId = volume.id;
+    needsStarterFiles = true;
+
+    // Update candidate with volume ID
+    await prisma.candidate.update({
+      where: { id: candidateId },
+      data: {
+        volumeId,
+        status: "IN_PROGRESS",
+      },
+    });
+
+    logger.info('[Initialize] Parallel initialization complete', {
+      candidateId,
+      questionId: question.id,
+      questionTitle: generatedContent.title,
+      volumeId,
+    });
+  } else if (needsQuestion) {
+    // Only need to generate question (sandbox already exists)
     logger.info('[Initialize] Generating question with DynamicQuestionGenerator', {
       candidateId,
       role,
@@ -244,7 +317,6 @@ module.exports = longestPalindrome;`,
       techStack: assessment.techStack,
     });
 
-    // Generate question dynamically using complexity profiles
     const generatedContent = await logger.time(
       'dynamicQuestionGenerator',
       () => dynamicQuestionGenerator.generate({
@@ -257,11 +329,10 @@ module.exports = longestPalindrome;`,
       { candidateId, role, seniority, assessmentType }
     );
 
-    // Create question in database
     question = await prisma.generatedQuestion.create({
       data: {
         candidateId,
-        questionSeedId: null, // No longer using seeds
+        questionSeedId: null,
         order: 1,
         title: generatedContent.title,
         description: generatedContent.description,
@@ -270,7 +341,7 @@ module.exports = longestPalindrome;`,
         requirements: generatedContent.requirements,
         estimatedTime: generatedContent.estimatedTime,
         starterCode: generatedContent.starterCode,
-        testCases: [], // Real-world problems use AI evaluation
+        testCases: [],
         status: 'PENDING',
       },
     });
@@ -281,23 +352,23 @@ module.exports = longestPalindrome;`,
       questionTitle: generatedContent.title,
       assessmentType,
     });
-  }
 
-  // Create or get Modal volume for sandbox
-  let volumeId = candidate.volumeId;
-  let needsStarterFiles = false;
-
-  if (!volumeId) {
-    // Create Modal volume
+    // Check if workspace is empty (files may have been lost on reconnect)
+    const existingFiles = await modal.getFileSystem(candidateId, "/workspace");
+    if (existingFiles.length === 0) {
+      console.log(`[Initialize] Workspace is empty, will write starter files`);
+      needsStarterFiles = true;
+    }
+  } else if (needsSandbox) {
+    // Only need to create sandbox (question already exists)
     const volume = await logger.time(
       'createModalVolume',
-      () => modal.createVolume(candidateId),
-      { candidateId }
+      () => modal.createVolume(candidateId, language),
+      { candidateId, language }
     );
     volumeId = volume.id;
     needsStarterFiles = true;
 
-    // Update candidate with volume ID
     await prisma.candidate.update({
       where: { id: candidateId },
       data: {
@@ -306,7 +377,7 @@ module.exports = longestPalindrome;`,
       },
     });
   } else {
-    // Sandbox exists - check if workspace is empty (files may have been lost on reconnect)
+    // Both question and sandbox exist - check if workspace is empty
     const existingFiles = await modal.getFileSystem(candidateId, "/workspace");
     if (existingFiles.length === 0) {
       console.log(`[Initialize] Workspace is empty, will write starter files`);

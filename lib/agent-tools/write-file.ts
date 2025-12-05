@@ -32,12 +32,12 @@ export const writeFileTool: Anthropic.Tool = {
         type: "string",
         description: "Path where the file should be written (e.g., 'solution.js', 'src/helpers.ts'). Paths are relative to /workspace.",
       },
-      content: {
+      file_content: {
         type: "string",
-        description: "The complete file content to write. Must include the entire file - existing content will be replaced.",
+        description: "The complete file content to write. REQUIRED - must include the entire file.",
       },
     },
-    required: ["file_path", "content"],
+    required: ["file_path", "file_content"],
   },
 };
 

@@ -60,8 +60,8 @@ function isCommandSafe(cmd: string): { safe: boolean; reason?: string } {
   return { safe: true };
 }
 
-// Modal SDK exec wrapper
-function exec(sandbox: any, args: string[]): Promise<any> {
+// Modal SDK sandbox command runner (NOT Node.js child_process)
+function runSandboxCommand(sandbox: any, args: string[]): Promise<any> {
   return sandbox["exec"](args);
 }
 
@@ -114,10 +114,37 @@ async function getOrCreateVolume(sessionId: string): Promise<any> {
 }
 
 /**
+ * Get the appropriate Docker image for a language
+ * Uses language-specific images to avoid runtime installations
+ */
+function getImageForLanguage(language?: string): string {
+  const lang = language?.toLowerCase() || 'javascript';
+
+  // Language-specific base images with tools pre-installed
+  const imageMap: Record<string, string> = {
+    // Python: Use official Python image (has Python + pip pre-installed)
+    'python': 'python:3.11-slim-bookworm',
+    'py': 'python:3.11-slim-bookworm',
+
+    // JavaScript/TypeScript: Use Node.js image
+    'javascript': 'node:20-bookworm-slim',
+    'typescript': 'node:20-bookworm-slim',
+    'js': 'node:20-bookworm-slim',
+    'ts': 'node:20-bookworm-slim',
+
+    // Go: Use official Go image
+    'go': 'golang:1.21-bookworm',
+    'golang': 'golang:1.21-bookworm',
+  };
+
+  return imageMap[lang] || 'node:20-bookworm-slim';
+}
+
+/**
  * Create a new sandbox for a session with mounted volume (internal use)
  * The volume is persistent - files survive sandbox restarts
  */
-async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sandboxId: string; volumeName: string }> {
+async function createNewSandbox(sessionId: string, language?: string): Promise<{ sandbox: any; sandboxId: string; volumeName: string }> {
   const modal = getModalClient();
 
   // Get or create the app
@@ -127,10 +154,11 @@ async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sand
   const volume = await getOrCreateVolume(sessionId);
   const volumeName = getVolumeName(sessionId);
 
-  // Create image with development tools
-  // Using Node.js 20 on Debian base - provides Node.js pre-installed (faster startup)
-  // Alternative: Use custom deployed image with modal_image.py for even faster startup
-  const image = modal.images.fromRegistry("node:20-bookworm-slim");
+  // OPTIMIZATION: Use language-specific images to avoid runtime installations
+  // This saves ~8-10 seconds by not having to install Python or other tools
+  const imageName = getImageForLanguage(language);
+  console.log(`[Modal] Using image ${imageName} for language: ${language || 'default'}`);
+  const image = modal.images.fromRegistry(imageName);
 
   // Create sandbox with the image AND mounted volume
   // The volume is mounted at /workspace - files persist here
@@ -143,29 +171,30 @@ async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sand
     },
   });
 
-  // Verify Node.js is available (should be pre-installed)
-  const nodeCheckProc = await exec(sandbox, ["node", "--version"]);
-  const nodeVersion = await nodeCheckProc.stdout.readText();
-  console.log(`[Modal] Node.js version: ${nodeVersion.trim()}`);
+  // Only install tools that aren't in the base image
+  const isPython = ['python', 'py'].includes(language?.toLowerCase() || '');
+  const isNode = ['javascript', 'typescript', 'js', 'ts'].includes(language?.toLowerCase() || '') || !language;
 
-  // Install pnpm if not already available (faster than npm, cached in volume)
-  const pnpmCheckProc = await exec(sandbox, ["which", "pnpm"]);
-  const pnpmCheckExit = await pnpmCheckProc.exitCode;
-  if (pnpmCheckExit !== 0) {
-    console.log(`[Modal] Installing pnpm...`);
-    const pnpmInstallProc = await exec(sandbox, ["npm", "install", "-g", "pnpm"]);
-    await pnpmInstallProc.exitCode;
+  const installPromises: Promise<void>[] = [];
+
+  if (isPython) {
+    // Python image: just need pytest (Python is pre-installed)
+    console.log(`[Modal] Installing pytest...`);
+    installPromises.push(
+      runSandboxCommand(sandbox, ["pip", "install", "pytest", "-q"])
+        .then((proc: any) => proc.exitCode)
+        .then(() => { /* done */ })
+    );
+  } else if (isNode) {
+    // Node image: verify Node.js is available (should be pre-installed)
+    const nodeCheckProc = await runSandboxCommand(sandbox, ["node", "--version"]);
+    const nodeVersion = await nodeCheckProc.stdout.readText();
+    console.log(`[Modal] Node.js version: ${nodeVersion.trim()}`);
   }
 
-  // Install Python and pytest for Python test support
-  const pythonCheckProc = await exec(sandbox, ["which", "python3"]);
-  const pythonCheckExit = await pythonCheckProc.exitCode;
-  if (pythonCheckExit !== 0) {
-    console.log(`[Modal] Installing Python3 and pytest...`);
-    const pythonInstallProc = await exec(sandbox, ["bash", "-c",
-      "apt-get update && apt-get install -y python3 python3-pip && pip3 install pytest --break-system-packages"
-    ]);
-    await pythonInstallProc.exitCode;
+  // Wait for all installations to complete
+  if (installPromises.length > 0) {
+    await Promise.all(installPromises);
   }
 
   const sandboxId = sandbox.sandboxId;
@@ -176,26 +205,54 @@ async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sand
 
 /**
  * Try to reconnect to an existing sandbox by ID
- * If reconnection fails, returns null (caller should create new sandbox with same volume)
+ * If reconnection fails, terminates the old sandbox and returns null
  */
 async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
+  let sandbox: any = null;
   try {
     const modal = getModalClient();
-    const sandbox = await modal.sandboxes.fromId(sandboxId);
+    console.log(`[Modal] Attempting to reconnect to sandbox ${sandboxId}...`);
+    sandbox = await modal.sandboxes.fromId(sandboxId);
+    console.log(`[Modal] Got sandbox reference for ${sandboxId}, running health check...`);
 
     // Verify sandbox is healthy by running a simple command with timeout
+    // Use 15 second timeout - Modal sandboxes can be slow to wake up
+    const startTime = Date.now();
+    let timeoutId: NodeJS.Timeout | null = null;
+
     const healthCheck = Promise.race([
       (async () => {
-        const proc = await sandbox["exec"](["echo", "ok"]);
-        const output = await proc.stdout.readText();
-        return output.trim() === "ok";
+        try {
+          const proc = await sandbox["exec"](["echo", "ok"]);
+          const output = await proc.stdout.readText();
+          const elapsed = Date.now() - startTime;
+          console.log(`[Modal] Health check response in ${elapsed}ms: "${output.trim()}"`);
+          if (timeoutId) clearTimeout(timeoutId);
+          return output.trim() === "ok";
+        } catch (execError) {
+          console.log(`[Modal] Health check exec error:`, execError instanceof Error ? execError.message : execError);
+          if (timeoutId) clearTimeout(timeoutId);
+          return false;
+        }
       })(),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000))
+      new Promise<boolean>((resolve) => {
+        timeoutId = setTimeout(() => {
+          console.log(`[Modal] Health check timed out after 15s for ${sandboxId}`);
+          resolve(false);
+        }, 15000);
+      })
     ]);
 
     const isHealthy = await healthCheck;
     if (!isHealthy) {
-      console.log(`[Modal] Sandbox ${sandboxId} failed health check, will create new sandbox with same volume`);
+      console.log(`[Modal] Sandbox ${sandboxId} failed health check, terminating it`);
+      // Terminate the unhealthy sandbox to free resources
+      try {
+        await sandbox.terminate();
+        console.log(`[Modal] Terminated unhealthy sandbox ${sandboxId}`);
+      } catch (termError) {
+        console.warn(`[Modal] Failed to terminate unhealthy sandbox ${sandboxId}:`, termError);
+      }
       return null;
     }
 
@@ -203,6 +260,15 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
     return sandbox;
   } catch (error) {
     console.log(`[Modal] Failed to reconnect to sandbox ${sandboxId}:`, error instanceof Error ? error.message : 'Unknown error');
+    // Try to terminate the sandbox even if reconnection failed
+    if (sandbox) {
+      try {
+        await sandbox.terminate();
+        console.log(`[Modal] Terminated unreachable sandbox ${sandboxId}`);
+      } catch {
+        // Ignore termination errors
+      }
+    }
     return null;
   }
 }
@@ -211,8 +277,8 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
  * Create a sandbox for a session (public API)
  * The sandbox is created with a mounted persistent volume (volume_{sessionId})
  */
-export async function createSandbox(sessionId: string): Promise<SandboxInstance> {
-  const { sandbox, sandboxId, volumeName } = await createNewSandbox(sessionId);
+export async function createSandbox(sessionId: string, language?: string): Promise<SandboxInstance> {
+  const { sandbox, sandboxId, volumeName } = await createNewSandbox(sessionId, language);
   const createdAt = new Date();
 
   // Store in memory cache
@@ -251,7 +317,7 @@ export async function createSandbox(sessionId: string): Promise<SandboxInstance>
  * Uses Redis distributed lock to prevent race conditions across server instances.
  * All sandbox creation MUST go through this function to ensure single sandbox per session.
  */
-export async function getOrCreateSandbox(sessionId: string): Promise<any> {
+export async function getOrCreateSandbox(sessionId: string, language?: string): Promise<any> {
   // 1. Check in-memory cache first (fast path)
   const cached = sandboxes.get(sessionId);
   if (cached) {
@@ -328,7 +394,7 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
       // Create new sandbox with persistent volume
       // Even if old sandbox expired, files persist in the volume
       console.log(`[Modal] Creating NEW sandbox for session ${sessionId} (volume: ${getVolumeName(sessionId)})`);
-      await createSandbox(sessionId);
+      await createSandbox(sessionId, language);
       const newSandbox = sandboxes.get(sessionId)?.sandbox;
 
       if (newSandbox) {
@@ -380,7 +446,7 @@ export async function runCommand(
     console.log(`[Modal] Running command for session ${sessionId}: ${command.substring(0, 100)}...`);
     const sandbox = await getOrCreateSandbox(sessionId);
     const fullCmd = `cd ${workingDir} 2>/dev/null || mkdir -p ${workingDir} && cd ${workingDir} && ${command}`;
-    const proc = await exec(sandbox, ["bash", "-c", fullCmd]);
+    const proc = await runSandboxCommand(sandbox, ["bash", "-c", fullCmd]);
 
     const stdout = await proc.stdout.readText();
     const stderr = await proc.stderr.readText();
@@ -424,7 +490,7 @@ export async function* runCommandStreaming(
     console.log(`[Modal] Running streaming command for session ${sessionId}: ${command.substring(0, 100)}...`);
     const sandbox = await getOrCreateSandbox(sessionId);
     const fullCmd = `cd ${workingDir} 2>/dev/null || mkdir -p ${workingDir} && cd ${workingDir} && ${command}`;
-    const proc = await exec(sandbox, ["bash", "-c", fullCmd]);
+    const proc = await runSandboxCommand(sandbox, ["bash", "-c", fullCmd]);
 
     // Read stdout and stderr concurrently using async iteration
     // Modal SDK should support streaming via async iterators
@@ -700,6 +766,22 @@ export async function readFile(
 export async function listFiles(
   sessionId: string,
   directory = "/workspace"
+): Promise<FileNode[]> {
+  // Add timeout to prevent hanging
+  const LIST_TIMEOUT_MS = 15000;
+
+  const timeoutPromise = new Promise<FileNode[]>((_, reject) => {
+    setTimeout(() => reject(new Error(`listFiles timed out after ${LIST_TIMEOUT_MS}ms`)), LIST_TIMEOUT_MS);
+  });
+
+  const listPromise = listFilesInternal(sessionId, directory);
+
+  return Promise.race([listPromise, timeoutPromise]);
+}
+
+async function listFilesInternal(
+  sessionId: string,
+  directory: string
 ): Promise<FileNode[]> {
   // Normalize and validate directory is within workspace
   const normalizedDir = directory.replace(/\/+/g, '/').replace(/\/$/, '') || '/workspace';
@@ -1052,9 +1134,9 @@ export const getSandbox = (sessionId: string) => sandboxes.get(sessionId)?.sandb
  * Create or get volume for a session (uses getOrCreateSandbox with lock)
  * IMPORTANT: Always goes through getOrCreateSandbox to prevent duplicate sandboxes
  */
-export const createVolume = async (sessionId: string) => {
+export const createVolume = async (sessionId: string, language?: string) => {
   // Use getOrCreateSandbox which has the Redis lock - this prevents race conditions
-  await getOrCreateSandbox(sessionId);
+  await getOrCreateSandbox(sessionId, language);
   const cached = sandboxes.get(sessionId);
   return { id: cached?.sandboxId || sessionId };
 };
