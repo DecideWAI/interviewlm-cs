@@ -1045,8 +1045,49 @@ export default function InterviewPage() {
     }
   };
 
-  // Handle file creation from FileTree
-  const handleFileCreate = async (fileName: string, type: "file" | "folder") => {
+  // Helper to add a file/folder to the nested file tree
+  const addToFileTree = (
+    files: FileNode[],
+    newItem: FileNode,
+    parentPath: string | null
+  ): FileNode[] => {
+    // If no parent (root level), add to root
+    if (!parentPath || parentPath === "/workspace") {
+      return [...files, newItem];
+    }
+
+    // Find parent folder and add to its children
+    return files.map((file) => {
+      if (file.path === parentPath && file.type === "folder") {
+        return {
+          ...file,
+          children: [...(file.children || []), newItem],
+        };
+      }
+      if (file.children) {
+        return {
+          ...file,
+          children: addToFileTree(file.children, newItem, parentPath),
+        };
+      }
+      return file;
+    });
+  };
+
+  // Helper to remove a file/folder from the nested file tree
+  const removeFromFileTree = (files: FileNode[], path: string): FileNode[] => {
+    return files
+      .filter((file) => file.path !== path)
+      .map((file) => {
+        if (file.children) {
+          return { ...file, children: removeFromFileTree(file.children, path) };
+        }
+        return file;
+      });
+  };
+
+  // Handle file creation from FileTree (optimistic update)
+  const handleFileCreate = (fileName: string, type: "file" | "folder") => {
     if (!sessionData) return;
 
     // Normalize the path
@@ -1054,37 +1095,68 @@ export default function InterviewPage() {
       ? fileName
       : `/workspace/${fileName}`;
 
-    try {
-      // Create empty file via API
-      const response = await fetch(`/api/interview/${candidateId}/files`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          path: fullPath,
-          content: "",
-          language: getLanguageFromFileName(fileName),
-        }),
-      });
+    // Extract parent path and file name
+    const pathParts = fullPath.split("/");
+    const name = pathParts.pop() || fileName;
+    const parentPath = pathParts.join("/") || null;
 
-      if (response.ok) {
-        // Refresh file list to show new file
-        await refreshFiles();
-        toast.success("File created", {
-          description: `Created ${fileName}`,
-          duration: 2000,
+    // Create optimistic file node
+    const optimisticNode: FileNode = {
+      id: `optimistic-${Date.now()}`,
+      name,
+      type: type === "folder" ? "folder" : "file",
+      path: fullPath,
+      children: type === "folder" ? [] : undefined,
+    };
+
+    // Optimistically update UI immediately
+    setSessionData((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        files: addToFileTree(prev.files, optimisticNode, parentPath),
+      };
+    });
+
+    // Show immediate feedback
+    toast.success(type === "folder" ? "Folder created" : "File created", {
+      description: `Created ${name}`,
+      duration: 2000,
+    });
+
+    // Create file/folder in background (don't await)
+    fetch(`/api/interview/${candidateId}/files`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: fullPath,
+        content: "",
+        language: type === "file" ? getLanguageFromFileName(fileName) : undefined,
+        type,
+      }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error?.message || error.error || "Failed to create");
+        }
+        // Optionally refresh to get server-assigned IDs (background, low priority)
+        // refreshFiles(); // Uncomment if you need server IDs
+      })
+      .catch((err) => {
+        console.error(`Failed to create ${type}:`, err);
+        // Revert optimistic update on failure
+        setSessionData((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            files: removeFromFileTree(prev.files, fullPath),
+          };
         });
-      } else {
-        const error = await response.json();
-        toast.error("Failed to create file", {
-          description: error.error?.message || "Unknown error",
+        toast.error(`Failed to create ${type}`, {
+          description: err instanceof Error ? err.message : "Unknown error",
         });
-      }
-    } catch (err) {
-      console.error("Failed to create file:", err);
-      toast.error("Failed to create file", {
-        description: err instanceof Error ? err.message : "Unknown error",
       });
-    }
   };
 
   // Helper to determine language from file name
@@ -1101,52 +1173,75 @@ export default function InterviewPage() {
     return languageMap[ext || ""] || "text";
   };
 
-  // Handle file deletion from FileTree
-  const handleFileDelete = async (path: string) => {
+  // Handle file deletion from FileTree (optimistic update)
+  const handleFileDelete = (path: string) => {
     if (!sessionData) return;
 
-    try {
-      const response = await fetch(`/api/interview/${candidateId}/files`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path }),
-      });
+    const fileName = path.split("/").pop() || path;
 
-      if (response.ok) {
-        // Refresh file list to reflect deletion
-        await refreshFiles();
-        toast.success("File deleted", {
-          description: `Deleted ${path.split("/").pop()}`,
-          duration: 2000,
-        });
+    // Store current state for potential rollback
+    const previousFiles = sessionData.files;
+    const previousTabs = openTabs;
+    const previousSelectedFile = selectedFile;
+    const previousCode = code;
 
-        // Remove the tab for the deleted file
-        const newTabs = openTabs.filter(tab => tab.path !== path);
-        setOpenTabs(newTabs);
+    // Optimistically remove from UI immediately
+    setSessionData((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        files: removeFromFileTree(prev.files, path),
+      };
+    });
 
-        // If the deleted file was selected, switch to another tab or clear
-        if (selectedFile?.path === path) {
-          if (newTabs.length > 0) {
-            const lastTab = newTabs[newTabs.length - 1];
-            setSelectedFile({ id: lastTab.id, name: lastTab.name, path: lastTab.path, type: "file" });
-            setCode(lastTab.content);
-          } else {
-            setSelectedFile(null);
-            setCode("");
-          }
-        }
+    // Remove the tab for the deleted file
+    const newTabs = openTabs.filter(tab => tab.path !== path);
+    setOpenTabs(newTabs);
+
+    // If the deleted file was selected, switch to another tab or clear
+    if (selectedFile?.path === path) {
+      if (newTabs.length > 0) {
+        const lastTab = newTabs[newTabs.length - 1];
+        setSelectedFile({ id: lastTab.id, name: lastTab.name, path: lastTab.path, type: "file" });
+        setCode(lastTab.content);
       } else {
-        const error = await response.json();
-        toast.error("Failed to delete file", {
-          description: error.error || "Unknown error",
-        });
+        setSelectedFile(null);
+        setCode("");
       }
-    } catch (err) {
-      console.error("Failed to delete file:", err);
-      toast.error("Failed to delete file", {
-        description: err instanceof Error ? err.message : "Unknown error",
-      });
     }
+
+    // Show immediate feedback
+    toast.success("Deleted", {
+      description: fileName,
+      duration: 2000,
+    });
+
+    // Delete in background (don't await)
+    fetch(`/api/interview/${candidateId}/files`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.error || "Failed to delete");
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to delete file:", err);
+        // Revert optimistic update on failure
+        setSessionData((prev) => {
+          if (!prev) return null;
+          return { ...prev, files: previousFiles };
+        });
+        setOpenTabs(previousTabs);
+        setSelectedFile(previousSelectedFile);
+        setCode(previousCode);
+        toast.error("Failed to delete", {
+          description: err instanceof Error ? err.message : "Unknown error",
+        });
+      });
   };
 
   return (

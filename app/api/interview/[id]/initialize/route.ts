@@ -405,13 +405,10 @@ module.exports = longestPalindrome;`,
       workspaceDir: "/workspace",
       status: "ready",
     },
-    files: files.map((file, index) => ({
-      id: `file-${index}`,
-      name: file.name,
-      type: file.type,
-      path: file.path,
-      language: getLanguageFromExtension(file.name),
-    })),
+    files: (() => {
+      fileIdCounter = 0; // Reset counter for each request
+      return files.map(transformFileNode);
+    })(),
     timeLimit,
     timeRemaining,
     startedAt: startedAt.toISOString(),
@@ -433,6 +430,34 @@ function getLanguageFromExtension(filename: string): string {
     txt: "text",
   };
   return languageMap[ext || ""] || "text";
+}
+
+/**
+ * Helper to transform Modal FileNode to frontend FileNode format
+ * Recursively transforms children for directories
+ */
+let fileIdCounter = 0;
+function transformFileNode(file: { name: string; path: string; type: string; children?: any[] }): {
+  id: string;
+  name: string;
+  type: "file" | "folder";
+  path: string;
+  language: string;
+  children?: any[];
+} {
+  const transformed: any = {
+    id: `file-${fileIdCounter++}`,
+    name: file.name,
+    type: file.type === "directory" ? "folder" : "file",
+    path: file.path,
+    language: getLanguageFromExtension(file.name),
+  };
+
+  if (file.children && file.children.length > 0) {
+    transformed.children = file.children.map(transformFileNode);
+  }
+
+  return transformed;
 }
 
 /**

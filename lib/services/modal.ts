@@ -82,6 +82,7 @@ export interface FileNode {
   path: string;
   type: "file" | "directory";
   size?: number;
+  children?: FileNode[];
 }
 
 // ============================================================================
@@ -770,10 +771,55 @@ export async function listFiles(
 }
 
 /**
- * Get file system tree (alias for listFiles)
+ * Get file system tree recursively
+ * Builds a nested tree structure with children for directories
  */
 export async function getFileSystem(sessionId: string, rootPath = "/workspace"): Promise<FileNode[]> {
-  return listFiles(sessionId, rootPath);
+  const files = await listFiles(sessionId, rootPath);
+
+  // Recursively get children for directories
+  const filesWithChildren = await Promise.all(
+    files.map(async (file) => {
+      if (file.type === "directory") {
+        const children = await getFileSystem(sessionId, file.path);
+        return { ...file, children };
+      }
+      return file;
+    })
+  );
+
+  return filesWithChildren;
+}
+
+/**
+ * Create a directory in the sandbox
+ */
+export async function createDirectory(
+  sessionId: string,
+  dirPath: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    console.log(`[Modal] Creating directory ${dirPath} for session ${sessionId}`);
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const absPath = dirPath.startsWith("/") ? dirPath : `/workspace/${dirPath}`;
+
+    // Use mkdir -p to create directory (and any parent directories)
+    const proc = await sandbox["exec"](["mkdir", "-p", absPath]);
+    const exitCode = await proc.exitCode;
+
+    if (exitCode && exitCode !== 0) {
+      const stderr = await proc.stderr.readText();
+      console.error(`[Modal] Failed to create directory: ${stderr}`);
+      return { success: false, error: stderr };
+    }
+
+    console.log(`[Modal] Successfully created directory ${dirPath}`);
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Modal] Failed to create directory ${dirPath}:`, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }
 
 /**
