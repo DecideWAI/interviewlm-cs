@@ -6,11 +6,6 @@
 import { modalService as modal } from "@/lib/services";
 import type { Anthropic } from "@anthropic-ai/sdk";
 
-export interface WriteFileToolInput {
-  path: string;
-  content: string;
-}
-
 export interface WriteFileToolOutput {
   success: boolean;
   path: string;
@@ -24,17 +19,22 @@ export interface WriteFileToolOutput {
 export const writeFileTool: Anthropic.Tool = {
   name: "Write",
   description:
-    "Write or overwrite a file in the candidate's workspace. Use this to create new files, fix bugs, implement features, or update existing code. The entire file content must be provided.",
+    "Create a new file or completely overwrite an existing file. Use this to:\n" +
+    "- Create new source files (solution.js, utils.ts, etc.)\n" +
+    "- Rewrite a file when making extensive changes\n" +
+    "- Create configuration files (package.json, tsconfig.json)\n\n" +
+    "For small, targeted changes to existing files, prefer the Edit tool instead.\n" +
+    "The entire file content must be provided - this tool does not append.",
   input_schema: {
     type: "object",
     properties: {
       file_path: {
         type: "string",
-        description: "Path to the file to write (e.g., 'solution.js', 'src/utils.ts')",
+        description: "Path where the file should be written (e.g., 'solution.js', 'src/helpers.ts'). Paths are relative to /workspace.",
       },
       content: {
         type: "string",
-        description: "Complete content to write to the file",
+        description: "The complete file content to write. Must include the entire file - existing content will be replaced.",
       },
     },
     required: ["file_path", "content"],
@@ -43,37 +43,45 @@ export const writeFileTool: Anthropic.Tool = {
 
 /**
  * Execute the Write tool
- * Supports both new signature (individual params) and legacy signature (input object)
  */
 export async function executeWriteFile(
   sessionId: string,
-  filePathOrInput: string | WriteFileToolInput,
-  content?: string
+  filePath: string,
+  content: string
 ): Promise<WriteFileToolOutput> {
-  // Handle both new and legacy signatures
-  const rawPath = typeof filePathOrInput === 'string'
-    ? filePathOrInput
-    : filePathOrInput.path;
-  const fileContent = typeof filePathOrInput === 'string'
-    ? content!
-    : filePathOrInput.content;
+  // Validate inputs
+  if (!filePath) {
+    return {
+      success: false,
+      path: '',
+      error: "Missing required parameter: file_path",
+    };
+  }
+
+  if (content === undefined || content === null) {
+    return {
+      success: false,
+      path: filePath,
+      error: "Missing required parameter: content",
+    };
+  }
 
   // Normalize path to always be absolute (matching file tree paths)
-  const filePath = rawPath.startsWith("/") ? rawPath : `/workspace/${rawPath}`;
+  const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
 
   try {
-    await modal.writeFile(sessionId, filePath, fileContent);
+    await modal.writeFile(sessionId, absPath, content);
 
     return {
       success: true,
-      path: filePath,  // Return normalized absolute path
-      bytesWritten: fileContent.length,
+      path: absPath,
+      bytesWritten: content.length,
     };
   } catch (error) {
     return {
       success: false,
       error: error instanceof Error ? error.message : "Failed to write file",
-      path: filePath,
+      path: absPath,
     };
   }
 }

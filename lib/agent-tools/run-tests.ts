@@ -32,16 +32,20 @@ export interface RunTestsToolOutput {
  * Tool definition for Claude API
  */
 export const runTestsTool: Anthropic.Tool = {
-  name: "run_tests",
+  name: "RunTests",
   description:
-    "Execute the test suite for the current coding challenge. Returns pass/fail status and detailed results for each test case. Use this to validate your code changes and ensure all tests pass.",
+    "Execute the test suite for the current coding challenge. Use this to:\n" +
+    "- Validate code changes against test cases\n" +
+    "- Check if the solution passes all requirements\n" +
+    "- Get detailed feedback on failing tests\n\n" +
+    "Returns pass/fail status, test count, and detailed results for each test.\n" +
+    "Run tests after making code changes to verify correctness.",
   input_schema: {
     type: "object",
     properties: {
       fileName: {
         type: "string",
-        description:
-          "Optional: specific file to test (default: solution file for the current language)",
+        description: "File to test. Default: 'solution.js' or 'solution.py' based on language. Example: 'utils.js'",
       },
     },
     required: [],

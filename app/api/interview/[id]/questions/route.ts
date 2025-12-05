@@ -24,9 +24,12 @@ const generateQuestionSchema = z.object({
     .optional(),
 });
 
-// Initialize Anthropic client
+// Initialize Anthropic client with caching beta
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || "",
+  defaultHeaders: {
+    "anthropic-beta": "prompt-caching-2024-07-31",
+  },
 });
 
 /**

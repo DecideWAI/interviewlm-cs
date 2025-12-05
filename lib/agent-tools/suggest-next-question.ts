@@ -21,23 +21,24 @@ export interface SuggestNextQuestionToolOutput {
  * Tool definition for Claude API
  */
 export const suggestNextQuestionTool: Anthropic.Tool = {
-  name: "suggest_next_question",
+  name: "SuggestNextQuestion",
   description:
-    "Suggest advancing to the next question when the candidate has successfully " +
-    "completed the current one. Use this when all tests pass and the solution is " +
-    "satisfactory. This will prompt the user to move to the next challenge.",
+    "Suggest advancing to the next coding challenge. Use this when:\n" +
+    "- All tests are passing\n" +
+    "- The solution meets requirements\n" +
+    "- The candidate is ready for a new challenge\n\n" +
+    "This prompts the UI to show a 'Next Question' option to the candidate.\n" +
+    "Only use after confirming tests pass - don't suggest advancement prematurely.",
   input_schema: {
     type: "object",
     properties: {
       reason: {
         type: "string",
-        description:
-          "Brief explanation of why they should advance (e.g., 'All tests passing with optimal time complexity')",
+        description: "Why the candidate should advance. Example: 'All tests passing with clean implementation'",
       },
       performance: {
         type: "string",
-        description:
-          "Short performance feedback (e.g., 'Excellent solution - completed in 12 minutes')",
+        description: "Brief performance feedback. Example: 'Great solution - efficient O(n) approach'",
       },
     },
     required: ["reason", "performance"],

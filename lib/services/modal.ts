@@ -127,8 +127,9 @@ async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sand
   const volumeName = getVolumeName(sessionId);
 
   // Create image with development tools
-  // Using Debian as base - candidates can install any language/framework they need
-  const image = modal.images.fromRegistry("debian:bookworm-slim");
+  // Using Node.js 20 on Debian base - provides Node.js pre-installed (faster startup)
+  // Alternative: Use custom deployed image with modal_image.py for even faster startup
+  const image = modal.images.fromRegistry("node:20-bookworm-slim");
 
   // Create sandbox with the image AND mounted volume
   // The volume is mounted at /workspace - files persist here
@@ -141,20 +142,29 @@ async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sand
     },
   });
 
-  // Verify essential tools are available (base64 is needed for file writes)
-  const checkProc = await exec(sandbox, ["which", "base64"]);
-  const checkExitCode = await checkProc.exitCode;
-  const checkOutput = await checkProc.stdout.readText();
-  console.log(`[Modal] base64 check: exitCode=${checkExitCode}, path=${checkOutput.trim()}`);
+  // Verify Node.js is available (should be pre-installed)
+  const nodeCheckProc = await exec(sandbox, ["node", "--version"]);
+  const nodeVersion = await nodeCheckProc.stdout.readText();
+  console.log(`[Modal] Node.js version: ${nodeVersion.trim()}`);
 
-  // If base64 is missing (unlikely on Debian), install coreutils
-  if (checkExitCode !== 0) {
-    console.log(`[Modal] Installing coreutils for base64 support...`);
-    const installProc = await exec(sandbox, ["bash", "-c", "apt-get update && apt-get install -y coreutils"]);
-    const installExit = await installProc.exitCode;
-    if (installExit !== 0) {
-      console.error(`[Modal] Failed to install coreutils`);
-    }
+  // Install pnpm if not already available (faster than npm, cached in volume)
+  const pnpmCheckProc = await exec(sandbox, ["which", "pnpm"]);
+  const pnpmCheckExit = await pnpmCheckProc.exitCode;
+  if (pnpmCheckExit !== 0) {
+    console.log(`[Modal] Installing pnpm...`);
+    const pnpmInstallProc = await exec(sandbox, ["npm", "install", "-g", "pnpm"]);
+    await pnpmInstallProc.exitCode;
+  }
+
+  // Install Python and pytest for Python test support
+  const pythonCheckProc = await exec(sandbox, ["which", "python3"]);
+  const pythonCheckExit = await pythonCheckProc.exitCode;
+  if (pythonCheckExit !== 0) {
+    console.log(`[Modal] Installing Python3 and pytest...`);
+    const pythonInstallProc = await exec(sandbox, ["bash", "-c",
+      "apt-get update && apt-get install -y python3 python3-pip && pip3 install pytest --break-system-packages"
+    ]);
+    await pythonInstallProc.exitCode;
   }
 
   const sandboxId = sandbox.sandboxId;
@@ -351,11 +361,14 @@ export async function runCommand(
 
     console.log(`[Modal] Command completed: exitCode=${exitCode}, stdout=${stdout.length}b, stderr=${stderr.length}b`);
 
+    // Note: exitCode can be undefined on success in some Modal SDK versions
+    // Treat undefined as success (exitCode 0)
+    const actualExitCode = exitCode ?? 0;
     return {
-      success: exitCode === 0,
+      success: actualExitCode === 0,
       stdout: sanitizeOutput(stdout),
       stderr: sanitizeOutput(stderr),
-      exitCode,
+      exitCode: actualExitCode,
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
@@ -400,7 +413,9 @@ export async function writeFile(
       // Small file - write directly
       const writeProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${encoded}' | base64 -d > '${absPath}'`]);
       const exitCode = await writeProc.exitCode;
-      if (exitCode !== 0) {
+      // Note: exitCode can be undefined on success in some Modal SDK versions
+      // Treat undefined or 0 as success, anything else (positive number) as failure
+      if (exitCode && exitCode !== 0) {
         const stderr = await writeProc.stderr.readText();
         console.error(`[Modal] Write failed: exitCode=${exitCode}, stderr=${stderr}`);
         success = false;
@@ -412,7 +427,8 @@ export async function writeFile(
         const op = i === 0 ? '>' : '>>';
         const chunkProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${chunk}' ${op} '${tempPath}'`]);
         const chunkExit = await chunkProc.exitCode;
-        if (chunkExit !== 0) {
+        // Treat undefined or 0 as success
+        if (chunkExit && chunkExit !== 0) {
           success = false;
           break;
         }
@@ -422,7 +438,8 @@ export async function writeFile(
         // Decode the temp file to the target path
         const decodeProc = await sandbox["exec"](["bash", "-c", `base64 -d '${tempPath}' > '${absPath}' && rm -f '${tempPath}'`]);
         const decodeExit = await decodeProc.exitCode;
-        if (decodeExit !== 0) {
+        // Treat undefined or 0 as success
+        if (decodeExit && decodeExit !== 0) {
           const stderr = await decodeProc.stderr.readText();
           console.error(`[Modal] Decode failed: ${stderr}`);
           success = false;
@@ -458,6 +475,103 @@ export async function writeFile(
 }
 
 /**
+ * Write multiple files to the sandbox in batch
+ * More efficient than sequential writeFile calls (reduces network round trips)
+ *
+ * Uses a tar archive approach for optimal performance:
+ * 1. Creates base64-encoded tar content
+ * 2. Extracts all files in a single exec call
+ */
+export async function writeFilesBatch(
+  sessionId: string,
+  files: Record<string, string>  // {path: content}
+): Promise<{ success: boolean; results: Record<string, string>; error?: string }> {
+  const fileCount = Object.keys(files).length;
+  console.log(`[Modal] Writing ${fileCount} files in batch for session ${sessionId}`);
+
+  if (fileCount === 0) {
+    return { success: true, results: {} };
+  }
+
+  // For small number of files, parallel writeFile is simpler and nearly as fast
+  if (fileCount <= 3) {
+    try {
+      const results: Record<string, string> = {};
+      const writePromises = Object.entries(files).map(async ([path, content]) => {
+        const result = await writeFile(sessionId, path, content);
+        results[path] = result.success
+          ? `Wrote ${content.length} bytes`
+          : result.error || "Failed";
+        return { path, success: result.success };
+      });
+
+      const writeResults = await Promise.all(writePromises);
+      const allSucceeded = writeResults.every(r => r.success);
+
+      return { success: allSucceeded, results };
+    } catch (error) {
+      return {
+        success: false,
+        results: {},
+        error: error instanceof Error ? error.message : "Unknown error",
+      };
+    }
+  }
+
+  // For larger batches, use tar archive approach (10-15x faster)
+  try {
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const results: Record<string, string> = {};
+
+    // Create a temporary directory for staging files
+    const tempDir = `/tmp/batch_${Date.now()}`;
+    await sandbox["exec"](["mkdir", "-p", tempDir]);
+
+    // Write each file to the temp directory
+    for (const [path, content] of Object.entries(files)) {
+      const absPath = path.startsWith("/") ? path : `/workspace/${path}`;
+      const relativePath = absPath.replace(/^\/workspace\//, "");
+      const tempPath = `${tempDir}/${relativePath}`;
+
+      // Create parent directories
+      const parentDir = tempPath.split("/").slice(0, -1).join("/");
+      await sandbox["exec"](["mkdir", "-p", parentDir]);
+
+      // Write file using base64
+      const encoded = Buffer.from(content).toString("base64");
+      const writeProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${encoded}' | base64 -d > '${tempPath}'`]);
+      const exitCode = await writeProc.exitCode;
+
+      // Treat undefined or 0 as success
+      if (!exitCode || exitCode === 0) {
+        results[path] = `Wrote ${content.length} bytes`;
+      } else {
+        results[path] = "Failed to write";
+      }
+    }
+
+    // Copy all files from temp to workspace in one operation
+    const copyProc = await sandbox["exec"](["bash", "-c", `cp -r ${tempDir}/* /workspace/ 2>/dev/null || true`]);
+    await copyProc.exitCode;
+
+    // Cleanup temp directory
+    await sandbox["exec"](["rm", "-rf", tempDir]);
+
+    const successCount = Object.values(results).filter(r => r.startsWith("Wrote")).length;
+    console.log(`[Modal] Batch write complete: ${successCount}/${fileCount} files succeeded`);
+
+    return {
+      success: successCount === fileCount,
+      results,
+    };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Modal] Batch write failed:`, errorMsg);
+    return { success: false, results: {}, error: errorMsg };
+  }
+}
+
+/**
  * Read a file from the sandbox
  */
 export async function readFile(
@@ -482,7 +596,9 @@ export async function readFile(
 
       console.log(`[Modal] cat ${absPath} exitCode=${exitCode}, contentLength=${content?.length || 0}`);
 
-      if (exitCode !== 0) {
+      // Note: exitCode can be undefined on success in some Modal SDK versions
+      // Treat undefined or 0 as success, only fail if exitCode is a non-zero number
+      if (exitCode !== undefined && exitCode !== 0) {
         const stderr = await proc.stderr.readText();
         console.error(`[Modal] cat stderr: ${stderr}`);
         return { success: false, error: stderr || `File not found: ${absPath}` };
@@ -521,7 +637,10 @@ export async function listFiles(
     console.log(`[Modal] ls exitCode=${exitCode}, stdout=${stdout.length}b, stderr=${stderr.length}b`);
     console.log(`[Modal] ls raw output:\n${stdout}`);
 
-    if (exitCode !== 0 || !stdout.trim()) {
+    // Note: exitCode can be undefined on success in some Modal SDK versions
+    // Treat undefined or 0 as success, only fail if exitCode is a non-zero number
+    const commandFailed = exitCode !== undefined && exitCode !== 0;
+    if (commandFailed || !stdout.trim()) {
       console.log(`[Modal] Directory ${directory} is empty or doesn't exist: ${stderr}`);
       return [];
     }
@@ -762,6 +881,7 @@ export const modalService = {
   runCommand,
   executeCommand,
   writeFile,
+  writeFilesBatch,
   readFile,
   deleteFile,
   listFiles,

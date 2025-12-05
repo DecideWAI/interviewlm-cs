@@ -21,21 +21,26 @@ export interface EditFileToolOutput {
 export const editFileTool: Anthropic.Tool = {
   name: "Edit",
   description:
-    "Make surgical edits to a file by replacing a specific string with new content. More efficient than rewriting the entire file for small changes. The old_string must match exactly (including whitespace and indentation).",
+    "Make targeted edits to a file by replacing specific text. Use this to:\n" +
+    "- Fix bugs in existing code\n" +
+    "- Update function implementations\n" +
+    "- Modify specific sections without rewriting the whole file\n\n" +
+    "IMPORTANT: The old_string must match EXACTLY, including all whitespace and indentation.\n" +
+    "Read the file first to see the exact content. Only the first occurrence is replaced.",
   input_schema: {
     type: "object",
     properties: {
       file_path: {
         type: "string",
-        description: "Path to the file to edit (e.g., 'solution.js', 'src/utils.ts')",
+        description: "Path to the file to edit (e.g., 'solution.js'). Paths are relative to /workspace.",
       },
       old_string: {
         type: "string",
-        description: "The exact string to find and replace (must match exactly including whitespace)",
+        description: "The exact text to find and replace. Must match character-for-character including whitespace, newlines, and indentation.",
       },
       new_string: {
         type: "string",
-        description: "The new string to replace the old_string with",
+        description: "The replacement text. Can be empty string to delete the old_string.",
       },
     },
     required: ["file_path", "old_string", "new_string"],

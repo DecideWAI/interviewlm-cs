@@ -20,17 +20,21 @@ export interface GlobToolOutput {
 export const globTool: Anthropic.Tool = {
   name: "Glob",
   description:
-    "Find files matching a glob pattern in the workspace. Useful for discovering project structure, finding all files of a certain type, or locating specific files. Patterns like '**/*.js' find all JavaScript files.",
+    "Find files matching a glob pattern. Use this to:\n" +
+    "- Discover project structure and find files\n" +
+    "- Find all files of a type: `**/*.js`, `**/*.ts`\n" +
+    "- Search in directories: `src/**/*.ts`, `tests/*.test.js`\n\n" +
+    "Returns a list of matching file paths. Use before Read to find files to examine.",
   input_schema: {
     type: "object",
     properties: {
       pattern: {
         type: "string",
-        description: "Glob pattern to match files (e.g., '**/*.js', 'src/**/*.ts', '*.json')",
+        description: "Glob pattern. Use ** for recursive, * for wildcard. Examples: '**/*.js', 'src/**/*.ts', '*.json'",
       },
       path: {
         type: "string",
-        description: "Directory to search in, relative to workspace root. Defaults to '.'",
+        description: "Directory to search in (default: workspace root). Example: 'src' to search only in src/",
       },
     },
     required: ["pattern"],

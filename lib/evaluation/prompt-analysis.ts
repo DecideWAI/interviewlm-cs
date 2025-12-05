@@ -59,6 +59,9 @@ export async function analyzePrompts(
 
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
+    defaultHeaders: {
+      "anthropic-beta": "prompt-caching-2024-07-31",
+    },
   });
 
   const evidence: PromptEvidence[] = [];
@@ -313,6 +316,9 @@ export async function analyzeSinglePrompt(
 }> {
   const client = new Anthropic({
     apiKey: process.env.ANTHROPIC_API_KEY,
+    defaultHeaders: {
+      "anthropic-beta": "prompt-caching-2024-07-31",
+    },
   });
 
   try {

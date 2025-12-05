@@ -21,13 +21,18 @@ export interface BashToolOutput {
 export const bashTool: Anthropic.Tool = {
   name: "Bash",
   description:
-    "Execute a bash command in the candidate's sandbox environment. Use for running tests, installing dependencies, checking file structure, compiling code, etc. Commands are executed in the /workspace directory.",
+    "Execute a shell command in the sandbox environment. Use this to:\n" +
+    "- Run tests: `npm test`, `pytest`, `node test.js`\n" +
+    "- Install packages: `npm install lodash`, `pip install requests`\n" +
+    "- Run code: `node solution.js`, `python solution.py`\n" +
+    "- Check files: `ls -la`, `cat package.json`\n\n" +
+    "Commands run in /workspace directory. Avoid destructive commands like `rm -rf`.",
   input_schema: {
     type: "object",
     properties: {
       command: {
         type: "string",
-        description: 'The bash command to execute (e.g., "npm test", "ls -la", "node solution.js")',
+        description: "The shell command to execute. Examples: 'npm test', 'node solution.js', 'ls -la'",
       },
     },
     required: ["command"],
