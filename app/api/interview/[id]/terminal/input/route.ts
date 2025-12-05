@@ -152,20 +152,14 @@ export async function POST(
             },
           });
 
-          if (!candidate || !candidate.volumeId) {
-            queueTerminalOutput(id, "\x1b[31mError: Sandbox not initialized\x1b[0m\r\n");
+          if (!candidate) {
+            queueTerminalOutput(id, "\x1b[31mError: Candidate not found\x1b[0m\r\n");
             queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
             return NextResponse.json({ success: true });
           }
 
-          // Check if sandbox exists, create if needed
-          const sandboxes = await modal.listActiveSandboxes();
-          let sandbox = sandboxes.find(s => s.sessionId === id);
-
-          if (!sandbox) {
-            // Create sandbox for this session
-            sandbox = await modal.createSandbox(id);
-          }
+          // Note: runCommand() handles sandbox creation via getOrCreateSandbox()
+          // No need to manually check/create sandbox here
 
           // Record terminal input event
           if (candidate.sessionRecording) {
@@ -173,45 +167,43 @@ export async function POST(
               type: "terminal_input",
               data: {
                 command,
-                workingDirectory: "/",
+                workingDirectory: "/workspace",
                 timestamp: new Date().toISOString(),
               },
             });
           }
 
-          // Execute command in Modal sandbox
-          const result = await modal.runCommand(id, command, "/");
+          // Execute command in Modal sandbox (from /workspace directory)
+          const result = await modal.runCommand(id, command, "/workspace");
 
-          // Queue stdout output
+          // Build output string (convert \n to \r\n for terminal display)
+          let output = "";
+
           if (result.stdout) {
-            queueTerminalOutput(id, result.stdout);
+            output += result.stdout.replace(/\n/g, '\r\n');
+            if (!output.endsWith('\r\n')) {
+              output += '\r\n';
+            }
           }
 
-          // Queue stderr output (in red)
           if (result.stderr) {
-            queueTerminalOutput(id, `\x1b[31m${result.stderr}\x1b[0m`);
+            const formattedError = result.stderr.replace(/\n/g, '\r\n');
+            output += `\x1b[31m${formattedError}\x1b[0m`;
+            if (!formattedError.endsWith('\r\n')) {
+              output += '\r\n';
+            }
           }
 
-          // Show exit code if non-zero
           if (result.exitCode !== 0) {
-            queueTerminalOutput(
-              id,
-              `\x1b[31m[Exit code: ${result.exitCode}]\x1b[0m\r\n`
-            );
+            output += `\x1b[31m[Exit code: ${result.exitCode}]\x1b[0m\r\n`;
           }
 
           // Record terminal output event
           if (candidate.sessionRecording) {
-            const fullOutput = [
-              result.stdout || "",
-              result.stderr ? `\x1b[31m${result.stderr}\x1b[0m` : "",
-              result.exitCode !== 0 ? `\x1b[31m[Exit code: ${result.exitCode}]\x1b[0m\r\n` : "",
-            ].filter(Boolean).join("");
-
             await sessions.recordEvent(candidate.sessionRecording.id, {
               type: "terminal_output",
               data: {
-                output: fullOutput,
+                output,
                 stdout: result.stdout || "",
                 stderr: result.stderr || "",
                 exitCode: result.exitCode,
@@ -220,15 +212,15 @@ export async function POST(
             });
           }
 
-          // Queue prompt
-          queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
+          // Add prompt to output
+          output += "\x1b[1;32m$\x1b[0m ";
+
+          // Return output directly in response (avoids serverless state isolation issue)
+          return NextResponse.json({ success: true, output });
         } catch (error) {
           console.error("Terminal command execution error:", error);
-          queueTerminalOutput(
-            id,
-            `\x1b[31mError: ${error instanceof Error ? error.message : "Command failed"}\x1b[0m\r\n`
-          );
-          queueTerminalOutput(id, "\x1b[1;32m$\x1b[0m ");
+          const errorOutput = `\x1b[31mError: ${error instanceof Error ? error.message : "Command failed"}\x1b[0m\r\n\x1b[1;32m$\x1b[0m `;
+          return NextResponse.json({ success: true, output: errorOutput });
         }
       }
 

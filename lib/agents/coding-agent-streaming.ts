@@ -51,12 +51,10 @@ export class StreamingCodingAgent {
 
   constructor(config: CodingAgentConfig) {
     this.config = config;
-    this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      defaultHeaders: {
-        "anthropic-beta": "prompt-caching-2024-07-31",
-      },
-    });
+    // Initialize Anthropic client with LangSmith tracing
+    // Pass sessionId as thread ID to group all traces from the same session
+    const { getTracedAnthropicClient } = require('../observability/langsmith');
+    this.client = getTracedAnthropicClient(config.sessionId);
   }
 
   /**
@@ -407,14 +405,14 @@ export class StreamingCodingAgent {
           input.include as string | undefined
         );
       }
-      case 'list_files': {
+      case 'ListFiles': {
         const { executeListFiles } = await import('../agent-tools/list-files');
         return executeListFiles(
           this.config.sessionId,
           input.directory as string | undefined
         );
       }
-      case 'run_tests': {
+      case 'RunTests': {
         const { executeRunTests } = await import('../agent-tools/run-tests');
         return executeRunTests(
           this.config.candidateId || this.config.sessionId,
@@ -504,6 +502,11 @@ ${helpfulnessConfig.description}
 **Available Tools:**
 ${helpfulnessConfig.allowedTools.join(', ')}
 
+**CRITICAL: File Path Requirements:**
+- ALL file paths MUST start with /workspace (e.g., /workspace/src/solution.ts)
+- NEVER use relative paths like "src/file.ts" - always use absolute paths starting with /workspace
+- The workspace is your sandbox environment - all files live under /workspace/
+
 **Guidelines for Tool Use:**
 - Use tools proactively to help the candidate
 - When asked to check files, actually read them
@@ -511,6 +514,7 @@ ${helpfulnessConfig.allowedTools.join(', ')}
 - When writing code, verify it works by reading the file back
 - If a tool fails, explain the error and try an alternative approach
 - Complete multi-step tasks autonomously without stopping after each step
+- When using Write tool, ALWAYS provide both file_path (starting with /workspace) AND content parameters
 
 Be a helpful pair programming partner while maintaining assessment integrity.`;
 
@@ -551,95 +555,136 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
     return [
       {
         name: 'Read',
-        description: 'Read the contents of a file from the workspace.',
+        description:
+          'Read the contents of a file from the workspace. Use this to:\n' +
+          '- Examine existing code before making changes\n' +
+          '- Understand current implementation details\n' +
+          '- Check configuration files or dependencies\n\n' +
+          'Always read a file before editing it to understand its current state.',
         input_schema: {
           type: 'object',
           properties: {
-            file_path: { type: 'string', description: 'Absolute path to the file to read' },
-            offset: { type: 'number', description: 'Character offset to start reading from' },
-            limit: { type: 'number', description: 'Maximum number of characters to read' },
+            file_path: { type: 'string', description: "Absolute path to the file. MUST start with /workspace (e.g., '/workspace/solution.js', '/workspace/src/utils.ts')" },
+            offset: { type: 'number', description: 'Character offset to start reading from (default: 0)' },
+            limit: { type: 'number', description: 'Maximum characters to read (default: 5000)' },
           },
           required: ['file_path'],
         },
       },
       {
         name: 'Write',
-        description: 'Create or overwrite a file with new content',
+        description:
+          'Create a new file or completely overwrite an existing file. Use this to:\n' +
+          '- Create new source files (solution.js, utils.ts, etc.)\n' +
+          '- Rewrite a file when making extensive changes\n' +
+          '- Create configuration files (package.json, tsconfig.json)\n\n' +
+          'IMPORTANT: file_path MUST start with /workspace and content is REQUIRED.\n' +
+          'For small, targeted changes to existing files, prefer the Edit tool instead.',
         input_schema: {
           type: 'object',
           properties: {
-            file_path: { type: 'string', description: 'Absolute path to the file to write' },
-            content: { type: 'string', description: 'Content to write to the file' },
+            file_path: { type: 'string', description: "Absolute path to the file. MUST start with /workspace (e.g., '/workspace/solution.js')" },
+            content: { type: 'string', description: 'The complete file content to write. This parameter is REQUIRED - never omit it.' },
           },
           required: ['file_path', 'content'],
         },
       },
       {
         name: 'Edit',
-        description: 'Edit a file by replacing a specific string with new content',
+        description:
+          'Make targeted edits to a file by replacing specific text. Use this to:\n' +
+          '- Fix bugs in existing code\n' +
+          '- Update function implementations\n' +
+          '- Modify specific sections without rewriting the whole file\n\n' +
+          'IMPORTANT: File path MUST start with /workspace. The old_string must match EXACTLY, including all whitespace and indentation.',
         input_schema: {
           type: 'object',
           properties: {
-            file_path: { type: 'string', description: 'Absolute path to the file to edit' },
-            old_string: { type: 'string', description: 'Exact string to find and replace' },
-            new_string: { type: 'string', description: 'New string to replace with' },
+            file_path: { type: 'string', description: "Absolute path to the file. MUST start with /workspace (e.g., '/workspace/solution.js')" },
+            old_string: { type: 'string', description: 'The exact text to find and replace (must match character-for-character)' },
+            new_string: { type: 'string', description: 'The replacement text (can be empty to delete)' },
           },
           required: ['file_path', 'old_string', 'new_string'],
         },
       },
       {
         name: 'Bash',
-        description: 'Execute a bash command in the sandbox environment',
+        description:
+          'Execute a shell command in the sandbox environment. Use this to:\n' +
+          "- Run tests: `npm test`, `pytest`, `node test.js`\n" +
+          "- Install packages: `npm install lodash`, `pip install requests`\n" +
+          "- Run code: `node solution.js`, `python solution.py`\n\n" +
+          'Commands run in /workspace directory. Avoid destructive commands.',
         input_schema: {
           type: 'object',
           properties: {
-            command: { type: 'string', description: 'The bash command to execute' },
+            command: { type: 'string', description: "Shell command to execute (e.g., 'npm test', 'node solution.js')" },
           },
           required: ['command'],
         },
       },
       {
         name: 'Glob',
-        description: 'Find files matching a glob pattern',
+        description:
+          'Find files matching a glob pattern. Use this to:\n' +
+          "- Discover project structure: `**/*.js`, `**/*.ts`\n" +
+          "- Find specific file types: `*.json`, `*.md`\n" +
+          "- Search in directories: `src/**/*.ts`\n\n" +
+          'Use before Read to find files to examine.',
         input_schema: {
           type: 'object',
           properties: {
-            pattern: { type: 'string', description: 'Glob pattern to match files' },
-            path: { type: 'string', description: 'Directory to search in' },
+            pattern: { type: 'string', description: "Glob pattern (e.g., '**/*.js', 'src/**/*.ts')" },
+            path: { type: 'string', description: 'Directory to search in (default: workspace root)' },
           },
           required: ['pattern'],
         },
       },
       {
         name: 'Grep',
-        description: 'Search for a pattern in files',
+        description:
+          'Search file contents for a text pattern. Use this to:\n' +
+          '- Find function/variable definitions and usages\n' +
+          '- Locate TODOs, FIXMEs, or specific comments\n' +
+          '- Find import statements or dependencies\n\n' +
+          'Returns matching lines with file paths and line numbers. Supports regex.',
         input_schema: {
           type: 'object',
           properties: {
-            pattern: { type: 'string', description: 'Regex pattern to search for' },
-            path: { type: 'string', description: 'Directory or file to search in' },
-            include: { type: 'string', description: 'File pattern to include (e.g., *.ts)' },
+            pattern: { type: 'string', description: "Text or regex pattern (e.g., 'TODO', 'function solve')" },
+            path: { type: 'string', description: 'Directory or file to search in (default: workspace)' },
+            include: { type: 'string', description: "Filter by file type (e.g., '*.ts', '*.js')" },
           },
           required: ['pattern'],
         },
       },
       {
-        name: 'list_files',
-        description: 'List files in a directory',
+        name: 'ListFiles',
+        description:
+          'List contents of a directory. Use this to:\n' +
+          '- See what files exist in the workspace\n' +
+          '- Explore project structure\n' +
+          '- Find files before reading them\n\n' +
+          'Returns file names, types (file/directory), and sizes.',
         input_schema: {
           type: 'object',
           properties: {
-            directory: { type: 'string', description: 'Directory to list files from' },
+            directory: { type: 'string', description: "Directory to list (default: workspace root '.')" },
           },
         },
       },
       {
-        name: 'run_tests',
-        description: 'Run tests in the project',
+        name: 'RunTests',
+        description:
+          'Execute the test suite for the current coding challenge. Use this to:\n' +
+          '- Validate code changes against test cases\n' +
+          '- Check if the solution passes all requirements\n' +
+          '- Get detailed feedback on failing tests\n\n' +
+          'Run tests after making code changes to verify correctness.',
         input_schema: {
           type: 'object',
           properties: {
-            test_file: { type: 'string', description: 'Specific test file to run' },
+            test_file: { type: 'string', description: 'Specific test file to run (optional)' },
           },
         },
       },

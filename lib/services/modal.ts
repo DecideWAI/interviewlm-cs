@@ -378,6 +378,82 @@ export async function runCommand(
 }
 
 /**
+ * Run a command with streaming output
+ * Yields chunks of stdout/stderr as they arrive
+ */
+export async function* runCommandStreaming(
+  sessionId: string,
+  command: string,
+  workingDir = "/workspace"
+): AsyncGenerator<{ type: "stdout" | "stderr" | "exit"; data: string | number }> {
+  const safety = isCommandSafe(command);
+  if (!safety.safe) {
+    yield { type: "stderr", data: safety.reason! };
+    yield { type: "exit", data: 1 };
+    return;
+  }
+
+  try {
+    console.log(`[Modal] Running streaming command for session ${sessionId}: ${command.substring(0, 100)}...`);
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const fullCmd = `cd ${workingDir} 2>/dev/null || mkdir -p ${workingDir} && cd ${workingDir} && ${command}`;
+    const proc = await exec(sandbox, ["bash", "-c", fullCmd]);
+
+    // Read stdout and stderr concurrently using async iteration
+    // Modal SDK should support streaming via async iterators
+    const stdoutReader = proc.stdout;
+    const stderrReader = proc.stderr;
+
+    // Try to use streaming if available, fallback to readText
+    if (typeof stdoutReader[Symbol.asyncIterator] === "function") {
+      // Stream chunks as they arrive
+      const readStreams = async function* () {
+        // Read both streams concurrently
+        const stdoutPromise = (async () => {
+          for await (const chunk of stdoutReader as AsyncIterable<string>) {
+            return { type: "stdout" as const, data: chunk };
+          }
+        })();
+
+        const stderrPromise = (async () => {
+          for await (const chunk of stderrReader as AsyncIterable<string>) {
+            return { type: "stderr" as const, data: chunk };
+          }
+        })();
+
+        // This is simplified - ideally interleave both streams
+        const stdout = await stdoutReader.readText();
+        if (stdout) yield { type: "stdout" as const, data: stdout };
+
+        const stderr = await stderrReader.readText();
+        if (stderr) yield { type: "stderr" as const, data: stderr };
+      };
+
+      for await (const chunk of readStreams()) {
+        yield chunk;
+      }
+    } else {
+      // Fallback: read all at once
+      const stdout = await stdoutReader.readText();
+      const stderr = await stderrReader.readText();
+
+      if (stdout) yield { type: "stdout", data: stdout };
+      if (stderr) yield { type: "stderr", data: stderr };
+    }
+
+    const exitCode = await proc.exitCode;
+    yield { type: "exit", data: exitCode ?? 0 };
+
+    console.log(`[Modal] Streaming command completed for session ${sessionId}`);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Modal] Streaming command failed:`, error);
+    yield { type: "stderr", data: msg };
+    yield { type: "exit", data: 1 };
+  }
+}
+
+/**
  * Write a file to the sandbox
  */
 export async function writeFile(
@@ -628,8 +704,10 @@ export async function listFiles(
     console.log(`[Modal] Listing files in ${directory} for session ${sessionId}`);
     const sandbox = await getOrCreateSandbox(sessionId);
 
-    // Use ls -la to get detailed file listing
-    const proc = await exec(sandbox, ["ls", "-la", directory]);
+    // Use ls -laL to get detailed file listing (L follows symlinks)
+    // Also add trailing slash to directory to ensure we list contents, not the symlink itself
+    const targetDir = directory.endsWith("/") ? directory : `${directory}/`;
+    const proc = await exec(sandbox, ["ls", "-laL", targetDir]);
     const stdout = await proc.stdout.readText();
     const stderr = await proc.stderr.readText();
     const exitCode = await proc.exitCode;
@@ -654,10 +732,24 @@ export async function listFiles(
 
       // Parse ls -la output: permissions links owner group size month day time name
       // Example: -rw-r--r-- 1 root root 1234 Dec 5 12:00 filename.txt
+      // Symlinks: lrwxrwxrwx 1 root root 38 Dec 5 12:00 name -> target
       const parts = line.trim().split(/\s+/);
 
       if (parts.length >= 9) {
-        const name = parts.slice(8).join(" ");
+        let name = parts.slice(8).join(" ");
+
+        // Skip symlinks (they show as "name -> target")
+        // The /workspace symlink to modal volume should be skipped
+        if (parts[0].startsWith("l")) {
+          // This is a symlink - skip it as we're inside the symlinked directory
+          continue;
+        }
+
+        // Handle any remaining -> in filename (shouldn't happen, but just in case)
+        if (name.includes(" -> ")) {
+          name = name.split(" -> ")[0];
+        }
+
         if (name !== "." && name !== "..") {
           files.push({
             name,

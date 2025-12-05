@@ -14,6 +14,7 @@ export function queueTerminalOutput(sessionId: string, output: string) {
     outputQueues.set(sessionId, []);
   }
   outputQueues.get(sessionId)!.push(output);
+  console.log(`[TerminalState] Queued ${output.length} chars for ${sessionId}, queue size: ${outputQueues.get(sessionId)!.length}`);
 }
 
 /**
