@@ -404,42 +404,16 @@ export async function* runCommandStreaming(
     const stdoutReader = proc.stdout;
     const stderrReader = proc.stderr;
 
-    // Try to use streaming if available, fallback to readText
-    if (typeof stdoutReader[Symbol.asyncIterator] === "function") {
-      // Stream chunks as they arrive
-      const readStreams = async function* () {
-        // Read both streams concurrently
-        const stdoutPromise = (async () => {
-          for await (const chunk of stdoutReader as AsyncIterable<string>) {
-            return { type: "stdout" as const, data: chunk };
-          }
-        })();
+    // Read stdout and stderr - use readText() for simplicity
+    // Note: Modal SDK streams don't support true async iteration well,
+    // so we read the full output after the command completes
+    const [stdout, stderr] = await Promise.all([
+      stdoutReader.readText(),
+      stderrReader.readText(),
+    ]);
 
-        const stderrPromise = (async () => {
-          for await (const chunk of stderrReader as AsyncIterable<string>) {
-            return { type: "stderr" as const, data: chunk };
-          }
-        })();
-
-        // This is simplified - ideally interleave both streams
-        const stdout = await stdoutReader.readText();
-        if (stdout) yield { type: "stdout" as const, data: stdout };
-
-        const stderr = await stderrReader.readText();
-        if (stderr) yield { type: "stderr" as const, data: stderr };
-      };
-
-      for await (const chunk of readStreams()) {
-        yield chunk;
-      }
-    } else {
-      // Fallback: read all at once
-      const stdout = await stdoutReader.readText();
-      const stderr = await stderrReader.readText();
-
-      if (stdout) yield { type: "stdout", data: stdout };
-      if (stderr) yield { type: "stderr", data: stderr };
-    }
+    if (stdout) yield { type: "stdout", data: stdout };
+    if (stderr) yield { type: "stderr", data: stderr };
 
     const exitCode = await proc.exitCode;
     yield { type: "exit", data: exitCode ?? 0 };

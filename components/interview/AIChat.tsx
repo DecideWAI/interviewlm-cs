@@ -207,7 +207,8 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       const decoder = new TextDecoder();
 
       let assistantMessageId = (Date.now() + 1).toString();
-      let fullContent = "";
+      let fullHistoryContent = ""; // Accumulates ALL content for conversation history
+      let pendingContent = ""; // Content pending to be shown (reset when flushed to messages)
       let tokenUsage: { inputTokens: number; outputTokens: number } | undefined;
       let buffer = ""; // Buffer for incomplete SSE messages
       let currentEventType = ""; // Track event type across chunks - MUST be outside while loop
@@ -230,11 +231,26 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
 
               switch (currentEventType) {
                 case "content":
-                  fullContent += data.delta;
-                  setCurrentStreamingMessage(fullContent);
+                  fullHistoryContent += data.delta;
+                  pendingContent += data.delta;
+                  setCurrentStreamingMessage(pendingContent);
                   break;
 
                 case "tool_use_start":
+                  // If there's accumulated text content, add it as a message BEFORE the tool call
+                  if (pendingContent.trim()) {
+                    const preToolMessage: Message = {
+                      id: `${Date.now()}_assistant_pre_tool`,
+                      role: "assistant",
+                      content: pendingContent,
+                      timestamp: new Date(),
+                    };
+                    setMessages((prev) => [...prev, preToolMessage]);
+                    // Reset pending content and streaming display (history is preserved)
+                    pendingContent = "";
+                    setCurrentStreamingMessage("");
+                  }
+
                   // Show tool as running
                   setCurrentToolUse({
                     toolName: data.toolName,
@@ -301,24 +317,28 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   break;
 
                 case "done":
-                  const assistantMessage: Message = {
-                    id: assistantMessageId,
-                    role: "assistant",
-                    content: fullContent,
-                    timestamp: new Date(),
-                    tokenUsage,
-                  };
-
-                  setMessages((prev) => [...prev, assistantMessage]);
+                  // Only add a message if there's remaining content that wasn't flushed before tools
+                  if (pendingContent.trim()) {
+                    const assistantMessage: Message = {
+                      id: assistantMessageId,
+                      role: "assistant",
+                      content: pendingContent,
+                      timestamp: new Date(),
+                      tokenUsage,
+                    };
+                    setMessages((prev) => [...prev, assistantMessage]);
+                  }
                   setCurrentStreamingMessage("");
                   setIsLoading(false);
                   setIsConnected(true);
 
-                  // Add to conversation history
-                  conversationHistory.current.push({
-                    role: "assistant",
-                    content: fullContent,
-                  });
+                  // Add complete response to conversation history (includes ALL content from this turn)
+                  if (fullHistoryContent) {
+                    conversationHistory.current.push({
+                      role: "assistant",
+                      content: fullHistoryContent,
+                    });
+                  }
                   break;
 
                 case "error":
