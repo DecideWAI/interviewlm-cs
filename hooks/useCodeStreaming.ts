@@ -61,6 +61,20 @@ export function useCodeStreaming({
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
 
+  // Store callbacks in refs to prevent connection teardown on callback changes
+  const onCodeUpdateRef = useRef(onCodeUpdate);
+  const onStreamCompleteRef = useRef(onStreamComplete);
+  const onStreamStartRef = useRef(onStreamStart);
+  const onErrorRef = useRef(onError);
+
+  // Update refs when callbacks change (without triggering reconnection)
+  useEffect(() => {
+    onCodeUpdateRef.current = onCodeUpdate;
+    onStreamCompleteRef.current = onStreamComplete;
+    onStreamStartRef.current = onStreamStart;
+    onErrorRef.current = onError;
+  }, [onCodeUpdate, onStreamComplete, onStreamStart, onError]);
+
   /**
    * Connect to SSE endpoint
    */
@@ -101,7 +115,7 @@ export function useCodeStreaming({
               newMap.set(codeEvent.fileName, '');
               return newMap;
             });
-            onStreamStart?.(codeEvent.fileName);
+            onStreamStartRef.current?.(codeEvent.fileName);
             break;
 
           case 'delta':
@@ -112,7 +126,7 @@ export function useCodeStreaming({
                 newMap.set(codeEvent.fileName, current + codeEvent.delta);
                 return newMap;
               });
-              onCodeUpdate?.(codeEvent.fileName, codeEvent.delta);
+              onCodeUpdateRef.current?.(codeEvent.fileName, codeEvent.delta);
             }
             break;
 
@@ -125,7 +139,7 @@ export function useCodeStreaming({
                 newMap.set(codeEvent.fileName, codeEvent.fullContent!);
                 return newMap;
               });
-              onStreamComplete?.(codeEvent.fileName, codeEvent.fullContent);
+              onStreamCompleteRef.current?.(codeEvent.fileName, codeEvent.fullContent);
             }
             break;
 
@@ -133,7 +147,7 @@ export function useCodeStreaming({
             setIsStreaming(false);
             setCurrentFile(null);
             setError(codeEvent.error || 'Stream error');
-            onError?.(codeEvent.fileName, codeEvent.error || 'Unknown error');
+            onErrorRef.current?.(codeEvent.fileName, codeEvent.error || 'Unknown error');
             break;
         }
       });
@@ -166,7 +180,7 @@ export function useCodeStreaming({
       console.error('[CodeStreaming] Failed to establish connection:', err);
       setError('Failed to establish code streaming connection');
     }
-  }, [sessionId, enabled, onCodeUpdate, onStreamComplete, onStreamStart, onError]);
+  }, [sessionId, enabled]); // Only reconnect when sessionId or enabled changes
 
   /**
    * Reconnect to SSE endpoint
