@@ -59,7 +59,8 @@ export class CodingAgent {
     this.config = config;
 
     // Initialize Anthropic client with LangSmith tracing
-    this.client = getTracedAnthropicClient();
+    // Pass sessionId as thread ID to group all traces from the same session
+    this.client = getTracedAnthropicClient(config.sessionId);
   }
 
   /**
@@ -76,10 +77,12 @@ export class CodingAgent {
    */
   async sendMessage(message: string): Promise<AgentResponse> {
     // Wrap entire message handling in LangSmith trace
+    // Each message gets a unique run_id, grouped under the session thread_id
     return traceAgentSession(
       this.config.sessionId,
       this.config.candidateId || '',
-      async () => this._sendMessageInternal(message)
+      async () => this._sendMessageInternal(message),
+      { message } // Pass message for preview in trace metadata
     );
   }
 
@@ -810,11 +813,17 @@ ${helpfulnessConfig.allowedTools.join(', ')}
 
 ## Guidelines for Tool Use
 
+### CRITICAL: File Path Requirements
+- ALL file paths MUST start with /workspace (e.g., /workspace/src/solution.ts)
+- NEVER use relative paths like "src/file.ts" - always use absolute paths starting with /workspace
+- The workspace is your sandbox environment - all files live under /workspace/
+
 ### File Operations
-- Use read_file to examine existing code before making changes
-- Use write_file to create new files or overwrite existing ones
-- Use edit_file for targeted modifications to existing code
+- Use Read to examine existing code before making changes
+- Use Write to create new files or overwrite existing ones - ALWAYS provide both file_path AND content parameters
+- Use Edit for targeted modifications to existing code
 - Always verify your changes by reading the file back after writing
+- When using Write, the content parameter is REQUIRED - never omit it
 
 ### Code Execution
 - Use run_bash to execute commands in the sandbox
@@ -919,7 +928,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
           properties: {
             file_path: {
               type: 'string',
-              description: 'Absolute path to the file to read',
+              description: 'Absolute path to the file to read. MUST start with /workspace (e.g., /workspace/src/solution.ts)',
             },
             offset: {
               type: 'number',
@@ -935,17 +944,17 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       },
       {
         name: 'Write',
-        description: 'Create or overwrite a file with new content',
+        description: 'Create or overwrite a file with new content. IMPORTANT: file_path MUST start with /workspace and content is REQUIRED.',
         input_schema: {
           type: 'object',
           properties: {
             file_path: {
               type: 'string',
-              description: 'Absolute path to the file to write',
+              description: 'Absolute path to the file to write. MUST start with /workspace (e.g., /workspace/src/solution.ts)',
             },
             content: {
               type: 'string',
-              description: 'Content to write to the file',
+              description: 'Content to write to the file. This parameter is REQUIRED - never omit it.',
             },
           },
           required: ['file_path', 'content'],
@@ -953,13 +962,13 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       },
       {
         name: 'Edit',
-        description: 'Edit an existing file by replacing a specific section',
+        description: 'Edit an existing file by replacing a specific section. File path MUST start with /workspace.',
         input_schema: {
           type: 'object',
           properties: {
             file_path: {
               type: 'string',
-              description: 'Absolute path to the file to edit',
+              description: 'Absolute path to the file to edit. MUST start with /workspace (e.g., /workspace/src/solution.ts)',
             },
             old_string: {
               type: 'string',
@@ -1020,14 +1029,19 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
         },
       },
       {
-        name: 'list_files',
-        description: 'List files and directories in a path. Returns file names, types, and sizes.',
+        name: 'ListFiles',
+        description:
+          'List contents of a directory. Use this to:\n' +
+          '- See what files exist in the workspace\n' +
+          '- Explore project structure\n' +
+          '- Find files before reading them\n\n' +
+          'Returns file names, types (file/directory), and sizes.',
         input_schema: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
-              description: 'Directory path to list (default: workspace root)',
+              description: "Directory to list (default: workspace root '.')",
             },
             recursive: {
               type: 'boolean',
@@ -1037,8 +1051,13 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
         },
       },
       {
-        name: 'run_tests',
-        description: 'Run the test suite for the current problem',
+        name: 'RunTests',
+        description:
+          'Execute the test suite for the current coding challenge. Use this to:\n' +
+          '- Validate code changes against test cases\n' +
+          '- Check if the solution passes all requirements\n' +
+          '- Get detailed feedback on failing tests\n\n' +
+          'Run tests after making code changes to verify correctness.',
         input_schema: {
           type: 'object',
           properties: {},
@@ -1112,13 +1131,13 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       case 'Bash':
         return await this.toolBash(input.command as string);
 
-      case 'list_files':
+      case 'ListFiles':
         return await this.toolListFiles(
           input.path as string | undefined,
           input.recursive as boolean | undefined
         );
 
-      case 'run_tests':
+      case 'RunTests':
         return await this.toolRunTests();
 
       default:
@@ -1153,6 +1172,11 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
     offset?: number,
     limit?: number
   ): Promise<unknown> {
+    // Validate inputs
+    if (!filePath) {
+      return { success: false, error: 'Missing required parameter: file_path' };
+    }
+
     // Normalize relative paths to absolute
     const normalizedPath = this.normalizePath(filePath);
 
@@ -1204,6 +1228,14 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   }
 
   private async toolWrite(filePath: string, content: string): Promise<unknown> {
+    // Validate inputs
+    if (!filePath) {
+      return { success: false, error: 'Missing required parameter: file_path' };
+    }
+    if (content === undefined || content === null) {
+      return { success: false, error: 'Missing required parameter: content' };
+    }
+
     // Normalize relative paths to absolute
     const normalizedPath = this.normalizePath(filePath);
 
@@ -1257,6 +1289,17 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
     oldString: string,
     newString: string
   ): Promise<unknown> {
+    // Validate inputs
+    if (!filePath) {
+      return { success: false, error: 'Missing required parameter: file_path' };
+    }
+    if (oldString === undefined || oldString === null) {
+      return { success: false, error: 'Missing required parameter: old_string' };
+    }
+    if (newString === undefined || newString === null) {
+      return { success: false, error: 'Missing required parameter: new_string' };
+    }
+
     // Normalize relative paths to absolute
     const normalizedPath = this.normalizePath(filePath);
 
@@ -1323,6 +1366,11 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   }
 
   private async toolGrep(pattern: string, path?: string): Promise<unknown> {
+    // Validate inputs
+    if (!pattern) {
+      return { success: false, error: 'Missing required parameter: pattern', matches: [] };
+    }
+
     try {
       // Import Modal service dynamically
       const { getFileSystem, readFile } = await import('../services/modal');
@@ -1370,6 +1418,11 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   }
 
   private async toolGlob(pattern: string): Promise<unknown> {
+    // Validate inputs
+    if (!pattern) {
+      return { success: false, error: 'Missing required parameter: pattern', files: [] };
+    }
+
     try {
       // Import Modal service dynamically
       const { getFileSystem } = await import('../services/modal');
@@ -1448,6 +1501,11 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   }
 
   private async toolBash(command: string): Promise<unknown> {
+    // Validate inputs
+    if (!command) {
+      return { success: false, error: 'Missing required parameter: command' };
+    }
+
     // Validate command security
     const commandCheck = isCommandAllowed(command);
     if (!commandCheck.allowed) {

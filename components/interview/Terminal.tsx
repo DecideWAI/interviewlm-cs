@@ -28,7 +28,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting">("connecting");
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef<number>(0);
+    const onCommandRef = useRef(onCommand);
     const MAX_RECONNECT_ATTEMPTS = 5;
+
+    // Keep onCommand ref up to date without triggering effect re-runs
+    useEffect(() => {
+      onCommandRef.current = onCommand;
+    }, [onCommand]);
 
     // Helper to update connection status in both ref and state
     const updateConnectionStatus = (status: "connected" | "disconnected" | "connecting") => {
@@ -103,6 +109,22 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
     terminal.writeln("");
 
+    // Simple loading state (no animation to avoid complexity)
+    let isWaitingForOutput = false;
+
+    const showLoading = () => {
+      isWaitingForOutput = true;
+      terminal.write("\x1b[90m⏳ Running...\x1b[0m");
+    };
+
+    const hideLoading = () => {
+      if (isWaitingForOutput) {
+        isWaitingForOutput = false;
+        // Clear "⏳ Running..." (13 chars) and move to new line
+        terminal.write("\r\x1b[K");
+      }
+    };
+
     // SSE connection for terminal output
     const connectSSE = () => {
       const sseUrl = `/api/interview/${sessionId}/terminal`;
@@ -125,10 +147,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           try {
             const data = JSON.parse(event.data);
             if (data.output) {
+              // Hide loading when output arrives
+              hideLoading();
               terminal.write(data.output);
             }
           } catch (e) {
             // If not JSON, write raw data
+            hideLoading();
             terminal.write(event.data);
           }
         };
@@ -168,6 +193,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
     // Handle data input
     let currentLine = "";
+
     terminal.onData((data) => {
       const code = data.charCodeAt(0);
 
@@ -177,23 +203,72 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         if (currentLine.trim()) {
           const command = currentLine.trim();
 
-          // Send command via HTTP POST if connected
+          // Send command via streaming endpoint
           if (connectionStatusRef.current === "connected") {
-            fetch(`/api/interview/${sessionId}/terminal/input`, {
+            // Show loading indicator
+            showLoading();
+
+            // Use streaming endpoint for real-time output
+            fetch(`/api/interview/${sessionId}/terminal/stream`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                type: "input",
-                data: command + "\n",
-              }),
-            }).catch((err) => {
-              console.error("Failed to send terminal input:", err);
-              terminal.writeln("\x1b[31mFailed to send command\x1b[0m");
-            });
+              body: JSON.stringify({ command }),
+            })
+              .then(async (res) => {
+                if (!res.ok) {
+                  throw new Error(`HTTP ${res.status}`);
+                }
+
+                hideLoading();
+
+                // Read SSE stream
+                const reader = res.body?.getReader();
+                if (!reader) {
+                  throw new Error("No response body");
+                }
+
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+
+                  buffer += decoder.decode(value, { stream: true });
+
+                  // Process complete SSE events
+                  const lines = buffer.split("\n");
+                  buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+                  for (const line of lines) {
+                    if (line.startsWith("data: ")) {
+                      try {
+                        const data = JSON.parse(line.slice(6));
+                        if (data.output) {
+                          terminal.write(data.output);
+                        }
+                        if (data.done) {
+                          // Stream complete
+                          return;
+                        }
+                      } catch {
+                        // Ignore parse errors
+                      }
+                    }
+                  }
+                }
+              })
+              .catch((err) => {
+                console.error("Failed to send terminal input:", err);
+                hideLoading();
+                terminal.writeln("\x1b[31mFailed to send command\x1b[0m");
+                terminal.write("\x1b[1;32m$\x1b[0m ");
+              });
           } else {
             // Fallback to local echo if not connected
             terminal.writeln("Command: " + command);
             terminal.writeln("\x1b[33m(Not connected to backend)\x1b[0m");
+            terminal.write("\x1b[1;32m$\x1b[0m ");
           }
 
           // Record terminal event
@@ -206,10 +281,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             }),
           }).catch((err) => console.error("Failed to record terminal event:", err));
 
-          onCommand?.(command);
+          onCommandRef.current?.(command);
+        } else {
+          terminal.write("\x1b[1;32m$\x1b[0m ");
         }
         currentLine = "";
-        terminal.write("\x1b[1;32m$\x1b[0m ");
       }
       // Handle Backspace
       else if (code === 127) {
@@ -271,7 +347,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       }
       terminal.dispose();
     };
-  }, [sessionId, onCommand]);
+  }, [sessionId]); // Only re-run if sessionId changes - onCommand is accessed via ref
 
     // Expose methods via ref using useImperativeHandle
     useImperativeHandle(ref, () => ({

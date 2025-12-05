@@ -1,6 +1,7 @@
 /**
  * List Files Tool for Claude Agent
  * Allows AI to list files and directories in the candidate's Modal sandbox
+ * Uses Modal's native listFiles API for efficiency
  */
 
 import { modalService as modal } from "@/lib/services";
@@ -42,7 +43,8 @@ export const listFilesTool: Anthropic.Tool = {
 };
 
 /**
- * Execute the list_files tool
+ * Execute the ListFiles tool
+ * Uses Modal's native listFiles API for better performance
  */
 export async function executeListFiles(
   sessionId: string,
@@ -50,56 +52,20 @@ export async function executeListFiles(
 ): Promise<ListFilesToolOutput> {
   try {
     const dirPath = directory || ".";
-    const workspacePath = `/workspace/${dirPath}`.replace(/\/+/g, "/");
+    // Normalize path - Modal's listFiles expects absolute path
+    const workspacePath = dirPath.startsWith("/")
+      ? dirPath
+      : `/workspace/${dirPath}`.replace(/\/+/g, "/");
 
-    // Use ls with specific format for parsing
-    // -l: long format (includes size)
-    // -a: show hidden files
-    // -p: append / to directories
-    // --time-style=+: suppress time for easier parsing
-    const result = await modal.runCommand(
-      sessionId,
-      `ls -lap --time-style=+ ${workspacePath} 2>/dev/null || ls -lap ${workspacePath} 2>/dev/null`,
-      "/workspace"
-    );
+    // Use Modal's native listFiles API (more efficient than running ls command)
+    const files = await modal.listFiles(sessionId, workspacePath);
 
-    if (result.exitCode !== 0) {
-      return {
-        success: false,
-        entries: [],
-        directory: dirPath,
-        error: result.stderr || `Directory not found: ${dirPath}`,
-      };
-    }
-
-    // Parse ls -l output
-    // Example: drwxr-xr-x 2 user group 4096  src/
-    //          -rw-r--r-- 1 user group 1234  file.js
-    const entries: FileEntry[] = [];
-    const lines = result.stdout.split("\n").slice(1); // Skip "total" line
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed === "." || trimmed === "..") continue;
-
-      // Parse the ls output
-      const parts = trimmed.split(/\s+/);
-      if (parts.length >= 5) {
-        const permissions = parts[0];
-        const size = parseInt(parts[4], 10) || 0;
-        const name = parts.slice(5).join(" ").replace(/\/$/, ""); // Handle filenames with spaces
-
-        if (!name || name === "." || name === "..") continue;
-
-        const isDirectory = permissions.startsWith("d") || trimmed.endsWith("/");
-
-        entries.push({
-          name,
-          type: isDirectory ? "directory" : "file",
-          size: isDirectory ? undefined : size,
-        });
-      }
-    }
+    // Transform Modal's FileNode[] to our FileEntry[]
+    const entries: FileEntry[] = files.map((file) => ({
+      name: file.name,
+      type: file.type,
+      size: file.type === "file" ? file.size : undefined,
+    }));
 
     // Sort: directories first, then alphabetically
     entries.sort((a, b) => {

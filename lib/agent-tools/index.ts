@@ -15,7 +15,6 @@ export { listFilesTool, executeListFiles } from "./list-files";
 
 // Command execution
 export { bashTool, executeBash } from "./bash";
-export { executeBashTool, executeExecuteBash } from "./execute-bash";
 
 // Testing and questions
 export { runTestsTool, executeRunTests } from "./run-tests";
@@ -54,11 +53,6 @@ export type {
 export type {
   BashToolOutput,
 } from "./bash";
-
-export type {
-  ExecuteBashToolInput,
-  ExecuteBashToolOutput,
-} from "./execute-bash";
 
 export type {
   RunTestsToolInput,

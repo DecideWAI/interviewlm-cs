@@ -27,8 +27,8 @@ export type AgentTool =
   | 'Grep'
   | 'Glob'
   | 'Bash'
-  | 'list_files'
-  | 'run_tests'
+  | 'ListFiles'
+  | 'RunTests'
 
   // Monitoring tools (Interview Agent)
   | 'ObserveProgress'
@@ -66,21 +66,21 @@ export interface HelpfulnessConfig {
 export const HELPFULNESS_CONFIGS: Record<HelpfulnessLevel, HelpfulnessConfig> = {
   consultant: {
     level: 'consultant',
-    allowedTools: ['Read', 'Grep', 'Glob', 'list_files', 'run_tests'],
+    allowedTools: ['Read', 'Grep', 'Glob', 'ListFiles', 'RunTests'],
     description: 'Read-only assistance, suggestions only',
     useCase: 'Senior roles - evaluate independence',
   },
 
   'pair-programming': {
     level: 'pair-programming',
-    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'list_files', 'run_tests'],
+    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'ListFiles', 'RunTests'],
     description: 'Full coding assistance with limited bash',
     useCase: 'Default - realistic AI collaboration',
   },
 
   'full-copilot': {
     level: 'full-copilot',
-    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'list_files', 'run_tests'],
+    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'ListFiles', 'RunTests'],
     description: 'Maximum autonomy',
     useCase: 'Junior roles - evaluate delegation skills',
   },
