@@ -30,6 +30,13 @@ export type DifficultyLevel =
   | "medium"
   | "hard";
 
+/**
+ * Assessment type - determines the format and evaluation rubric
+ */
+export type AssessmentType =
+  | "real_world"     // Practical coding (implementation, tests, edge cases)
+  | "system_design"; // Hybrid (design doc + partial implementation)
+
 export type PricingTier =
   | "payg"
   | "small"
@@ -87,6 +94,10 @@ export interface AssessmentConfig {
   role: Role;
   customRoleName?: string; // For custom roles (Large Pack+)
   seniority: SeniorityLevel;
+
+  /** Assessment type (Real World vs System Design) */
+  assessmentType: AssessmentType;
+  selectedSeedId?: string; // The default/custom seed selected for this assessment
 
   /** Technology stack requirements with priority levels */
   techStackRequirements?: TechStackRequirements;

@@ -1,6 +1,6 @@
 "use client";
 
-import { AssessmentConfig, Role, SeniorityLevel, PricingTier } from "@/types/assessment";
+import { AssessmentConfig, Role, SeniorityLevel, PricingTier, AssessmentType } from "@/types/assessment";
 import { ROLES, SENIORITY_LEVELS, isRoleAvailableForTier, getRecommendedDuration } from "@/lib/assessment-config";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +43,10 @@ export function RoleAndSeniorityStep({
     }
 
     onUpdate(updates);
+  };
+
+  const handleAssessmentTypeSelect = (assessmentType: AssessmentType) => {
+    onUpdate({ assessmentType });
   };
 
   const getIconComponent = (iconName: string): LucideIcon => {
@@ -202,8 +206,135 @@ export function RoleAndSeniorityStep({
         </div>
       </div>
 
+      {/* Assessment Type Selection */}
+      <div className="space-y-3">
+        <Label required>Assessment Type</Label>
+        {errors.assessmentType && (
+          <p className="text-sm text-error">{errors.assessmentType}</p>
+        )}
+
+        <div className="grid grid-cols-2 gap-4">
+          {/* Real World Problem Card */}
+          <button
+            type="button"
+            onClick={() => handleAssessmentTypeSelect("real_world")}
+            className={`
+              p-5 rounded-lg border-2 text-left transition-all
+              ${config.assessmentType === "real_world"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:border-border-secondary hover:bg-background-tertiary"
+              }
+            `}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`
+                  p-2.5 rounded-lg
+                  ${config.assessmentType === "real_world"
+                    ? "bg-primary text-white"
+                    : "bg-background-tertiary text-text-secondary"}
+                `}
+              >
+                <Icons.Code2 className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="font-medium text-text-primary mb-1">
+                  Real World Problem
+                </h4>
+                <p className="text-sm text-text-secondary mb-3">
+                  Practical coding challenges focused on implementation, testing, and production-ready code.
+                </p>
+                <div className="space-y-1.5 text-xs text-text-tertiary">
+                  <div className="flex items-center gap-2">
+                    <Icons.Check className="h-3.5 w-3.5 text-success" />
+                    <span>Complete working implementation</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Icons.Check className="h-3.5 w-3.5 text-success" />
+                    <span>Unit tests & edge cases</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Icons.Check className="h-3.5 w-3.5 text-success" />
+                    <span>Error handling & validation</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </button>
+
+          {/* System Design Card */}
+          <button
+            type="button"
+            onClick={() => handleAssessmentTypeSelect("system_design")}
+            className={`
+              p-5 rounded-lg border-2 text-left transition-all
+              ${config.assessmentType === "system_design"
+                ? "border-primary bg-primary/5"
+                : "border-border hover:border-border-secondary hover:bg-background-tertiary"
+              }
+            `}
+          >
+            <div className="flex items-start gap-3">
+              <div
+                className={`
+                  p-2.5 rounded-lg
+                  ${config.assessmentType === "system_design"
+                    ? "bg-primary text-white"
+                    : "bg-background-tertiary text-text-secondary"}
+                `}
+              >
+                <Icons.Network className="h-5 w-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h4 className="font-medium text-text-primary mb-1">
+                  System Design
+                </h4>
+                <p className="text-sm text-text-secondary mb-3">
+                  Architecture-focused challenges combining design documentation with partial implementation.
+                </p>
+                <div className="space-y-1.5 text-xs text-text-tertiary">
+                  <div className="flex items-center gap-2">
+                    <Icons.Check className="h-3.5 w-3.5 text-success" />
+                    <span>DESIGN.md architecture doc</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Icons.Check className="h-3.5 w-3.5 text-success" />
+                    <span>Trade-off analysis</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Icons.Check className="h-3.5 w-3.5 text-success" />
+                    <span>API contracts & core logic</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </button>
+        </div>
+
+        {/* Assessment Type Info */}
+        {config.assessmentType && (
+          <div className={`p-3 rounded-lg border ${
+            config.assessmentType === "real_world"
+              ? "bg-primary/5 border-primary/20"
+              : "bg-info/5 border-info/20"
+          }`}>
+            <div className="flex items-center gap-2 text-sm">
+              <Icons.Info className={`h-4 w-4 ${
+                config.assessmentType === "real_world" ? "text-primary" : "text-info"
+              }`} />
+              <span className="text-text-secondary">
+                {config.assessmentType === "real_world"
+                  ? "Evaluation focuses on code quality, testing, and problem completion."
+                  : "Evaluation focuses on design clarity, trade-offs, and API design."
+                }
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Recommendation */}
-      {config.role && config.seniority && (
+      {config.role && config.seniority && config.assessmentType && (
         <div className="p-4 bg-success/5 border border-success/20 rounded-lg">
           <div className="flex items-start gap-3">
             <Icons.Lightbulb className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
@@ -214,7 +345,11 @@ export function RoleAndSeniorityStep({
               <p className="text-sm text-text-secondary mb-2">
                 Based on your selection of{" "}
                 <span className="font-medium">{SENIORITY_LEVELS[config.seniority].name}</span>{" "}
-                <span className="font-medium">{ROLES[config.role].name}</span>:
+                <span className="font-medium">{ROLES[config.role].name}</span>{" "}
+                with{" "}
+                <span className="font-medium">
+                  {config.assessmentType === "real_world" ? "Real World Problem" : "System Design"}
+                </span>:
               </p>
               <ul className="space-y-1 text-sm text-text-secondary">
                 <li>
@@ -228,7 +363,13 @@ export function RoleAndSeniorityStep({
                   {SENIORITY_LEVELS[config.seniority].difficultyMix.hard}% Hard
                 </li>
                 <li>
-                  • <span className="font-medium">Focus:</span>{" "}
+                  • <span className="font-medium">Evaluation Focus:</span>{" "}
+                  {config.assessmentType === "real_world"
+                    ? "Problem Completion (30%), Code Quality (25%), Testing (20%), Error Handling (15%), Efficiency (10%)"
+                    : "Design Clarity (30%), Trade-offs (25%), API Design (20%), Implementation (15%), Communication (10%)"}
+                </li>
+                <li>
+                  • <span className="font-medium">Role Focus:</span>{" "}
                   {ROLES[config.role].description}
                 </li>
               </ul>

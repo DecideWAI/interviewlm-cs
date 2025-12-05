@@ -125,10 +125,11 @@ export const POST = withErrorHandling(async (
     if (candidate.volumeId && firstQuestion) {
       try {
         // Read final code from Modal volume
+        // IMPORTANT: Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
         const fileName = `solution.${firstQuestion.language === "python" ? "py" : "js"}`;
         let finalCodeContent = finalCode?.[fileName];
         if (!finalCodeContent) {
-          const readResult = await modal.readFile(candidate.volumeId, fileName);
+          const readResult = await modal.readFile(id, fileName);
           finalCodeContent = readResult.success ? readResult.content || '' : '';
         }
 

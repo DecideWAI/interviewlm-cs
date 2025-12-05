@@ -8,8 +8,16 @@
 
 import prisma from "@/lib/prisma";
 import { getChatCompletion } from "./claude";
-import type { Difficulty, GeneratedQuestion } from "@/lib/prisma-types";
-import type { RequiredTechStack, BaseProblem, ProgressionHints, SeniorityExpectations } from "@/types/seed";
+import type { Difficulty, GeneratedQuestion, AssessmentType } from "@/lib/prisma-types";
+import type {
+  RequiredTechStack,
+  BaseProblem,
+  ProgressionHints,
+  SeniorityExpectations,
+  DesignDocTemplate,
+  ArchitectureHints,
+  EvaluationRubric,
+} from "@/types/seed";
 import type { SeniorityLevel } from "@/types/assessment";
 import {
   irtEngine,
@@ -39,6 +47,7 @@ export interface QuestionGenerationContext {
   previousPerformance: PerformanceMetrics[];
   timeRemaining: number; // seconds
   currentCodeSnapshot?: string;
+  assessmentType?: AssessmentType; // REAL_WORLD or SYSTEM_DESIGN
 }
 
 /**
@@ -193,7 +202,7 @@ export class IncrementalQuestionGenerator {
       context.previousQuestions.length
     );
 
-    // Build contextual prompt for Claude with IRT targeting
+    // Build contextual prompt for Claude with IRT targeting and assessment type
     const prompt = this.buildIncrementalPrompt({
       seed,
       seniority: context.seniority,
@@ -205,6 +214,7 @@ export class IncrementalQuestionGenerator {
       seniorityExpectations,
       timeRemaining: Math.floor(context.timeRemaining / 60), // Convert to minutes
       irtTargeting,
+      assessmentType: context.assessmentType || seed.assessmentType,
     });
 
     // Generate question using Claude
@@ -507,6 +517,7 @@ export class IncrementalQuestionGenerator {
     seniorityExpectations: SeniorityExpectations | null;
     timeRemaining: number;
     irtTargeting?: DifficultyTargeting;
+    assessmentType?: AssessmentType;
   }): string {
     const {
       seed,
@@ -519,7 +530,29 @@ export class IncrementalQuestionGenerator {
       seniorityExpectations,
       timeRemaining,
       irtTargeting,
+      assessmentType,
     } = params;
+
+    // Use assessment type from seed or context, default to REAL_WORLD
+    const effectiveAssessmentType = assessmentType || seed.assessmentType || 'REAL_WORLD';
+
+    // Delegate to type-specific prompt builder
+    if (effectiveAssessmentType === 'SYSTEM_DESIGN') {
+      return this.buildSystemDesignPrompt({
+        seed,
+        seniority,
+        previousQuestions,
+        previousPerformance,
+        progressAnalysis,
+        requiredTech,
+        progressionHints,
+        seniorityExpectations,
+        timeRemaining,
+        irtTargeting,
+      });
+    }
+
+    // Default: Real World Problem prompt
 
     let actionGuidance = '';
     if (progressAnalysis.recommendedAction === 'extend') {
@@ -749,6 +782,191 @@ Return ONLY the JSON object, no additional text or markdown formatting.`;
       rust: 'main.rs',
     };
     return extensionMap[language] || 'main.ts';
+  }
+
+  /**
+   * Build prompt for System Design assessment type
+   * Focuses on architecture documentation + partial implementation
+   */
+  private buildSystemDesignPrompt(params: {
+    seed: any;
+    seniority: SeniorityLevel;
+    previousQuestions: GeneratedQuestion[];
+    previousPerformance: PerformanceMetrics[];
+    progressAnalysis: ProgressAnalysis;
+    requiredTech: RequiredTechStack;
+    progressionHints: ProgressionHints;
+    seniorityExpectations: SeniorityExpectations | null;
+    timeRemaining: number;
+    irtTargeting?: DifficultyTargeting;
+  }): string {
+    const {
+      seed,
+      seniority,
+      previousQuestions,
+      previousPerformance,
+      progressAnalysis,
+      requiredTech,
+      progressionHints,
+      seniorityExpectations,
+      timeRemaining,
+      irtTargeting,
+    } = params;
+
+    // Get design document template from seed
+    const designDocTemplate = seed.designDocTemplate as DesignDocTemplate | null;
+    const architectureHints = seed.architectureHints as ArchitectureHints | null;
+    const implementationScope = seed.implementationScope || 'core_service';
+
+    let actionGuidance = '';
+    if (progressAnalysis.recommendedAction === 'extend') {
+      actionGuidance = `The candidate's architecture is solid (avg: ${(progressAnalysis.averageScore * 100).toFixed(0)}%). Create a COMPLEX extension that:
+- Requires them to EXTEND their design document with new components
+- Adds architectural complexity: distributed systems, caching, failover
+- Tests ${seniority}-level system design skills${seniorityExpectations?.[seniority] ? `: ${seniorityExpectations[seniority]?.join(', ')}` : ''}
+- Requires implementing a critical path from their architecture
+- Should take approximately ${Math.min(30, timeRemaining - 10)} minutes`;
+    } else if (progressAnalysis.recommendedAction === 'simplify') {
+      actionGuidance = `The candidate is struggling with architecture (avg: ${(progressAnalysis.averageScore * 100).toFixed(0)}%). Create a SUPPORTIVE follow-up that:
+- Focuses on a SINGLE component from their design
+- Provides clearer constraints and requirements
+- Reduces scope to core functionality
+- Offers more detailed guidance
+- Should take approximately 20-25 minutes`;
+    } else {
+      actionGuidance = `The candidate's progress is steady (avg: ${(progressAnalysis.averageScore * 100).toFixed(0)}%). Create a MODERATE extension that:
+- Builds naturally on their existing architecture
+- Adds one new component or integration
+- Tests practical implementation of their design
+- Should take approximately ${Math.min(25, timeRemaining - 10)} minutes`;
+    }
+
+    const designDocSections = designDocTemplate?.sections
+      ?.map(s => `- ${s.title}: ${s.description}${s.required ? ' (required)' : ''}`)
+      .join('\n') || '- Overview, Components, API Design, Trade-offs';
+
+    const tradeoffs = designDocTemplate?.tradeoffs?.join(', ') || 'scalability, consistency, availability';
+    const constraints = designDocTemplate?.constraints?.join(', ') || 'performance, security, maintainability';
+
+    return `You are generating SYSTEM DESIGN question #${previousQuestions.length + 1} for a ${seniority} developer.
+
+**THIS IS A SYSTEM DESIGN ASSESSMENT (Hybrid Format)**
+The candidate must:
+1. Document their architectural decisions in DESIGN.md
+2. Implement a partial solution demonstrating their design
+3. Explain trade-offs and alternatives
+
+**Assessment Scenario:** ${seed.title}
+${seed.domain ? `**Domain:** ${seed.domain}` : ''}
+**Description:** ${seed.description}
+
+**DESIGN DOCUMENT REQUIREMENTS:**
+${designDocSections}
+
+**KEY TRADE-OFFS TO ADDRESS:**
+${tradeoffs}
+
+**SYSTEM CONSTRAINTS:**
+${constraints}
+
+**ARCHITECTURE HINTS:**
+${architectureHints ? `
+- Components: ${architectureHints.components.join(', ')}
+- Patterns: ${architectureHints.patterns.join(', ')}
+- Scalability Goals: ${architectureHints.scalabilityGoals.join(', ')}
+` : '- Consider common distributed systems patterns'}
+
+**IMPLEMENTATION SCOPE:** ${implementationScope}
+
+**REQUIRED TECHNOLOGY STACK:**
+- Languages: ${requiredTech.languages.map(l => l.name).join(', ')}
+- Frameworks: ${requiredTech.frameworks.map(f => f.name).join(', ')}
+- Databases: ${requiredTech.databases.map(d => d.name).join(', ')}
+${requiredTech.tools?.length ? `- Tools: ${requiredTech.tools.map(t => t.name).join(', ')}` : ''}
+
+**Previous Questions in This Assessment:**
+${previousQuestions.map((q, i) => `
+Q${i + 1}: ${q.title}
+   Focus: ${q.description?.substring(0, 100)}...
+   Score: ${previousPerformance[i] ? `${(previousPerformance[i].score * 100).toFixed(0)}%` : 'Pending'}
+`).join('')}
+
+**Candidate Progress Analysis:**
+- Average Score: ${(progressAnalysis.averageScore * 100).toFixed(0)}%
+- Trend: ${progressAnalysis.trend}
+- Design Quality: ${progressAnalysis.codeQuality}
+${irtTargeting ? `
+**IRT-Based Difficulty Targeting:**
+- Target Difficulty: θ=${irtTargeting.targetDifficulty.toFixed(2)}
+- Reasoning: ${irtTargeting.reasoning}
+` : ''}
+
+**Time Remaining:** ${timeRemaining} minutes
+
+**Your Task:**
+${actionGuidance}
+
+**CRITICAL: SYSTEM DESIGN REQUIREMENTS:**
+1. The question MUST require both DESIGN DOCUMENTATION and IMPLEMENTATION
+2. Candidate must update their DESIGN.md with architectural decisions
+3. Implementation should demonstrate core parts of their design
+4. Include specific evaluation of trade-off analysis
+5. Test communication through design document quality
+
+**Response Format (JSON only, no markdown):**
+{
+  "title": "Clear, descriptive title for the system design task",
+  "description": "Detailed problem description focusing on ARCHITECTURAL requirements. Include:\\n- What system/component to design\\n- Scale/performance requirements\\n- Key decisions they must make\\n- What to document vs implement",
+  "requirements": [
+    "Update DESIGN.md with [specific section]",
+    "Implement [specific component] demonstrating your design",
+    "Document trade-offs for [specific decision]",
+    "Include [API contract/data model/sequence diagram]"
+  ],
+  "estimatedTime": ${Math.min(30, timeRemaining - 5)},
+  "starterCode": [
+    {
+      "fileName": "DESIGN.md",
+      "content": "# System Design\\n\\n## [Section Name]\\n\\n[TODO: Document your design decisions]\\n\\n## Trade-offs\\n\\n[TODO: Discuss alternatives considered]",
+      "language": "markdown"
+    },
+    {
+      "fileName": "src/index.${requiredTech.languages[0]?.name === 'python' ? 'py' : requiredTech.languages[0]?.name === 'go' ? 'go' : 'ts'}",
+      "content": "// TODO: Implement the core component from your design\\n// Focus on demonstrating your architectural decisions",
+      "language": "${requiredTech.languages[0]?.name}"
+    }
+  ],
+  "testCases": [
+    {
+      "name": "Validates architectural decision",
+      "input": {"scenario": "description"},
+      "expectedOutput": "expected behavior",
+      "hidden": false,
+      "description": "Tests that the implementation matches the documented design"
+    }
+  ],
+  "difficultyAssessment": {
+    "difficultyScore": 6.0,
+    "complexityFactors": {
+      "linesOfCodeExpected": 80,
+      "conceptsRequired": ["system design", "trade-off analysis", "${requiredTech.frameworks[0]?.name || 'framework'}"],
+      "techStackComplexity": 4,
+      "timeEstimate": 25,
+      "prerequisiteKnowledge": ["distributed systems", "API design", "${requiredTech.databases[0]?.name || 'database'}"]
+    },
+    "justification": "This system design question requires understanding of architecture patterns and trade-offs...",
+    "relativeToBaseline": ${previousQuestions.length === 0 ? '1.0' : progressAnalysis.recommendedAction === 'extend' ? '1.4' : progressAnalysis.recommendedAction === 'simplify' ? '0.6' : '1.0'}
+  }
+}
+
+**EVALUATION FOCUS FOR SYSTEM DESIGN:**
+- Design Clarity (30%): Is the architecture well-documented?
+- Trade-off Analysis (25%): Does candidate discuss alternatives?
+- API Design (20%): Are interfaces well-defined?
+- Implementation (15%): Does code reflect the design?
+- Communication (10%): Is reasoning clearly explained?
+
+Return ONLY the JSON object, no additional text or markdown formatting.`;
   }
 }
 

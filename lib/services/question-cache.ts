@@ -16,6 +16,9 @@ import * as crypto from "crypto";
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const CACHE_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
+// TEMPORARY: Disable question caching to ensure fresh questions
+const CACHE_DISABLED = true;
+
 /**
  * Generate cache key for a question
  */
@@ -39,6 +42,12 @@ export async function getCachedQuestion(
   language: string,
   topic?: string
 ): Promise<any | null> {
+  // Skip cache if disabled
+  if (CACHE_DISABLED) {
+    console.log(`[Question Cache] Cache disabled - generating fresh question`);
+    return null;
+  }
+
   const redis = new Redis(REDIS_URL);
   try {
     const cacheKey = generateQuestionCacheKey(difficulty, language, topic);
@@ -78,6 +87,11 @@ export async function cacheQuestion(
   questionData: any,
   topic?: string
 ): Promise<void> {
+  // Skip caching if disabled
+  if (CACHE_DISABLED) {
+    return;
+  }
+
   const redis = new Redis(REDIS_URL);
   try {
     const cacheKey = generateQuestionCacheKey(difficulty, language, topic);

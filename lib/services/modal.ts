@@ -701,26 +701,42 @@ export async function listFiles(
   sessionId: string,
   directory = "/workspace"
 ): Promise<FileNode[]> {
+  // Normalize and validate directory is within workspace
+  const normalizedDir = directory.replace(/\/+/g, '/').replace(/\/$/, '') || '/workspace';
+
+  // SECURITY: Only allow listing within /workspace
+  if (!normalizedDir.startsWith('/workspace')) {
+    console.warn(`[Modal] BLOCKED: Attempted to list files outside workspace: ${directory}`);
+    return [];
+  }
+
+  // Block directory traversal attempts
+  if (normalizedDir.includes('/../') || normalizedDir.endsWith('/..')) {
+    console.warn(`[Modal] BLOCKED: Directory traversal attempt: ${directory}`);
+    return [];
+  }
+
   try {
-    console.log(`[Modal] Listing files in ${directory} for session ${sessionId}`);
+    console.log(`[Modal] Listing files in ${normalizedDir} for session ${sessionId}`);
     const sandbox = await getOrCreateSandbox(sessionId);
 
-    // Use ls -laL to get detailed file listing (L follows symlinks)
-    // Also add trailing slash to directory to ensure we list contents, not the symlink itself
-    const targetDir = directory.endsWith("/") ? directory : `${directory}/`;
-    const proc = await exec(sandbox, ["ls", "-laL", targetDir]);
-    const stdout = await proc.stdout.readText();
-    const stderr = await proc.stderr.readText();
-    const exitCode = await proc.exitCode;
+    // Use ls -la with trailing slash to force following the symlink
+    // Modal mounts volumes as symlinks (e.g., /workspace -> /__modal/volumes/...)
+    // Without trailing slash, ls might show the symlink itself instead of contents
+    // Note: 'exec' here is Modal sandbox exec wrapper (line 64), NOT Node child_process
+    const targetPath = `${normalizedDir}/`;
+    const sandboxProc = await sandbox["exec"](["ls", "-la", targetPath]);
+    const stdout = await sandboxProc.stdout.readText();
+    const stderr = await sandboxProc.stderr.readText();
+    const exitCode = await sandboxProc.exitCode;
 
     console.log(`[Modal] ls exitCode=${exitCode}, stdout=${stdout.length}b, stderr=${stderr.length}b`);
-    console.log(`[Modal] ls raw output:\n${stdout}`);
 
     // Note: exitCode can be undefined on success in some Modal SDK versions
     // Treat undefined or 0 as success, only fail if exitCode is a non-zero number
     const commandFailed = exitCode !== undefined && exitCode !== 0;
     if (commandFailed || !stdout.trim()) {
-      console.log(`[Modal] Directory ${directory} is empty or doesn't exist: ${stderr}`);
+      console.log(`[Modal] Directory ${normalizedDir} is empty or doesn't exist: ${stderr}`);
       return [];
     }
 
@@ -739,10 +755,9 @@ export async function listFiles(
       if (parts.length >= 9) {
         let name = parts.slice(8).join(" ");
 
-        // Skip symlinks (they show as "name -> target")
-        // The /workspace symlink to modal volume should be skipped
+        // Skip symlinks entirely - they could point outside workspace
         if (parts[0].startsWith("l")) {
-          // This is a symlink - skip it as we're inside the symlinked directory
+          console.log(`[Modal] Skipping symlink: ${name}`);
           continue;
         }
 
@@ -752,9 +767,17 @@ export async function listFiles(
         }
 
         if (name !== "." && name !== "..") {
+          const filePath = `${normalizedDir}/${name}`;
+
+          // Double-check the constructed path is still within workspace
+          if (!filePath.startsWith('/workspace')) {
+            console.warn(`[Modal] BLOCKED: Constructed path outside workspace: ${filePath}`);
+            continue;
+          }
+
           files.push({
             name,
-            path: `${directory}/${name}`,
+            path: filePath,
             type: parts[0].startsWith("d") ? "directory" : "file",
             size: parseInt(parts[4]) || 0,
           });
@@ -762,26 +785,119 @@ export async function listFiles(
       }
     }
 
-    console.log(`[Modal] Found ${files.length} files in ${directory}:`, files.map(f => f.name));
+    console.log(`[Modal] Found ${files.length} files in ${normalizedDir}:`, files.map(f => f.name));
     return files;
   } catch (error) {
-    console.error(`[Modal] Failed to list files in ${directory}:`, error);
+    console.error(`[Modal] Failed to list files in ${normalizedDir}:`, error);
     return [];
   }
+}
+
+// Constants for file system traversal limits
+const MAX_DEPTH = 10;
+const MAX_FILES = 500;
+const WORKSPACE_ROOT = "/workspace";
+
+/**
+ * Normalize a path (remove double slashes, trailing slashes)
+ */
+function normalizePath(path: string): string {
+  return path.replace(/\/+/g, '/').replace(/\/$/, '') || '/';
+}
+
+/**
+ * Check if a path is safely within the workspace
+ * Prevents directory traversal attacks and symlink escapes
+ */
+function isWithinWorkspace(path: string): boolean {
+  const normalized = normalizePath(path);
+
+  // Must start with /workspace
+  if (!normalized.startsWith(WORKSPACE_ROOT)) {
+    return false;
+  }
+
+  // Check for directory traversal attempts
+  if (normalized.includes('/../') || normalized.endsWith('/..')) {
+    return false;
+  }
+
+  return true;
 }
 
 /**
  * Get file system tree recursively
  * Builds a nested tree structure with children for directories
+ *
+ * SECURITY: Only traverses within /workspace directory
+ * - Blocks paths outside /workspace
+ * - Blocks directory traversal (../)
+ * - Has depth limit and file count limit
  */
-export async function getFileSystem(sessionId: string, rootPath = "/workspace"): Promise<FileNode[]> {
-  const files = await listFiles(sessionId, rootPath);
+export async function getFileSystem(
+  sessionId: string,
+  rootPath = "/workspace"
+): Promise<FileNode[]> {
+  // Enforce workspace-only access
+  if (!isWithinWorkspace(rootPath)) {
+    console.warn(`[Modal] BLOCKED: Attempted to access path outside workspace: ${rootPath}`);
+    return [];
+  }
+
+  // Track total file count across recursion
+  const fileCount = { value: 0 };
+
+  return getFileSystemRecursive(sessionId, rootPath, 0, fileCount);
+}
+
+async function getFileSystemRecursive(
+  sessionId: string,
+  currentPath: string,
+  currentDepth: number,
+  fileCount: { value: number }
+): Promise<FileNode[]> {
+  // Safety check 1: Depth limit
+  if (currentDepth >= MAX_DEPTH) {
+    console.log(`[Modal] Reached max depth ${MAX_DEPTH} at ${currentPath}, stopping recursion`);
+    return [];
+  }
+
+  // Safety check 2: File count limit
+  if (fileCount.value >= MAX_FILES) {
+    console.log(`[Modal] Reached max file count ${MAX_FILES}, stopping recursion`);
+    return [];
+  }
+
+  // Safety check 3: Path must be within workspace (catches symlink escapes)
+  if (!isWithinWorkspace(currentPath)) {
+    console.warn(`[Modal] BLOCKED: Path escaped workspace: ${currentPath}`);
+    return [];
+  }
+
+  const files = await listFiles(sessionId, currentPath);
+
+  // Filter out any files whose resolved paths escape workspace
+  const safeFiles = files.filter(file => {
+    if (!isWithinWorkspace(file.path)) {
+      console.warn(`[Modal] BLOCKED: File path escaped workspace: ${file.path}`);
+      return false;
+    }
+    return true;
+  });
+
+  // Update file count
+  fileCount.value += safeFiles.length;
 
   // Recursively get children for directories
   const filesWithChildren = await Promise.all(
-    files.map(async (file) => {
-      if (file.type === "directory") {
-        const children = await getFileSystem(sessionId, file.path);
+    safeFiles.map(async (file) => {
+      if (file.type === "directory" && fileCount.value < MAX_FILES) {
+        const children = await getFileSystemRecursive(
+          sessionId,
+          file.path,
+          currentDepth + 1,
+          fileCount
+        );
         return { ...file, children };
       }
       return file;

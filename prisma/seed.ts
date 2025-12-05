@@ -141,6 +141,132 @@ async function main() {
 
   console.log(`✅ Created ${seedsCreated} problem seeds (${seedsSkipped} already existed)`);
 
+  // Seed default backend seeds (10 seeds: 5 seniorities × 2 assessment types)
+  console.log("\n🎯 Seeding default backend seeds (Assessment Type system)...");
+
+  const { BACKEND_DEFAULT_SEEDS } = await import("./seeds/backend-default-seeds");
+
+  let defaultSeedsCreated = 0;
+  let defaultSeedsSkipped = 0;
+
+  for (const seedData of BACKEND_DEFAULT_SEEDS) {
+    try {
+      // Check if a default seed already exists for this combination
+      const existing = await prisma.problemSeed.findFirst({
+        where: {
+          targetRole: seedData.targetRole,
+          targetSeniority: seedData.targetSeniority,
+          assessmentType: seedData.assessmentType,
+          isDefaultSeed: true,
+        },
+      });
+
+      if (existing) {
+        defaultSeedsSkipped++;
+        continue;
+      }
+
+      await prisma.problemSeed.create({
+        data: {
+          organizationId: organization.id,
+          title: seedData.title,
+          description: seedData.description,
+          difficulty: seedData.difficulty,
+          category: seedData.category,
+          tags: seedData.tags,
+          topics: seedData.topics,
+          language: seedData.language,
+          estimatedTime: seedData.estimatedTime,
+          seedType: seedData.seedType,
+          status: seedData.status,
+          isSystemSeed: seedData.isSystemSeed,
+
+          // Assessment type targeting fields
+          targetRole: seedData.targetRole,
+          targetSeniority: seedData.targetSeniority,
+          assessmentType: seedData.assessmentType,
+          isDefaultSeed: seedData.isDefaultSeed,
+
+          // Incremental assessment fields (cast to Prisma InputJsonValue)
+          requiredTech: seedData.requiredTech as unknown as object,
+          baseProblem: seedData.baseProblem as unknown as object,
+          progressionHints: seedData.progressionHints as unknown as object,
+          seniorityExpectations: seedData.seniorityExpectations as unknown as object,
+
+          // System Design specific fields
+          designDocTemplate: seedData.designDocTemplate ? (seedData.designDocTemplate as unknown as object) : undefined,
+          architectureHints: seedData.architectureHints ? (seedData.architectureHints as unknown as object) : undefined,
+          implementationScope: seedData.implementationScope || null,
+
+          // Evaluation rubric
+          evaluationRubric: seedData.evaluationRubric as unknown as object,
+        },
+      });
+
+      defaultSeedsCreated++;
+    } catch (error) {
+      console.error(`  ❌ Failed to create default seed "${seedData.title}":`, error);
+    }
+  }
+
+  console.log(`✅ Created ${defaultSeedsCreated} default backend seeds (${defaultSeedsSkipped} already existed)`);
+
+  // Seed complexity profiles (Dynamic Question Generation System)
+  console.log("\n🎲 Seeding complexity profiles (Dynamic Question Generation)...");
+
+  const { ALL_COMPLEXITY_PROFILES } = await import("./seeds/complexity-profiles");
+
+  let profilesCreated = 0;
+  let profilesSkipped = 0;
+
+  for (const profile of ALL_COMPLEXITY_PROFILES) {
+    try {
+      // Check if a default profile already exists for this combination
+      const existing = await prisma.complexityProfile.findFirst({
+        where: {
+          role: profile.role,
+          seniority: profile.seniority,
+          assessmentType: profile.assessmentType,
+          isDefault: true,
+          organizationId: null, // System default
+        },
+      });
+
+      if (existing) {
+        profilesSkipped++;
+        continue;
+      }
+
+      await prisma.complexityProfile.create({
+        data: {
+          role: profile.role,
+          seniority: profile.seniority,
+          assessmentType: profile.assessmentType,
+          entityCountMin: profile.entityCountMin,
+          entityCountMax: profile.entityCountMax,
+          integrationPoints: profile.integrationPoints,
+          businessLogic: profile.businessLogic,
+          ambiguityLevel: profile.ambiguityLevel,
+          timeMinutes: profile.timeMinutes,
+          requiredSkills: profile.requiredSkills,
+          optionalSkillPool: profile.optionalSkillPool,
+          avoidSkills: profile.avoidSkills,
+          pickOptionalCount: profile.pickOptionalCount,
+          domainPool: profile.domainPool,
+          constraints: profile.constraints,
+          isDefault: profile.isDefault,
+          organizationId: null, // System default
+        },
+      });
+
+      profilesCreated++;
+    } catch (error) {
+      console.error(`  ❌ Failed to create profile "${profile.role}/${profile.seniority}/${profile.assessmentType}":`, error);
+    }
+  }
+
+  console.log(`✅ Created ${profilesCreated} complexity profiles (${profilesSkipped} already existed)`);
+
   // Seed technologies
   console.log("\n🔧 Seeding technologies...");
 
@@ -231,6 +357,12 @@ async function main() {
   console.log("  • Algorithms (5 seeds)");
   console.log("  • Full-Stack (4 seeds)");
   console.log("  • Specialized (6 seeds)");
+  console.log(`\n🎯 Default Backend Seeds (Assessment Type System): ${defaultSeedsCreated}`);
+  console.log("  • Real World Problems: Junior, Mid, Senior, Staff, Principal");
+  console.log("  • System Design: Junior, Mid, Senior, Staff, Principal");
+  console.log(`\n🎲 Complexity Profiles (Dynamic Question Generation): ${profilesCreated}`);
+  console.log("  • Real World: 5 seniority levels");
+  console.log("  • System Design: 5 seniority levels");
 }
 
 main()

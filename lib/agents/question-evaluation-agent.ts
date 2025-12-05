@@ -18,6 +18,7 @@ import {
   traceToolExecution,
   traceAgentSession,
 } from '../observability/langsmith';
+import type { AssessmentType } from '@/types/seed';
 
 // =============================================================================
 // Types
@@ -29,6 +30,32 @@ export interface EvaluationCriterion {
   feedback: string;
 }
 
+/**
+ * Real World assessment evaluation criteria
+ */
+export interface RealWorldEvaluationCriteria {
+  problemCompletion: EvaluationCriterion;  // 30 pts
+  codeQuality: EvaluationCriterion;         // 25 pts
+  testing: EvaluationCriterion;             // 20 pts
+  errorHandling: EvaluationCriterion;       // 15 pts
+  efficiency: EvaluationCriterion;          // 10 pts
+}
+
+/**
+ * System Design assessment evaluation criteria
+ */
+export interface SystemDesignEvaluationCriteria {
+  designClarity: EvaluationCriterion;       // 30 pts
+  tradeoffAnalysis: EvaluationCriterion;    // 25 pts
+  apiDesign: EvaluationCriterion;           // 20 pts
+  implementation: EvaluationCriterion;      // 15 pts
+  communication: EvaluationCriterion;       // 10 pts
+}
+
+/**
+ * Legacy evaluation criteria (backwards compatibility)
+ * @deprecated Use RealWorldEvaluationCriteria or SystemDesignEvaluationCriteria
+ */
 export interface EvaluationCriteria {
   problemCompletion: EvaluationCriterion;
   codeQuality: EvaluationCriterion;
@@ -37,10 +64,16 @@ export interface EvaluationCriteria {
   efficiency: EvaluationCriterion;
 }
 
+/**
+ * Union type for all evaluation criteria
+ */
+export type TypedEvaluationCriteria = RealWorldEvaluationCriteria | SystemDesignEvaluationCriteria;
+
 export interface EvaluationResult {
   overallScore: number;
   passed: boolean;
-  criteria: EvaluationCriteria;
+  assessmentType: AssessmentType;
+  criteria: TypedEvaluationCriteria;
   feedback: string;
   strengths: string[];
   improvements: string[];
@@ -69,6 +102,8 @@ export interface QuestionEvaluationConfig {
   passingThreshold?: number;
   workspaceRoot?: string;
   model?: string;
+  /** Assessment type determines which evaluation rubric to use */
+  assessmentType?: AssessmentType;
 }
 
 // =============================================================================
@@ -83,21 +118,10 @@ const MAX_ITERATIONS = 5; // Limit tool iterations for evaluation
 // Prompts
 // =============================================================================
 
-const SYSTEM_PROMPT = `You are a senior software engineer evaluating code submissions for a technical interview.
-
-## Your Role
-Provide honest, constructive, and fair evaluations. Be critical but encouraging.
-Focus on what the code does well and what could be improved.
-
-## Evaluation Criteria (20 points each, 100 total)
-
-1. **Problem Completion (20 pts)**: Does the solution address all stated requirements? Is it functionally complete?
-2. **Code Quality (20 pts)**: Is the code clean, readable, well-organized, and properly named?
-3. **Best Practices (20 pts)**: Does it follow language conventions, idioms, and design patterns?
-4. **Error Handling (20 pts)**: Are edge cases handled? Is there proper validation and error management?
-5. **Efficiency (20 pts)**: Is the solution reasonably performant? Are there obvious inefficiencies?
-
-## Available Tools
+/**
+ * Shared prompt sections for tool usage
+ */
+const SHARED_TOOL_INSTRUCTIONS = `## Available Tools
 You have access to the following tools to gather context:
 - **Read**: Read file contents from the workspace
 - **ListFiles**: List directory contents
@@ -123,31 +147,116 @@ NEVER use Bash for:
 - System modifications (no chmod on non-test files, no chown)
 - Any destructive operations
 
-Your role is to EVALUATE code, not to modify the workspace. The Bash tool is ONLY for gathering additional information to inform your evaluation.
+Your role is to EVALUATE code, not to modify the workspace. The Bash tool is ONLY for gathering additional information to inform your evaluation.`;
+
+/**
+ * Real World Problem evaluation system prompt
+ * Focuses on practical implementation, testing, and code quality
+ */
+const REAL_WORLD_SYSTEM_PROMPT = `You are a senior software engineer evaluating code submissions for a technical interview.
+
+## Your Role
+Provide honest, constructive, and fair evaluations. Be critical but encouraging.
+Focus on what the code does well and what could be improved.
+
+## Assessment Type: Real World Problem
+This is a practical coding assessment focused on implementing working software.
+The candidate is expected to write functional code, tests, and handle edge cases.
+
+## Evaluation Criteria (100 total points)
+
+1. **Problem Completion (30 pts)**: Does the solution address all stated requirements? Is it functionally complete? Are all acceptance criteria met?
+2. **Code Quality (25 pts)**: Is the code clean, readable, well-organized, and properly named? Does it follow SOLID principles?
+3. **Testing (20 pts)**: Are there comprehensive tests? Do tests cover edge cases and error scenarios? Is test coverage adequate?
+4. **Error Handling (15 pts)**: Are edge cases handled gracefully? Is there proper input validation? Are errors informative?
+5. **Efficiency (10 pts)**: Is the solution reasonably performant? Are there obvious inefficiencies? Is complexity acceptable?
+
+${SHARED_TOOL_INSTRUCTIONS}
 
 ## Workflow
 1. First, run tests using RunTests to verify the solution works
-2. Read additional files for context (test files, configs) if needed
-3. List files to understand project structure if needed
-4. After gathering context, provide your evaluation
+2. Read test files to assess test coverage and quality
+3. Read additional files for context (configs, related modules) if needed
+4. List files to understand project structure if needed
+5. After gathering context, provide your evaluation
 
 ## IMPORTANT: Final Evaluation Format
 When ready to submit your evaluation, respond with EXACTLY this format:
 
 FINAL_EVALUATION:
 {
+  "assessmentType": "REAL_WORLD",
   "overallScore": <0-100>,
   "criteria": {
-    "problemCompletion": { "score": <0-20>, "feedback": "<specific feedback>" },
-    "codeQuality": { "score": <0-20>, "feedback": "<specific feedback>" },
-    "bestPractices": { "score": <0-20>, "feedback": "<specific feedback>" },
-    "errorHandling": { "score": <0-20>, "feedback": "<specific feedback>" },
-    "efficiency": { "score": <0-20>, "feedback": "<specific feedback>" }
+    "problemCompletion": { "score": <0-30>, "maxScore": 30, "feedback": "<specific feedback>" },
+    "codeQuality": { "score": <0-25>, "maxScore": 25, "feedback": "<specific feedback>" },
+    "testing": { "score": <0-20>, "maxScore": 20, "feedback": "<specific feedback>" },
+    "errorHandling": { "score": <0-15>, "maxScore": 15, "feedback": "<specific feedback>" },
+    "efficiency": { "score": <0-10>, "maxScore": 10, "feedback": "<specific feedback>" }
   },
   "feedback": "<overall feedback paragraph>",
   "strengths": ["<strength 1>", "<strength 2>"],
   "improvements": ["<improvement 1>", "<improvement 2>"]
 }`;
+
+/**
+ * System Design evaluation system prompt
+ * Focuses on architecture, trade-offs, API design, and documentation
+ */
+const SYSTEM_DESIGN_SYSTEM_PROMPT = `You are a senior software architect evaluating system design submissions for a technical interview.
+
+## Your Role
+Provide honest, constructive, and fair evaluations of architectural decisions.
+Focus on how well the candidate reasons about system design trade-offs.
+Evaluate both the design documentation AND the partial implementation.
+
+## Assessment Type: System Design (Hybrid)
+This is a system design assessment with a hybrid format:
+- The candidate writes a DESIGN.md document explaining their architecture
+- The candidate implements core components (API contracts, key services)
+- Both documentation and implementation are evaluated together
+
+## Evaluation Criteria (100 total points)
+
+1. **Design Clarity (30 pts)**: Is the architecture clearly documented? Are component responsibilities well-defined? Is the overall system structure understandable?
+2. **Trade-off Analysis (25 pts)**: Does the candidate identify and discuss trade-offs? Are scalability, consistency, and availability considered? Are decisions justified?
+3. **API Design (20 pts)**: Are API contracts well-structured? Are interfaces clean and intuitive? Is the API consistent and follows best practices?
+4. **Implementation (15 pts)**: Does the code implement core logic correctly? Are the key components functional? Does implementation match the design?
+5. **Communication (10 pts)**: Is the design document well-written? Are diagrams/explanations clear? Would a team understand this design?
+
+${SHARED_TOOL_INSTRUCTIONS}
+
+## Workflow
+1. First, read the DESIGN.md or design document to understand the proposed architecture
+2. Run tests using RunTests to verify the implementation works
+3. Read implementation files to assess how well code matches the design
+4. Read API contracts or interface definitions
+5. After gathering context, provide your evaluation
+
+## IMPORTANT: Final Evaluation Format
+When ready to submit your evaluation, respond with EXACTLY this format:
+
+FINAL_EVALUATION:
+{
+  "assessmentType": "SYSTEM_DESIGN",
+  "overallScore": <0-100>,
+  "criteria": {
+    "designClarity": { "score": <0-30>, "maxScore": 30, "feedback": "<specific feedback>" },
+    "tradeoffAnalysis": { "score": <0-25>, "maxScore": 25, "feedback": "<specific feedback>" },
+    "apiDesign": { "score": <0-20>, "maxScore": 20, "feedback": "<specific feedback>" },
+    "implementation": { "score": <0-15>, "maxScore": 15, "feedback": "<specific feedback>" },
+    "communication": { "score": <0-10>, "maxScore": 10, "feedback": "<specific feedback>" }
+  },
+  "feedback": "<overall feedback paragraph>",
+  "strengths": ["<strength 1>", "<strength 2>"],
+  "improvements": ["<improvement 1>", "<improvement 2>"]
+}`;
+
+/**
+ * Legacy system prompt for backwards compatibility
+ * @deprecated Use REAL_WORLD_SYSTEM_PROMPT or SYSTEM_DESIGN_SYSTEM_PROMPT
+ */
+const SYSTEM_PROMPT = REAL_WORLD_SYSTEM_PROMPT;
 
 // =============================================================================
 // Tool Definitions (READ-ONLY only)
@@ -264,10 +373,20 @@ export class QuestionEvaluationAgent {
       passingThreshold: config.passingThreshold ?? DEFAULT_THRESHOLD,
       workspaceRoot: config.workspaceRoot ?? '/workspace',
       model: config.model ?? DEFAULT_MODEL,
+      assessmentType: config.assessmentType ?? 'REAL_WORLD',
     };
 
     // Initialize with LangSmith tracing
     this.client = getTracedAnthropicClient(config.sessionId);
+  }
+
+  /**
+   * Get the system prompt based on assessment type
+   */
+  private getSystemPrompt(): string {
+    return this.config.assessmentType === 'SYSTEM_DESIGN'
+      ? SYSTEM_DESIGN_SYSTEM_PROMPT
+      : REAL_WORLD_SYSTEM_PROMPT;
   }
 
   /**
@@ -306,7 +425,7 @@ export class QuestionEvaluationAgent {
         model: this.config.model!,
         max_tokens: 4096,
         temperature: 0.3,
-        system: SYSTEM_PROMPT,
+        system: this.getSystemPrompt(),
         messages: conversation,
         tools: EVALUATION_TOOLS,
       });
@@ -378,7 +497,7 @@ export class QuestionEvaluationAgent {
       model: this.config.model!,
       max_tokens: 2048,
       temperature: 0.3,
-      system: SYSTEM_PROMPT,
+      system: this.getSystemPrompt(),
       messages: conversation,
     });
 
@@ -828,7 +947,8 @@ After gathering information, provide your FINAL_EVALUATION with JSON.
       });
 
     // Try to parse
-    let json;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let json: any;
     try {
       json = JSON.parse(jsonString);
     } catch (parseError) {
@@ -848,51 +968,8 @@ After gathering information, provide your FINAL_EVALUATION with JSON.
         const feedbackMatch = jsonString.match(/"feedback"\s*:\s*"([^"]*(?:\\.[^"]*)*)"/);
 
         if (overallScoreMatch) {
-          // Build a minimal result from what we could extract
-          const extractNumber = (pattern: RegExp): number => {
-            const match = jsonString.match(pattern);
-            return match ? parseInt(match[1], 10) : 0;
-          };
-
-          const extractString = (pattern: RegExp): string => {
-            const match = jsonString.match(pattern);
-            return match ? match[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : '';
-          };
-
-          return {
-            overallScore: extractNumber(/"overallScore"\s*:\s*(\d+)/),
-            passed: false,
-            criteria: {
-              problemCompletion: {
-                score: extractNumber(/"problemCompletion"[^}]*"score"\s*:\s*(\d+)/),
-                maxScore: 20,
-                feedback: extractString(/"problemCompletion"[^}]*"feedback"\s*:\s*"([^"]+)"/),
-              },
-              codeQuality: {
-                score: extractNumber(/"codeQuality"[^}]*"score"\s*:\s*(\d+)/),
-                maxScore: 20,
-                feedback: extractString(/"codeQuality"[^}]*"feedback"\s*:\s*"([^"]+)"/),
-              },
-              bestPractices: {
-                score: extractNumber(/"bestPractices"[^}]*"score"\s*:\s*(\d+)/),
-                maxScore: 20,
-                feedback: extractString(/"bestPractices"[^}]*"feedback"\s*:\s*"([^"]+)"/),
-              },
-              errorHandling: {
-                score: extractNumber(/"errorHandling"[^}]*"score"\s*:\s*(\d+)/),
-                maxScore: 20,
-                feedback: extractString(/"errorHandling"[^}]*"feedback"\s*:\s*"([^"]+)"/),
-              },
-              efficiency: {
-                score: extractNumber(/"efficiency"[^}]*"score"\s*:\s*(\d+)/),
-                maxScore: 20,
-                feedback: extractString(/"efficiency"[^}]*"feedback"\s*:\s*"([^"]+)"/),
-              },
-            },
-            feedback: feedbackMatch ? feedbackMatch[1] : 'Evaluation completed but feedback parsing failed.',
-            strengths: [],
-            improvements: [],
-          };
+          // Build a minimal fallback result based on config assessment type
+          return this.buildFallbackResult(jsonString, feedbackMatch);
         }
 
         // If we still can't parse, throw with context
@@ -903,40 +980,181 @@ After gathering information, provide your FINAL_EVALUATION with JSON.
       }
     }
 
-    // Build result with proper structure
+    // Determine assessment type from response or config
+    const assessmentType: AssessmentType =
+      json.assessmentType === 'SYSTEM_DESIGN' ? 'SYSTEM_DESIGN' :
+      json.assessmentType === 'REAL_WORLD' ? 'REAL_WORLD' :
+      (this.config.assessmentType || 'REAL_WORLD');
+
+    // Build result with type-specific criteria structure
     return {
       overallScore: json.overallScore || 0,
       passed: false, // Will be set by caller based on threshold
-      criteria: {
-        problemCompletion: {
-          score: json.criteria?.problemCompletion?.score || 0,
-          maxScore: 20,
-          feedback: json.criteria?.problemCompletion?.feedback || '',
-        },
-        codeQuality: {
-          score: json.criteria?.codeQuality?.score || 0,
-          maxScore: 20,
-          feedback: json.criteria?.codeQuality?.feedback || '',
-        },
-        bestPractices: {
-          score: json.criteria?.bestPractices?.score || 0,
-          maxScore: 20,
-          feedback: json.criteria?.bestPractices?.feedback || '',
-        },
-        errorHandling: {
-          score: json.criteria?.errorHandling?.score || 0,
-          maxScore: 20,
-          feedback: json.criteria?.errorHandling?.feedback || '',
-        },
-        efficiency: {
-          score: json.criteria?.efficiency?.score || 0,
-          maxScore: 20,
-          feedback: json.criteria?.efficiency?.feedback || '',
-        },
-      },
+      assessmentType,
+      criteria: this.buildCriteriaFromJson(json.criteria, assessmentType),
       feedback: json.feedback || '',
       strengths: json.strengths || [],
       improvements: json.improvements || [],
+    };
+  }
+
+  /**
+   * Build type-specific criteria from JSON response
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private buildCriteriaFromJson(criteria: any, type: AssessmentType): TypedEvaluationCriteria {
+    if (type === 'SYSTEM_DESIGN') {
+      return {
+        designClarity: {
+          score: criteria?.designClarity?.score || 0,
+          maxScore: 30,
+          feedback: criteria?.designClarity?.feedback || '',
+        },
+        tradeoffAnalysis: {
+          score: criteria?.tradeoffAnalysis?.score || 0,
+          maxScore: 25,
+          feedback: criteria?.tradeoffAnalysis?.feedback || '',
+        },
+        apiDesign: {
+          score: criteria?.apiDesign?.score || 0,
+          maxScore: 20,
+          feedback: criteria?.apiDesign?.feedback || '',
+        },
+        implementation: {
+          score: criteria?.implementation?.score || 0,
+          maxScore: 15,
+          feedback: criteria?.implementation?.feedback || '',
+        },
+        communication: {
+          score: criteria?.communication?.score || 0,
+          maxScore: 10,
+          feedback: criteria?.communication?.feedback || '',
+        },
+      } as SystemDesignEvaluationCriteria;
+    }
+
+    // REAL_WORLD (default)
+    return {
+      problemCompletion: {
+        score: criteria?.problemCompletion?.score || 0,
+        maxScore: 30,
+        feedback: criteria?.problemCompletion?.feedback || '',
+      },
+      codeQuality: {
+        score: criteria?.codeQuality?.score || 0,
+        maxScore: 25,
+        feedback: criteria?.codeQuality?.feedback || '',
+      },
+      testing: {
+        score: criteria?.testing?.score || 0,
+        maxScore: 20,
+        feedback: criteria?.testing?.feedback || '',
+      },
+      errorHandling: {
+        score: criteria?.errorHandling?.score || 0,
+        maxScore: 15,
+        feedback: criteria?.errorHandling?.feedback || '',
+      },
+      efficiency: {
+        score: criteria?.efficiency?.score || 0,
+        maxScore: 10,
+        feedback: criteria?.efficiency?.feedback || '',
+      },
+    } as RealWorldEvaluationCriteria;
+  }
+
+  /**
+   * Build a fallback result when JSON parsing fails
+   */
+  private buildFallbackResult(
+    jsonString: string,
+    feedbackMatch: RegExpMatchArray | null
+  ): Omit<EvaluationResult, 'metadata'> {
+    const extractNumber = (pattern: RegExp): number => {
+      const match = jsonString.match(pattern);
+      return match ? parseInt(match[1], 10) : 0;
+    };
+
+    const extractString = (pattern: RegExp): string => {
+      const match = jsonString.match(pattern);
+      return match ? match[1].replace(/\\n/g, ' ').replace(/\\"/g, '"') : '';
+    };
+
+    const assessmentType = this.config.assessmentType || 'REAL_WORLD';
+
+    if (assessmentType === 'SYSTEM_DESIGN') {
+      return {
+        overallScore: extractNumber(/"overallScore"\s*:\s*(\d+)/),
+        passed: false,
+        assessmentType: 'SYSTEM_DESIGN',
+        criteria: {
+          designClarity: {
+            score: extractNumber(/"designClarity"[^}]*"score"\s*:\s*(\d+)/),
+            maxScore: 30,
+            feedback: extractString(/"designClarity"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+          },
+          tradeoffAnalysis: {
+            score: extractNumber(/"tradeoffAnalysis"[^}]*"score"\s*:\s*(\d+)/),
+            maxScore: 25,
+            feedback: extractString(/"tradeoffAnalysis"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+          },
+          apiDesign: {
+            score: extractNumber(/"apiDesign"[^}]*"score"\s*:\s*(\d+)/),
+            maxScore: 20,
+            feedback: extractString(/"apiDesign"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+          },
+          implementation: {
+            score: extractNumber(/"implementation"[^}]*"score"\s*:\s*(\d+)/),
+            maxScore: 15,
+            feedback: extractString(/"implementation"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+          },
+          communication: {
+            score: extractNumber(/"communication"[^}]*"score"\s*:\s*(\d+)/),
+            maxScore: 10,
+            feedback: extractString(/"communication"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+          },
+        } as SystemDesignEvaluationCriteria,
+        feedback: feedbackMatch ? feedbackMatch[1] : 'Evaluation completed but feedback parsing failed.',
+        strengths: [],
+        improvements: [],
+      };
+    }
+
+    // REAL_WORLD (default)
+    return {
+      overallScore: extractNumber(/"overallScore"\s*:\s*(\d+)/),
+      passed: false,
+      assessmentType: 'REAL_WORLD',
+      criteria: {
+        problemCompletion: {
+          score: extractNumber(/"problemCompletion"[^}]*"score"\s*:\s*(\d+)/),
+          maxScore: 30,
+          feedback: extractString(/"problemCompletion"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+        },
+        codeQuality: {
+          score: extractNumber(/"codeQuality"[^}]*"score"\s*:\s*(\d+)/),
+          maxScore: 25,
+          feedback: extractString(/"codeQuality"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+        },
+        testing: {
+          score: extractNumber(/"testing"[^}]*"score"\s*:\s*(\d+)/),
+          maxScore: 20,
+          feedback: extractString(/"testing"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+        },
+        errorHandling: {
+          score: extractNumber(/"errorHandling"[^}]*"score"\s*:\s*(\d+)/),
+          maxScore: 15,
+          feedback: extractString(/"errorHandling"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+        },
+        efficiency: {
+          score: extractNumber(/"efficiency"[^}]*"score"\s*:\s*(\d+)/),
+          maxScore: 10,
+          feedback: extractString(/"efficiency"[^}]*"feedback"\s*:\s*"([^"]+)"/),
+        },
+      } as RealWorldEvaluationCriteria,
+      feedback: feedbackMatch ? feedbackMatch[1] : 'Evaluation completed but feedback parsing failed.',
+      strengths: [],
+      improvements: [],
     };
   }
 }

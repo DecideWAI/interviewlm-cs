@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { modalService as modal, questionService as questions, sessionService as sessions } from "@/lib/services";
+import { modalService as modal, sessionService as sessions, dynamicQuestionGenerator } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
+import type { AssessmentType } from "@prisma/client";
+
+// GeneratedQuestionContent type is now imported from dynamic-question-generator service
 
 /**
  * Generate default starter code template based on language
@@ -227,19 +230,57 @@ module.exports = longestPalindrome;`,
       throw new NotFoundError("Assessment for candidate");
     }
 
-    // Use questions service to generate appropriate question (creates it in DB)
-    const generatedQuestionData = await logger.time(
-      'generateQuestion',
-      () => questions.generateQuestion({
-        candidateId,
-        difficulty: mapSeniorityToDifficulty(assessment.seniority),
-        language: assessment.techStack?.[0]?.toLowerCase() || "typescript",
+    // Use DynamicQuestionGenerator with complexity profiles
+    const assessmentType: AssessmentType = assessment.assessmentType || 'REAL_WORLD';
+    const role = assessment.role || 'backend';
+    const seniority = assessment.seniority?.toLowerCase() || 'mid';
+    const language = assessment.techStack?.[0]?.toLowerCase() || 'typescript';
+
+    logger.info('[Initialize] Generating question with DynamicQuestionGenerator', {
+      candidateId,
+      role,
+      seniority,
+      assessmentType,
+      techStack: assessment.techStack,
+    });
+
+    // Generate question dynamically using complexity profiles
+    const generatedContent = await logger.time(
+      'dynamicQuestionGenerator',
+      () => dynamicQuestionGenerator.generate({
+        role,
+        seniority,
+        assessmentType,
+        techStack: assessment.techStack || [language],
+        organizationId: candidate.organizationId,
       }),
-      { candidateId, difficulty: assessment.seniority }
+      { candidateId, role, seniority, assessmentType }
     );
 
-    // Question is already created in the database by generateQuestion
-    question = generatedQuestionData.question as any;
+    // Create question in database
+    question = await prisma.generatedQuestion.create({
+      data: {
+        candidateId,
+        questionSeedId: null, // No longer using seeds
+        order: 1,
+        title: generatedContent.title,
+        description: generatedContent.description,
+        difficulty: mapSeniorityToDifficulty(assessment.seniority),
+        language,
+        requirements: generatedContent.requirements,
+        estimatedTime: generatedContent.estimatedTime,
+        starterCode: generatedContent.starterCode,
+        testCases: [], // Real-world problems use AI evaluation
+        status: 'PENDING',
+      },
+    });
+
+    logger.info('[Initialize] Generated question with DynamicQuestionGenerator', {
+      candidateId,
+      questionId: question.id,
+      questionTitle: generatedContent.title,
+      assessmentType,
+    });
   }
 
   // Create or get Modal volume for sandbox
