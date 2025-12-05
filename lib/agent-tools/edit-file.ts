@@ -48,10 +48,13 @@ export const editFileTool: Anthropic.Tool = {
  */
 export async function executeEditFile(
   sessionId: string,
-  filePath: string,
+  rawFilePath: string,
   oldString: string,
   newString: string
 ): Promise<EditFileToolOutput> {
+  // Normalize path to always be absolute (matching file tree paths)
+  const filePath = rawFilePath.startsWith("/") ? rawFilePath : `/workspace/${rawFilePath}`;
+
   try {
     // Read the current file content
     const readResult = await modal.readFile(sessionId, filePath);
@@ -86,7 +89,7 @@ export async function executeEditFile(
 
     return {
       success: true,
-      path: filePath,
+      path: filePath,  // Return normalized absolute path
       matchFound: true,
       replacementsCount: 1, // Only replaces first occurrence
     };

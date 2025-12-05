@@ -89,37 +89,83 @@ export interface FileNode {
 // ============================================================================
 
 /**
- * Create a new sandbox for a session (internal use)
+ * Get the volume name for a session (deterministic)
  */
-async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sandboxId: string }> {
+function getVolumeName(sessionId: string): string {
+  return `interview-volume-${sessionId}`;
+}
+
+/**
+ * Get or create a persistent volume for a session
+ * Volumes persist files across sandbox restarts
+ */
+async function getOrCreateVolume(sessionId: string): Promise<any> {
+  const modal = getModalClient();
+  const volumeName = getVolumeName(sessionId);
+
+  console.log(`[Modal] Getting or creating volume: ${volumeName}`);
+
+  // fromName with createIfMissing will create if doesn't exist, or return existing
+  const volume = await modal.volumes.fromName(volumeName, { createIfMissing: true });
+
+  console.log(`[Modal] Volume ready: ${volumeName}`);
+  return volume;
+}
+
+/**
+ * Create a new sandbox for a session with mounted volume (internal use)
+ * The volume is persistent - files survive sandbox restarts
+ */
+async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sandboxId: string; volumeName: string }> {
   const modal = getModalClient();
 
   // Get or create the app
   const app = await modal.apps.fromName("interviewlm-executor", { createIfMissing: true });
 
+  // Get or create persistent volume for this session
+  const volume = await getOrCreateVolume(sessionId);
+  const volumeName = getVolumeName(sessionId);
+
   // Create image with development tools
   // Using Debian as base - candidates can install any language/framework they need
   const image = modal.images.fromRegistry("debian:bookworm-slim");
 
-  // Create sandbox with the image
+  // Create sandbox with the image AND mounted volume
+  // The volume is mounted at /workspace - files persist here
   const sandbox = await modal.sandboxes.create(app, image, {
     timeoutMs: SANDBOX_TIMEOUT_MS,
     cpu: 2.0,
     memoryMiB: 2048,
+    volumes: {
+      "/workspace": volume,
+    },
   });
 
-  // Initialize workspace
-  await exec(sandbox, ["mkdir", "-p", "/workspace"]);
+  // Verify essential tools are available (base64 is needed for file writes)
+  const checkProc = await exec(sandbox, ["which", "base64"]);
+  const checkExitCode = await checkProc.exitCode;
+  const checkOutput = await checkProc.stdout.readText();
+  console.log(`[Modal] base64 check: exitCode=${checkExitCode}, path=${checkOutput.trim()}`);
+
+  // If base64 is missing (unlikely on Debian), install coreutils
+  if (checkExitCode !== 0) {
+    console.log(`[Modal] Installing coreutils for base64 support...`);
+    const installProc = await exec(sandbox, ["bash", "-c", "apt-get update && apt-get install -y coreutils"]);
+    const installExit = await installProc.exitCode;
+    if (installExit !== 0) {
+      console.error(`[Modal] Failed to install coreutils`);
+    }
+  }
 
   const sandboxId = sandbox.sandboxId;
-  console.log(`[Modal] Created new sandbox ${sandboxId} for session ${sessionId}`);
+  console.log(`[Modal] Created new sandbox ${sandboxId} with volume ${volumeName} for session ${sessionId}`);
 
-  return { sandbox, sandboxId };
+  return { sandbox, sandboxId, volumeName };
 }
 
 /**
  * Try to reconnect to an existing sandbox by ID
- * Verifies the sandbox is still healthy by running a simple command
+ * If reconnection fails, returns null (caller should create new sandbox with same volume)
  */
 async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
   try {
@@ -138,7 +184,7 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
 
     const isHealthy = await healthCheck;
     if (!isHealthy) {
-      console.log(`[Modal] Sandbox ${sandboxId} failed health check, will create new one`);
+      console.log(`[Modal] Sandbox ${sandboxId} failed health check, will create new sandbox with same volume`);
       return null;
     }
 
@@ -152,23 +198,25 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
 
 /**
  * Create a sandbox for a session (public API)
+ * The sandbox is created with a mounted persistent volume (volume_{sessionId})
  */
 export async function createSandbox(sessionId: string): Promise<SandboxInstance> {
-  const { sandbox, sandboxId } = await createNewSandbox(sessionId);
+  const { sandbox, sandboxId, volumeName } = await createNewSandbox(sessionId);
   const createdAt = new Date();
 
   // Store in memory cache
   sandboxes.set(sessionId, { sandbox, sandboxId, createdAt });
 
   // Persist sandbox ID to database for reconnection after server restart
+  // Note: Volume is deterministic (based on sessionId), but we store sandboxId for quick reconnect
   try {
     await prisma.candidate.update({
       where: { id: sessionId },
-      data: { volumeId: sandboxId },
+      data: { volumeId: sandboxId }, // Store sandboxId for quick reconnection
     });
-    console.log(`[Modal] Persisted sandbox ID ${sandboxId} to database for session ${sessionId}`);
+    console.log(`[Modal] Persisted sandbox ID ${sandboxId} (volume: ${volumeName}) for session ${sessionId}`);
   } catch (dbError) {
-    // Non-critical - sandbox still works, just won't survive server restart
+    // Non-critical - sandbox still works, volume is deterministic
     console.warn(`[Modal] Failed to persist sandbox ID to database:`, dbError);
   }
 
@@ -184,8 +232,12 @@ export async function createSandbox(sessionId: string): Promise<SandboxInstance>
 /**
  * Get or create sandbox for a session
  *
+ * IMPORTANT: Uses persistent volumes so files survive sandbox restarts.
+ * - Volume name is deterministic: volume_{sessionId}
+ * - If sandbox fails/expires, a new sandbox is created with the SAME volume
+ * - Files in /workspace persist across sandbox restarts
+ *
  * Uses Redis distributed lock to prevent race conditions across server instances.
- * Falls back to in-memory pending map when Redis is unavailable.
  */
 export async function getOrCreateSandbox(sessionId: string): Promise<any> {
   // 1. Check in-memory cache first (fast path)
@@ -202,7 +254,6 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
   }
 
   // 3. Create the promise FIRST, then set it in pending map IMMEDIATELY
-  // This prevents race conditions where multiple requests start before the map is set
   let resolveCreation!: (sandbox: any) => void;
   let rejectCreation!: (error: Error) => void;
   const creationPromise = new Promise<any>((resolve, reject) => {
@@ -230,7 +281,8 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
         return;
       }
 
-      // Try to reconnect from database (sandbox may exist from previous server run)
+      // Try to reconnect to existing sandbox from database
+      let sandbox: any = null;
       try {
         const candidate = await prisma.candidate.findUnique({
           where: { id: sessionId },
@@ -239,19 +291,22 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
 
         if (candidate?.volumeId) {
           console.log(`[Modal] Attempting to reconnect to sandbox ${candidate.volumeId} for session ${sessionId}`);
-          const sandbox = await reconnectToSandbox(candidate.volumeId);
+          sandbox = await reconnectToSandbox(candidate.volumeId);
           if (sandbox) {
             sandboxes.set(sessionId, { sandbox, sandboxId: candidate.volumeId, createdAt: new Date() });
             resolveCreation(sandbox);
             return;
           }
+          // Sandbox failed to reconnect - will create new one with SAME volume below
+          console.log(`[Modal] Sandbox reconnect failed, creating new sandbox with persistent volume`);
         }
       } catch (dbError) {
         console.log(`[Modal] Could not lookup sandbox from database:`, dbError);
       }
 
-      // Create new sandbox (no existing one found)
-      console.log(`[Modal] Creating new sandbox for session ${sessionId}`);
+      // Create new sandbox with persistent volume
+      // Even if old sandbox expired, files persist in the volume
+      console.log(`[Modal] Creating new sandbox for session ${sessionId} (volume: ${getVolumeName(sessionId)})`);
       await createSandbox(sessionId);
       const newSandbox = sandboxes.get(sessionId)?.sandbox;
       if (newSandbox) {
@@ -280,10 +335,12 @@ export async function runCommand(
 ): Promise<CommandResult> {
   const safety = isCommandSafe(command);
   if (!safety.safe) {
+    console.warn(`[Modal] Command blocked: ${safety.reason}`);
     return { success: false, stdout: "", stderr: safety.reason!, exitCode: 1, error: safety.reason };
   }
 
   try {
+    console.log(`[Modal] Running command for session ${sessionId}: ${command.substring(0, 100)}...`);
     const sandbox = await getOrCreateSandbox(sessionId);
     const fullCmd = `cd ${workingDir} 2>/dev/null || mkdir -p ${workingDir} && cd ${workingDir} && ${command}`;
     const proc = await exec(sandbox, ["bash", "-c", fullCmd]);
@@ -291,6 +348,8 @@ export async function runCommand(
     const stdout = await proc.stdout.readText();
     const stderr = await proc.stderr.readText();
     const exitCode = await proc.exitCode;
+
+    console.log(`[Modal] Command completed: exitCode=${exitCode}, stdout=${stdout.length}b, stderr=${stderr.length}b`);
 
     return {
       success: exitCode === 0,
@@ -300,6 +359,7 @@ export async function runCommand(
     };
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Modal] Command failed:`, error);
     return { success: false, stdout: "", stderr: msg, exitCode: 1, error: msg };
   }
 }
@@ -312,20 +372,88 @@ export async function writeFile(
   filePath: string,
   content: string
 ): Promise<{ success: boolean; error?: string }> {
+  // Note: 'exec' here is Modal sandbox exec wrapper (line 64), NOT Node.js child_process
   try {
+    console.log(`[Modal] Writing file ${filePath} for session ${sessionId}, contentLength=${content.length}`);
     const sandbox = await getOrCreateSandbox(sessionId);
     const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
     const parentDir = absPath.split("/").slice(0, -1).join("/");
 
-    await exec(sandbox, ["mkdir", "-p", parentDir]);
+    console.log(`[Modal] Creating parent directory: ${parentDir}`);
+    // Modal sandbox exec - runs inside isolated container, not local shell
+    await sandbox["exec"](["mkdir", "-p", parentDir]);
 
-    // Use base64 to handle special characters
+    // Use base64 to handle special characters safely
     const encoded = Buffer.from(content).toString("base64");
-    await exec(sandbox, ["bash", "-c", `echo '${encoded}' | base64 -d > '${absPath}'`]);
+    console.log(`[Modal] Writing ${encoded.length} bytes (base64) to ${absPath}`);
 
+    // Write base64 content to a temp file first, then decode
+    // This is more reliable than heredocs or echo with large content
+    const tempPath = `/tmp/file_${Date.now()}.b64`;
+
+    // Write encoded content using printf (more portable than echo for special chars)
+    // Split into chunks to avoid argument length limits
+    const CHUNK_SIZE = 50000; // Safe chunk size for shell arguments
+    let success = true;
+
+    if (encoded.length <= CHUNK_SIZE) {
+      // Small file - write directly
+      const writeProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${encoded}' | base64 -d > '${absPath}'`]);
+      const exitCode = await writeProc.exitCode;
+      if (exitCode !== 0) {
+        const stderr = await writeProc.stderr.readText();
+        console.error(`[Modal] Write failed: exitCode=${exitCode}, stderr=${stderr}`);
+        success = false;
+      }
+    } else {
+      // Large file - write to temp file in chunks, then decode
+      for (let i = 0; i < encoded.length; i += CHUNK_SIZE) {
+        const chunk = encoded.slice(i, i + CHUNK_SIZE);
+        const op = i === 0 ? '>' : '>>';
+        const chunkProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${chunk}' ${op} '${tempPath}'`]);
+        const chunkExit = await chunkProc.exitCode;
+        if (chunkExit !== 0) {
+          success = false;
+          break;
+        }
+      }
+
+      if (success) {
+        // Decode the temp file to the target path
+        const decodeProc = await sandbox["exec"](["bash", "-c", `base64 -d '${tempPath}' > '${absPath}' && rm -f '${tempPath}'`]);
+        const decodeExit = await decodeProc.exitCode;
+        if (decodeExit !== 0) {
+          const stderr = await decodeProc.stderr.readText();
+          console.error(`[Modal] Decode failed: ${stderr}`);
+          success = false;
+        }
+      }
+    }
+
+    if (!success) {
+      return { success: false, error: "Failed to write file content" };
+    }
+
+    // Verify the file was written with correct size
+    const verifyProc = await sandbox["exec"](["bash", "-c", `stat -c '%s' '${absPath}' 2>/dev/null || stat -f '%z' '${absPath}'`]);
+    const verifyOutput = await verifyProc.stdout.readText();
+    const actualSize = parseInt(verifyOutput.trim(), 10);
+    const expectedSize = content.length;
+
+    console.log(`[Modal] Write verification: file size ${actualSize} bytes (expected ~${expectedSize})`);
+
+    // Warn if size seems wrong (allow for encoding differences)
+    if (actualSize === 0 && expectedSize > 0) {
+      console.error(`[Modal] WARNING: File was written but appears empty!`);
+      return { success: false, error: "File was created but content is empty" };
+    }
+
+    console.log(`[Modal] Successfully wrote file ${filePath}`);
     return { success: true };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Modal] Failed to write file ${filePath}:`, errorMsg);
+    return { success: false, error: errorMsg };
   }
 }
 
@@ -352,8 +480,11 @@ export async function readFile(
       const content = await proc.stdout.readText();
       const exitCode = await proc.exitCode;
 
+      console.log(`[Modal] cat ${absPath} exitCode=${exitCode}, contentLength=${content?.length || 0}`);
+
       if (exitCode !== 0) {
         const stderr = await proc.stderr.readText();
+        console.error(`[Modal] cat stderr: ${stderr}`);
         return { success: false, error: stderr || `File not found: ${absPath}` };
       }
 
@@ -361,7 +492,7 @@ export async function readFile(
     })();
 
     const result = await Promise.race([readPromise, timeoutPromise]);
-    console.log(`[Modal] Successfully read file ${filePath}`);
+    console.log(`[Modal] Successfully read file ${filePath}, hasContent=${!!result.content}, length=${result.content?.length || 0}`);
     return result;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
@@ -378,14 +509,35 @@ export async function listFiles(
   directory = "/workspace"
 ): Promise<FileNode[]> {
   try {
+    console.log(`[Modal] Listing files in ${directory} for session ${sessionId}`);
     const sandbox = await getOrCreateSandbox(sessionId);
-    const proc = await exec(sandbox, ["bash", "-c", `ls -la ${directory} 2>/dev/null`]);
+
+    // Use ls -la to get detailed file listing
+    const proc = await exec(sandbox, ["ls", "-la", directory]);
     const stdout = await proc.stdout.readText();
+    const stderr = await proc.stderr.readText();
+    const exitCode = await proc.exitCode;
+
+    console.log(`[Modal] ls exitCode=${exitCode}, stdout=${stdout.length}b, stderr=${stderr.length}b`);
+    console.log(`[Modal] ls raw output:\n${stdout}`);
+
+    if (exitCode !== 0 || !stdout.trim()) {
+      console.log(`[Modal] Directory ${directory} is empty or doesn't exist: ${stderr}`);
+      return [];
+    }
 
     const files: FileNode[] = [];
-    for (const line of stdout.trim().split("\n")) {
+    const lines = stdout.trim().split("\n");
+
+    for (const line of lines) {
+      // Skip the "total" line at the start
+      if (line.startsWith("total")) continue;
+
+      // Parse ls -la output: permissions links owner group size month day time name
+      // Example: -rw-r--r-- 1 root root 1234 Dec 5 12:00 filename.txt
       const parts = line.trim().split(/\s+/);
-      if (parts.length >= 9 && !line.startsWith("total")) {
+
+      if (parts.length >= 9) {
         const name = parts.slice(8).join(" ");
         if (name !== "." && name !== "..") {
           files.push({
@@ -397,8 +549,11 @@ export async function listFiles(
         }
       }
     }
+
+    console.log(`[Modal] Found ${files.length} files in ${directory}:`, files.map(f => f.name));
     return files;
-  } catch {
+  } catch (error) {
+    console.error(`[Modal] Failed to list files in ${directory}:`, error);
     return [];
   }
 }
@@ -408,6 +563,31 @@ export async function listFiles(
  */
 export async function getFileSystem(sessionId: string, rootPath = "/workspace"): Promise<FileNode[]> {
   return listFiles(sessionId, rootPath);
+}
+
+/**
+ * Delete a file or directory from the sandbox
+ */
+export async function deleteFile(
+  sessionId: string,
+  filePath: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    console.log(`[Modal] Deleting ${filePath} for session ${sessionId}`);
+    const sandbox = await getOrCreateSandbox(sessionId);
+    const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
+
+    // Use rm -rf to delete files or directories
+    const proc = await sandbox["exec"](["rm", "-rf", absPath]);
+    await proc.exitCode;
+
+    console.log(`[Modal] Successfully deleted ${filePath}`);
+    return { success: true };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Modal] Failed to delete ${filePath}:`, errorMsg);
+    return { success: false, error: errorMsg };
+  }
 }
 
 /**
@@ -583,6 +763,7 @@ export const modalService = {
   executeCommand,
   writeFile,
   readFile,
+  deleteFile,
   listFiles,
   getFileSystem,
   terminateSandbox,

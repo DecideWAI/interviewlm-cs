@@ -51,19 +51,22 @@ export async function executeWriteFile(
   content?: string
 ): Promise<WriteFileToolOutput> {
   // Handle both new and legacy signatures
-  const filePath = typeof filePathOrInput === 'string'
+  const rawPath = typeof filePathOrInput === 'string'
     ? filePathOrInput
     : filePathOrInput.path;
   const fileContent = typeof filePathOrInput === 'string'
     ? content!
     : filePathOrInput.content;
 
+  // Normalize path to always be absolute (matching file tree paths)
+  const filePath = rawPath.startsWith("/") ? rawPath : `/workspace/${rawPath}`;
+
   try {
     await modal.writeFile(sessionId, filePath, fileContent);
 
     return {
       success: true,
-      path: filePath,
+      path: filePath,  // Return normalized absolute path
       bytesWritten: fileContent.length,
     };
   } catch (error) {

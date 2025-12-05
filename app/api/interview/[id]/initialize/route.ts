@@ -244,79 +244,96 @@ module.exports = longestPalindrome;`,
 
   // Create or get Modal volume for sandbox
   let volumeId = candidate.volumeId;
+  let needsStarterFiles = false;
+
   if (!volumeId) {
-    // Create Modal volume with starter files
+    // Create Modal volume
     const volume = await logger.time(
       'createModalVolume',
       () => modal.createVolume(candidateId),
       { candidateId }
     );
     volumeId = volume.id;
+    needsStarterFiles = true;
 
-      // Write starter files to volume
-      // Parse starterCode - supports both string and array of {fileName, content} formats
-      let starterFiles: Array<{ path: string; content: string }> = [];
+    // Update candidate with volume ID
+    await prisma.candidate.update({
+      where: { id: candidateId },
+      data: {
+        volumeId,
+        status: "IN_PROGRESS",
+      },
+    });
+  } else {
+    // Sandbox exists - check if workspace is empty (files may have been lost on reconnect)
+    const existingFiles = await modal.getFileSystem(candidateId, "/workspace");
+    if (existingFiles.length === 0) {
+      console.log(`[Initialize] Workspace is empty, will write starter files`);
+      needsStarterFiles = true;
+    }
+  }
 
-      if (question.starterCode) {
-        try {
-          // Try to parse as JSON array first
-          const parsed = typeof question.starterCode === 'string'
-            ? JSON.parse(question.starterCode)
-            : question.starterCode;
+  // Write starter files if needed (new sandbox OR empty workspace)
+  if (needsStarterFiles) {
+    // Parse starterCode - supports both string and array of {fileName, content} formats
+    let starterFiles: Array<{ path: string; content: string }> = [];
 
-          if (Array.isArray(parsed)) {
-            // Format: [{fileName: 'solution.js', content: '...'}]
-            starterFiles = parsed.map((file: any) => ({
-              path: file.fileName || file.path || 'solution.js',
-              content: file.content || '',
-            }));
-          } else if (typeof parsed === 'object' && parsed.content) {
-            // Format: {fileName: 'solution.js', content: '...'}
-            starterFiles = [{
-              path: parsed.fileName || parsed.path || `solution.${question.language === 'python' ? 'py' : 'js'}`,
-              content: parsed.content,
-            }];
-          } else {
-            throw new Error('Invalid format');
-          }
-        } catch {
-          // Fallback: treat as plain string content
+    if (question.starterCode) {
+      try {
+        // Try to parse as JSON array first
+        const parsed = typeof question.starterCode === 'string'
+          ? JSON.parse(question.starterCode)
+          : question.starterCode;
+
+        if (Array.isArray(parsed)) {
+          // Format: [{fileName: 'solution.js', content: '...'}]
+          starterFiles = parsed.map((file: any) => ({
+            path: file.fileName || file.path || 'solution.js',
+            content: file.content || '',
+          }));
+        } else if (typeof parsed === 'object' && parsed.content) {
+          // Format: {fileName: 'solution.js', content: '...'}
           starterFiles = [{
-            path: `solution.${question.language === 'python' ? 'py' : 'js'}`,
-            content: String(question.starterCode),
+            path: parsed.fileName || parsed.path || `solution.${question.language === 'python' ? 'py' : 'js'}`,
+            content: parsed.content,
           }];
+        } else {
+          throw new Error('Invalid format');
         }
-      } else {
-        // No starter code provided - use default template
+      } catch {
+        // Fallback: treat as plain string content
         starterFiles = [{
           path: `solution.${question.language === 'python' ? 'py' : 'js'}`,
-          content: generateDefaultStarterCode(question.language, question.title),
+          content: String(question.starterCode),
         }];
       }
-
-      // Always include README
-      starterFiles.push({
-        path: "README.md",
-        content: `# ${question.title}\n\n${question.description}\n\n## Instructions\n\n1. Implement your solution in the starter file\n2. Run tests with \`npm test\` (or \`pytest\` for Python)\n3. Use Claude AI for help if needed\n\nGood luck!`,
-      });
-
-      for (const file of starterFiles) {
-        await modal.writeFile(candidateId, file.path, file.content);
-      }
-
-      // Update candidate with volume ID
-      await prisma.candidate.update({
-        where: { id: candidateId },
-        data: {
-          volumeId,
-          status: "IN_PROGRESS",
-        },
-      });
+    } else {
+      // No starter code provided - use default template
+      starterFiles = [{
+        path: `solution.${question.language === 'python' ? 'py' : 'js'}`,
+        content: generateDefaultStarterCode(question.language, question.title),
+      }];
     }
 
-    // Get file structure from Modal volume
-    // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
-    const files = await modal.getFileSystem(candidateId, "/workspace");
+    // Always include README
+    starterFiles.push({
+      path: "README.md",
+      content: `# ${question.title}\n\n${question.description}\n\n## Instructions\n\n1. Implement your solution in the starter file\n2. Run tests with \`npm test\` (or \`pytest\` for Python)\n3. Use Claude AI for help if needed\n\nGood luck!`,
+    });
+
+    for (const file of starterFiles) {
+      const writeResult = await modal.writeFile(candidateId, file.path, file.content);
+      if (!writeResult.success) {
+        console.error(`[Initialize] Failed to write ${file.path}: ${writeResult.error}`);
+      } else {
+        console.log(`[Initialize] Wrote starter file: ${file.path}`);
+      }
+    }
+  }
+
+  // Get file structure from Modal volume
+  // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
+  const files = await modal.getFileSystem(candidateId, "/workspace");
 
     // Calculate time remaining (convert minutes to seconds)
     const timeLimit = (candidate.assessment?.duration || 60) * 60; // Default 1 hour

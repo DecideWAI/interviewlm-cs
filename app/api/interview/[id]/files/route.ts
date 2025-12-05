@@ -310,6 +310,115 @@ export async function POST(
 }
 
 /**
+ * DELETE /api/interview/[id]/files
+ * Delete file or folder from Modal sandbox volume
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: candidateId } = await params;
+
+    // Demo mode - just return success
+    if (candidateId === "demo") {
+      return NextResponse.json({ success: true, deleted: "demo-file" });
+    }
+
+    // Check authentication
+    const session = await getSession();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Parse request body
+    const body = await request.json();
+    const { path } = body;
+
+    if (!path || typeof path !== "string") {
+      return NextResponse.json(
+        { error: "File path is required" },
+        { status: 400 }
+      );
+    }
+
+    // Get candidate
+    const candidate = await prisma.candidate.findUnique({
+      where: { id: candidateId },
+      include: {
+        organization: {
+          include: {
+            members: {
+              where: { userId: session.user.id },
+            },
+          },
+        },
+        sessionRecording: true,
+      },
+    });
+
+    if (!candidate) {
+      return NextResponse.json(
+        { error: "Interview session not found" },
+        { status: 404 }
+      );
+    }
+
+    // Check authorization
+    const isOrgMember = candidate.organization.members.length > 0;
+    const isSelfInterview = candidate.email === session.user.email;
+
+    if (!isOrgMember && !isSelfInterview) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+
+    // Get volume ID
+    const volumeId = candidate.volumeId;
+    if (!volumeId) {
+      return NextResponse.json(
+        { error: "Sandbox not initialized" },
+        { status: 400 }
+      );
+    }
+
+    // Delete file from Modal sandbox
+    const result = await modal.deleteFile(candidateId, path);
+    if (!result.success) {
+      return NextResponse.json(
+        { error: result.error || "Failed to delete file" },
+        { status: 500 }
+      );
+    }
+
+    // Record file deletion event
+    if (candidate.sessionRecording) {
+      await sessions.recordEvent(candidate.sessionRecording.id, {
+        type: "file_delete",
+        data: {
+          filePath: path,
+          fileName: path.split("/").pop() || path,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      deleted: path,
+    });
+  } catch (error) {
+    console.error("Delete file error:", error);
+    return NextResponse.json(
+      {
+        error: "Failed to delete file",
+        message: error instanceof Error ? error.message : "Unknown error",
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
  * Helper to determine language from file extension
  */
 function getLanguageFromExtension(filename: string): string {

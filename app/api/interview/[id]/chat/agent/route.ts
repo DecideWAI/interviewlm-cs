@@ -471,8 +471,17 @@ export const GET = withErrorHandling(
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
-        const toolsUsed: string[] = [];
         const filesModified: string[] = [];
+        // Track full tool blocks for rich history display
+        const toolBlocks: Array<{
+          name: string;
+          id: string;
+          input: Record<string, unknown>;
+          output: unknown;
+          isError: boolean;
+        }> = [];
+        // Track pending tool inputs until we get the complete event
+        const pendingToolInputs: Record<string, Record<string, unknown>> = {};
         let fullResponse = '';
         let inputTokens = 0;
         let outputTokens = 0;
@@ -490,7 +499,8 @@ export const GET = withErrorHandling(
                 break;
 
               case 'tool_use_start':
-                toolsUsed.push(event.toolName);
+                // Store input for later when we get tool_use_complete
+                pendingToolInputs[event.toolId] = event.input;
                 controller.enqueue(
                   encoder.encode(`event: tool_use_start\ndata: ${JSON.stringify({
                     toolName: event.toolName,
@@ -508,6 +518,16 @@ export const GET = withErrorHandling(
                     filesModified.push(filePath);
                   }
                 }
+                // Store full tool block for history
+                toolBlocks.push({
+                  name: event.toolName,
+                  id: event.toolId,
+                  input: pendingToolInputs[event.toolId] || {},
+                  output: event.output,
+                  isError: event.isError,
+                });
+                // Clean up pending input
+                delete pendingToolInputs[event.toolId];
                 controller.enqueue(
                   encoder.encode(`event: tool_result\ndata: ${JSON.stringify({
                     toolName: event.toolName,
@@ -525,9 +545,10 @@ export const GET = withErrorHandling(
                 break;
 
               case 'done':
-                inputTokens = event.response.metadata?.usage?.input_tokens || 0;
-                outputTokens = event.response.metadata?.usage?.output_tokens || 0;
-                modelName = event.response.metadata?.model || '';
+                const usage = event.response.metadata?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+                inputTokens = usage?.input_tokens || 0;
+                outputTokens = usage?.output_tokens || 0;
+                modelName = (event.response.metadata?.model as string) || '';
                 break;
 
               case 'error':
@@ -554,14 +575,16 @@ export const GET = withErrorHandling(
             },
           });
 
-          // Store assistant response with tool metadata
+          // Store assistant response with tool metadata (full blocks for rich history)
           await prisma.claudeInteraction.create({
             data: {
               sessionId: sessionRecording.id,
               role: "assistant",
               content: fullResponse,
               model: modelName,
-              metadata: toolsUsed.length > 0 ? { toolsUsed, filesModified } : undefined,
+              metadata: toolBlocks.length > 0
+                ? JSON.parse(JSON.stringify({ toolBlocks, filesModified }))
+                : undefined,
             },
           });
 
@@ -578,7 +601,7 @@ export const GET = withErrorHandling(
             inputTokens,
             outputTokens,
             latency,
-            toolsUsed: toolsUsed.length,
+            toolsUsed: toolBlocks.length,
             filesModified: filesModified.length,
           });
 
@@ -588,7 +611,7 @@ export const GET = withErrorHandling(
             timestamp: new Date(),
             candidateMessage: message,
             aiResponse: fullResponse,
-            toolsUsed: toolsUsed as any,
+            toolsUsed: toolBlocks.map(t => t.name) as any,
             filesModified,
           }).catch((error) => {
             logger.error("Failed to publish AI interaction event", error as Error, {
