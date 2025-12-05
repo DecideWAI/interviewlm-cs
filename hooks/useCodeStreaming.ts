@@ -87,6 +87,9 @@ export function useCodeStreaming({
       });
 
       eventSource.addEventListener('code', (event) => {
+        // Reset reconnect counter on successful data
+        reconnectAttemptsRef.current = 0;
+
         const codeEvent: CodeStreamEvent = JSON.parse(event.data);
 
         switch (codeEvent.type) {
@@ -136,19 +139,25 @@ export function useCodeStreaming({
       });
 
       eventSource.onerror = () => {
-        console.error('[CodeStreaming] Connection error');
-        setIsConnected(false);
-        eventSource.close();
+        // Only reconnect if connection is actually CLOSED
+        // CONNECTING = 0, OPEN = 1, CLOSED = 2
+        if (eventSource.readyState === EventSource.CLOSED) {
+          console.error('[CodeStreaming] Connection closed');
+          setIsConnected(false);
 
-        // Exponential backoff reconnection
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
-        reconnectAttemptsRef.current++;
+          // Exponential backoff reconnection
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+          reconnectAttemptsRef.current++;
 
-        if (reconnectAttemptsRef.current <= 5) {
-          console.log(`[CodeStreaming] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
-          reconnectTimeoutRef.current = setTimeout(connect, delay);
+          if (reconnectAttemptsRef.current <= 5) {
+            console.log(`[CodeStreaming] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current})`);
+            reconnectTimeoutRef.current = setTimeout(connect, delay);
+          } else {
+            setError('Failed to connect to code streaming. Please refresh.');
+          }
         } else {
-          setError('Failed to connect to code streaming. Please refresh.');
+          // Transient error - connection still alive, don't close
+          console.warn('[CodeStreaming] Transient error, connection still open (readyState:', eventSource.readyState, ')');
         }
       };
 

@@ -105,13 +105,27 @@ let currentThreadId: string | null = null;
 let currentRunId: string | null = null;
 
 /**
- * Generate a unique run ID for each message turn
- * Format: {sessionId}-{timestamp}-{random}
+ * Generate a proper UUID v4 for LangSmith run IDs
+ * LangSmith requires valid UUID format (8-4-4-4-12 hex characters)
  */
-function generateRunId(sessionId: string): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 8);
-  return `${sessionId.slice(0, 8)}-${timestamp}-${random}`;
+function generateRunId(_sessionId: string): string {
+  // Generate a proper UUID v4
+  const hex = '0123456789abcdef';
+  let uuid = '';
+
+  for (let i = 0; i < 36; i++) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) {
+      uuid += '-';
+    } else if (i === 14) {
+      uuid += '4'; // UUID v4
+    } else if (i === 19) {
+      uuid += hex[(Math.random() * 4) | 8]; // 8, 9, a, or b
+    } else {
+      uuid += hex[(Math.random() * 16) | 0];
+    }
+  }
+
+  return uuid;
 }
 
 /**

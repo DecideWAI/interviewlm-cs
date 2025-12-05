@@ -248,11 +248,13 @@ export async function createSandbox(sessionId: string): Promise<SandboxInstance>
  * - Files in /workspace persist across sandbox restarts
  *
  * Uses Redis distributed lock to prevent race conditions across server instances.
+ * All sandbox creation MUST go through this function to ensure single sandbox per session.
  */
 export async function getOrCreateSandbox(sessionId: string): Promise<any> {
   // 1. Check in-memory cache first (fast path)
   const cached = sandboxes.get(sessionId);
   if (cached) {
+    console.log(`[Modal] Using cached sandbox ${cached.sandboxId} for session ${sessionId}`);
     return cached.sandbox;
   }
 
@@ -277,21 +279,25 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
   // 4. Now do the actual creation work
   (async () => {
     // Acquire distributed lock (for multi-instance protection)
+    console.log(`[Modal] Acquiring lock for sandbox:${sessionId}`);
     const lock = await acquireLock(`sandbox:${sessionId}`, {
-      ttlMs: 60000,
-      waitTimeoutMs: 30000,
-      retryIntervalMs: 200,
+      ttlMs: 120000,  // 2 min TTL (sandbox creation can take time)
+      waitTimeoutMs: 60000,  // Wait up to 1 min for lock
+      retryIntervalMs: 100,  // Check every 100ms
     });
+    console.log(`[Modal] Lock acquired for sandbox:${sessionId}`);
 
     try {
       // Check cache again after acquiring lock (another instance may have created it)
       const cachedAgain = sandboxes.get(sessionId);
       if (cachedAgain) {
+        console.log(`[Modal] Found cached sandbox after lock for session ${sessionId}`);
         resolveCreation(cachedAgain.sandbox);
         return;
       }
 
-      // Try to reconnect to existing sandbox from database
+      // IMPORTANT: Check database for existing sandbox (cross-instance check)
+      // This is critical for multi-server deployments
       let sandbox: any = null;
       try {
         const candidate = await prisma.candidate.findUnique({
@@ -300,15 +306,19 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
         });
 
         if (candidate?.volumeId) {
-          console.log(`[Modal] Attempting to reconnect to sandbox ${candidate.volumeId} for session ${sessionId}`);
+          console.log(`[Modal] Found volumeId ${candidate.volumeId} in DB, attempting reconnect for session ${sessionId}`);
           sandbox = await reconnectToSandbox(candidate.volumeId);
           if (sandbox) {
+            // Store in cache for future requests
             sandboxes.set(sessionId, { sandbox, sandboxId: candidate.volumeId, createdAt: new Date() });
+            console.log(`[Modal] Successfully reconnected to sandbox ${candidate.volumeId} for session ${sessionId}`);
             resolveCreation(sandbox);
             return;
           }
           // Sandbox failed to reconnect - will create new one with SAME volume below
-          console.log(`[Modal] Sandbox reconnect failed, creating new sandbox with persistent volume`);
+          console.log(`[Modal] Sandbox ${candidate.volumeId} reconnect failed, creating new sandbox with persistent volume`);
+        } else {
+          console.log(`[Modal] No existing sandbox found in DB for session ${sessionId}`);
         }
       } catch (dbError) {
         console.log(`[Modal] Could not lookup sandbox from database:`, dbError);
@@ -316,18 +326,34 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
 
       // Create new sandbox with persistent volume
       // Even if old sandbox expired, files persist in the volume
-      console.log(`[Modal] Creating new sandbox for session ${sessionId} (volume: ${getVolumeName(sessionId)})`);
+      console.log(`[Modal] Creating NEW sandbox for session ${sessionId} (volume: ${getVolumeName(sessionId)})`);
       await createSandbox(sessionId);
       const newSandbox = sandboxes.get(sessionId)?.sandbox;
+
       if (newSandbox) {
+        // Verify the sandbox ID was persisted to DB before releasing lock
+        const cached = sandboxes.get(sessionId);
+        if (cached) {
+          try {
+            await prisma.candidate.update({
+              where: { id: sessionId },
+              data: { volumeId: cached.sandboxId },
+            });
+            console.log(`[Modal] Verified sandbox ${cached.sandboxId} persisted to DB for session ${sessionId}`);
+          } catch (dbError) {
+            console.warn(`[Modal] Failed to verify DB persistence:`, dbError);
+          }
+        }
         resolveCreation(newSandbox);
       } else {
         rejectCreation(new Error('Failed to create sandbox'));
       }
     } catch (error) {
+      console.error(`[Modal] Error in getOrCreateSandbox for session ${sessionId}:`, error);
       rejectCreation(error instanceof Error ? error : new Error('Unknown error creating sandbox'));
     } finally {
       pendingCreations.delete(sessionId);
+      console.log(`[Modal] Releasing lock for sandbox:${sessionId}`);
       await lock.release();
     }
   })();
@@ -859,10 +885,18 @@ export interface SandboxInstance {
 // Aliases for backward compatibility
 export const executeCommand = runCommand;
 export const getSandbox = (sessionId: string) => sandboxes.get(sessionId)?.sandbox || null;
+
+/**
+ * Create or get volume for a session (uses getOrCreateSandbox with lock)
+ * IMPORTANT: Always goes through getOrCreateSandbox to prevent duplicate sandboxes
+ */
 export const createVolume = async (sessionId: string) => {
-  const instance = await createSandbox(sessionId);
-  return { id: instance.id }; // Return actual sandbox ID, not session ID
+  // Use getOrCreateSandbox which has the Redis lock - this prevents race conditions
+  await getOrCreateSandbox(sessionId);
+  const cached = sandboxes.get(sessionId);
+  return { id: cached?.sandboxId || sessionId };
 };
+
 export const listVolumes = async () => Array.from(sandboxes.keys()).map(id => ({ id }));
 export const listActiveSandboxes = async (): Promise<SandboxInstance[]> =>
   Array.from(sandboxes.entries()).map(([sessionId, { sandboxId, createdAt }]) => ({

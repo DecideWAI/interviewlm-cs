@@ -126,6 +126,11 @@ model Assessment {
   publishedAt         DateTime?            @map("published_at")
   previewLimit        Int                  @default(3) @map("preview_limit")
   previewSessionsUsed Int                  @default(0) @map("preview_sessions_used")
+
+  // Evaluation settings
+  evaluationThreshold Int                  @default(70) @map("evaluation_threshold")
+  requireEvaluation   Boolean              @default(true) @map("require_evaluation")
+
   questions           AssessmentQuestion[]
   createdBy           User                 @relation(fields: [createdById], references: [id])
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
