@@ -79,7 +79,7 @@ export async function GET(
 
         console.log(`[CodeStream] Client ${clientId} connected to session ${sessionRecording!.id}`);
 
-        // Keep-alive ping every 30 seconds
+        // Keep-alive ping every 15 seconds
         const keepAliveInterval = setInterval(() => {
           try {
             const encoder = new TextEncoder();
@@ -88,7 +88,7 @@ export async function GET(
             console.error('[CodeStream] Keep-alive error:', error);
             clearInterval(keepAliveInterval);
           }
-        }, 30000);
+        }, 15000);
 
         // Handle client disconnect
         request.signal.addEventListener('abort', () => {
