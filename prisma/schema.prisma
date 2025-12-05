@@ -89,6 +89,7 @@ model Organization {
   creditTransactions   CreditTransaction[]
   members              OrganizationMember[]
   problemSeeds         ProblemSeed[]
+  complexityProfiles   ComplexityProfile[]
 
   @@map("organizations")
 }
@@ -124,12 +125,16 @@ model Assessment {
   createdAt           DateTime             @default(now()) @map("created_at")
   updatedAt           DateTime             @updatedAt @map("updated_at")
   publishedAt         DateTime?            @map("published_at")
-  previewLimit        Int                  @default(3) @map("preview_limit")
+  previewLimit        Int                  @default(10) @map("preview_limit")
   previewSessionsUsed Int                  @default(0) @map("preview_sessions_used")
 
   // Evaluation settings
   evaluationThreshold Int                  @default(70) @map("evaluation_threshold")
   requireEvaluation   Boolean              @default(true) @map("require_evaluation")
+
+  // Assessment type (Real World vs System Design)
+  assessmentType      AssessmentType       @default(REAL_WORLD) @map("assessment_type")
+  selectedSeedId      String?              @map("selected_seed_id")
 
   questions           AssessmentQuestion[]
   createdBy           User                 @relation(fields: [createdById], references: [id])
@@ -186,6 +191,20 @@ model ProblemSeed {
   progressionHints  Json?                @map("progression_hints") // { extensionTopics: [], simplificationTopics: [] }
   seniorityExpectations Json?            @map("seniority_expectations") // { junior: [], mid: [], senior: [], staff: [], principal: [] }
 
+  // NEW: Assessment type targeting fields
+  targetRole        String?              @map("target_role")        // "backend", "frontend", "fullstack"
+  targetSeniority   String?              @map("target_seniority")   // "junior", "mid", "senior", "staff", "principal"
+  assessmentType    AssessmentType?      @map("assessment_type")    // REAL_WORLD or SYSTEM_DESIGN
+  isDefaultSeed     Boolean              @default(false) @map("is_default_seed") // Canonical default for this combination
+
+  // NEW: System Design specific fields
+  designDocTemplate   Json?              @map("design_doc_template")   // { sections: [], tradeoffs: [], constraints: [] }
+  architectureHints   Json?              @map("architecture_hints")    // { components: [], patterns: [], scalabilityGoals: [] }
+  implementationScope String?            @map("implementation_scope")  // "api_skeleton", "core_service", "integration_layer"
+
+  // NEW: Type-specific evaluation rubric
+  evaluationRubric    Json?              @map("evaluation_rubric")     // { type, criteria: [{ name, weight, description }] }
+
   createdAt         DateTime             @default(now()) @map("created_at")
   updatedAt         DateTime             @updatedAt @map("updated_at")
   questions         AssessmentQuestion[]
@@ -194,6 +213,8 @@ model ProblemSeed {
   clonedSeeds       ProblemSeed[]        @relation("SeedClones")
   poolStats         QuestionPoolStats?
 
+  @@index([targetRole, targetSeniority])
+  @@index([assessmentType])
   @@map("problem_seeds")
 }
 
@@ -448,6 +469,11 @@ enum QuestionType {
   BEHAVIORAL
 }
 
+enum AssessmentType {
+  REAL_WORLD     // Practical coding (implementation, tests, edge cases)
+  SYSTEM_DESIGN  // Hybrid (design doc + partial implementation)
+}
+
 enum CandidateStatus {
   INVITED
   IN_PROGRESS
@@ -638,4 +664,52 @@ model BiasAuditLog {
   @@index([createdAt])
   @@index([humanReviewed, riskLevel])
   @@map("bias_audit_logs")
+}
+
+// =====================================================
+// DYNAMIC QUESTION GENERATION SYSTEM
+// Complexity profiles for generic, truly dynamic question generation
+// =====================================================
+
+model ComplexityProfile {
+  id                String         @id @default(cuid())
+
+  // Targeting - defines which assessments use this profile
+  role              String         // "backend", "frontend", "fullstack"
+  seniority         String         // "junior", "mid", "senior", "staff", "principal"
+  assessmentType    AssessmentType
+
+  // Complexity dimensions - what makes a problem harder
+  entityCountMin    Int            @default(1) @map("entity_count_min")
+  entityCountMax    Int            @default(2) @map("entity_count_max")
+  integrationPoints Int            @default(0) @map("integration_points")
+  businessLogic     String         @default("simple") @map("business_logic")     // simple, moderate, complex, strategic
+  ambiguityLevel    String         @default("clear") @map("ambiguity_level")     // clear, some_decisions, open_ended, strategic
+  timeMinutes       Int            @default(45) @map("time_minutes")
+
+  // Skill configuration (JSON arrays)
+  requiredSkills    Json           @map("required_skills")      // ["crud", "validation", "error_handling"]
+  optionalSkillPool Json           @map("optional_skill_pool")  // ["auth", "caching", "pagination"]
+  avoidSkills       Json           @map("avoid_skills")         // ["ml", "realtime"]
+  pickOptionalCount Int            @default(2) @map("pick_optional_count")
+
+  // Domain pool - LLM picks randomly from this list
+  domainPool        Json           @map("domain_pool")          // ["e-commerce", "healthcare", "fintech", ...]
+
+  // Structural constraints (JSON object)
+  constraints       Json           // { mustInclude: [], shouldConsider: [], bonus: [] }
+
+  // Profile metadata
+  isDefault         Boolean        @default(false) @map("is_default")
+  organizationId    String?        @map("organization_id")     // null = system default, set = org override
+
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  // Relations
+  organization      Organization?  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([role, seniority, assessmentType, organizationId])
+  @@index([role, seniority, assessmentType])
+  @@map("complexity_profiles")
 }

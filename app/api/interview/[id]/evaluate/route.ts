@@ -304,34 +304,35 @@ export const POST = withErrorHandling(async (
         passingThreshold,
       });
 
+      // Debug: log what criteria the LangGraph agent returned
+      logger.debug("[Evaluate] LangGraph response criteria keys", {
+        hasResult: !!langGraphResult,
+        hasCriteria: !!langGraphResult?.criteria,
+        criteriaKeys: langGraphResult?.criteria ? Object.keys(langGraphResult.criteria) : [],
+      });
+
+      // Helper to safely get criterion with defaults for missing values
+      const getCriterion = (name: string) => {
+        const criterion = langGraphResult.criteria?.[name as keyof typeof langGraphResult.criteria];
+        return {
+          score: criterion?.score ?? 0,
+          feedback: criterion?.feedback ?? `${name} evaluation not available`,
+        };
+      };
+
       aiResult = {
-        overallScore: langGraphResult.overallScore,
-        passed: langGraphResult.passed,
+        overallScore: langGraphResult.overallScore ?? 0,
+        passed: langGraphResult.passed ?? false,
         criteria: {
-          problemCompletion: {
-            score: langGraphResult.criteria.problemCompletion.score,
-            feedback: langGraphResult.criteria.problemCompletion.feedback,
-          },
-          codeQuality: {
-            score: langGraphResult.criteria.codeQuality.score,
-            feedback: langGraphResult.criteria.codeQuality.feedback,
-          },
-          bestPractices: {
-            score: langGraphResult.criteria.bestPractices.score,
-            feedback: langGraphResult.criteria.bestPractices.feedback,
-          },
-          errorHandling: {
-            score: langGraphResult.criteria.errorHandling.score,
-            feedback: langGraphResult.criteria.errorHandling.feedback,
-          },
-          efficiency: {
-            score: langGraphResult.criteria.efficiency.score,
-            feedback: langGraphResult.criteria.efficiency.feedback,
-          },
+          problemCompletion: getCriterion('problemCompletion'),
+          codeQuality: getCriterion('codeQuality'),
+          bestPractices: getCriterion('bestPractices'),
+          errorHandling: getCriterion('errorHandling'),
+          efficiency: getCriterion('efficiency'),
         },
-        feedback: langGraphResult.feedback,
-        strengths: langGraphResult.strengths,
-        improvements: langGraphResult.improvements,
+        feedback: langGraphResult.feedback ?? 'Evaluation completed',
+        strengths: langGraphResult.strengths ?? [],
+        improvements: langGraphResult.improvements ?? [],
       };
 
       logger.info("[Evaluate] LangGraph evaluation successful", {

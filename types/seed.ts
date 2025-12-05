@@ -124,6 +124,91 @@ export interface SeniorityExpectations {
   principal?: string[];
 }
 
+// ============================================================
+// Assessment Type System
+// ============================================================
+
+/**
+ * Assessment type enum matching Prisma schema
+ */
+export type AssessmentType = 'REAL_WORLD' | 'SYSTEM_DESIGN';
+
+/**
+ * Design document template for System Design assessments
+ * Defines required sections, trade-offs to consider, and constraints
+ */
+export interface DesignDocTemplate {
+  sections: Array<{
+    title: string;
+    description: string;
+    required: boolean;
+  }>;
+  tradeoffs: string[];   // Key trade-offs candidate should address
+  constraints: string[]; // System constraints (scale, latency, etc.)
+}
+
+/**
+ * Architecture hints for System Design questions
+ * Guides the AI in generating appropriate architectural challenges
+ */
+export interface ArchitectureHints {
+  components: string[];        // Suggested components to consider
+  patterns: string[];          // Relevant design patterns
+  scalabilityGoals: string[];  // Scale requirements to design for
+}
+
+/**
+ * Evaluation criterion with weight and scoring guidelines
+ */
+export interface EvaluationCriterion {
+  name: string;
+  weight: number;           // Percentage weight (e.g., 25 for 25%)
+  description: string;
+  scoringGuidelines?: {
+    excellent: string;      // 90-100%
+    good: string;           // 70-89%
+    adequate: string;       // 50-69%
+    poor: string;           // 0-49%
+  };
+}
+
+/**
+ * Type-specific evaluation rubric
+ * Different rubrics for Real World vs System Design assessments
+ */
+export interface EvaluationRubric {
+  type: AssessmentType;
+  criteria: EvaluationCriterion[];
+}
+
+/**
+ * Default rubric for Real World Problem assessments
+ */
+export const REAL_WORLD_RUBRIC: EvaluationRubric = {
+  type: 'REAL_WORLD',
+  criteria: [
+    { name: 'Problem Completion', weight: 30, description: 'Solution addresses all requirements' },
+    { name: 'Code Quality', weight: 25, description: 'Clean, maintainable, well-organized code' },
+    { name: 'Testing', weight: 20, description: 'Comprehensive tests with edge cases' },
+    { name: 'Error Handling', weight: 15, description: 'Graceful handling of errors and edge cases' },
+    { name: 'Efficiency', weight: 10, description: 'Performant solution with good resource usage' },
+  ],
+};
+
+/**
+ * Default rubric for System Design assessments
+ */
+export const SYSTEM_DESIGN_RUBRIC: EvaluationRubric = {
+  type: 'SYSTEM_DESIGN',
+  criteria: [
+    { name: 'Design Clarity', weight: 30, description: 'Clear documentation of architecture and components' },
+    { name: 'Trade-off Analysis', weight: 25, description: 'Thoughtful discussion of design trade-offs' },
+    { name: 'API Design', weight: 20, description: 'Well-structured API contracts and interfaces' },
+    { name: 'Implementation', weight: 15, description: 'Core logic implemented correctly' },
+    { name: 'Communication', weight: 10, description: 'Clear explanation of design decisions' },
+  ],
+};
+
 /**
  * Enhanced Problem Seed with usage metadata
  * Extends the database ProblemSeed model with computed fields
@@ -164,6 +249,20 @@ export interface EnhancedProblemSeed {
   progressionHints?: ProgressionHints | null;
   seniorityExpectations?: SeniorityExpectations | null;
 
+  // NEW: Assessment type targeting fields
+  targetRole?: string | null;          // "backend", "frontend", "fullstack"
+  targetSeniority?: string | null;     // "junior", "mid", "senior", "staff", "principal"
+  assessmentType?: AssessmentType | null;
+  isDefaultSeed: boolean;
+
+  // NEW: System Design specific fields
+  designDocTemplate?: DesignDocTemplate | null;
+  architectureHints?: ArchitectureHints | null;
+  implementationScope?: string | null; // "api_skeleton", "core_service", "integration_layer"
+
+  // NEW: Type-specific evaluation rubric
+  evaluationRubric?: EvaluationRubric | null;
+
   // Additional computed fields
   role?: Role | 'any';
   seniority?: SeniorityLevel | 'any';
@@ -181,6 +280,10 @@ export interface SeedFilters {
   tags?: string[];
   searchQuery?: string;
   isSystemSeed?: boolean;
+  assessmentType?: AssessmentType | 'any';
+  targetRole?: string;
+  targetSeniority?: string;
+  isDefaultSeed?: boolean;
 }
 
 /**

@@ -200,8 +200,9 @@ export const POST = withErrorHandling(async (
   }
 
     // Write code to sandbox volume before running tests
+    // IMPORTANT: Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
     const fileToWrite = fileName || `solution.${language === "python" ? "py" : "js"}`;
-    await modal.writeFile(candidate.volumeId, fileToWrite, code);
+    await modal.writeFile(id, fileToWrite, code);
 
     // Record test_run_start event
     await sessions.recordEvent(sessionRecording.id, {

@@ -78,6 +78,9 @@ export function AssessmentWizard({
         if (!config.seniority) {
           newErrors.seniority = "Please select a seniority level";
         }
+        if (!config.assessmentType) {
+          newErrors.assessmentType = "Please select an assessment type";
+        }
         break;
 
       case 3:

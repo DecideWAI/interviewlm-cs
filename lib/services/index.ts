@@ -40,6 +40,14 @@ export type {
   QuestionGenerationResult,
 } from "./questions";
 
+// Complexity-Based Dynamic Question Generator
+export * as dynamicQuestionGeneratorService from "./dynamic-question-generator";
+export { dynamicQuestionGenerator } from "./dynamic-question-generator";
+export type {
+  GeneratedQuestionContent,
+  GenerationParams,
+} from "./dynamic-question-generator";
+
 // Email Service
 export * as emailService from "./email";
 

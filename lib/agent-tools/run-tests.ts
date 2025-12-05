@@ -97,7 +97,8 @@ export async function executeRunTests(
       `solution.${question.language === "python" ? "py" : "js"}`;
 
     // Read current code
-    const readResult = await modal.readFile(candidate.volumeId, fileName);
+    // IMPORTANT: Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
+    const readResult = await modal.readFile(candidateId, fileName);
     if (!readResult.success || !readResult.content) {
       return {
         success: false,
