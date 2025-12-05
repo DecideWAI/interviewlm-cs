@@ -1075,13 +1075,30 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
    * These interact with the Modal sandbox for real file operations
    */
 
+  /**
+   * Normalize a file path to an absolute path within the workspace
+   * Handles relative paths like "index.ts" or "./src/file.ts"
+   */
+  private normalizePath(filePath: string): string {
+    // Already absolute
+    if (filePath.startsWith('/')) {
+      return filePath;
+    }
+    // Remove leading ./ if present
+    const cleanPath = filePath.startsWith('./') ? filePath.slice(2) : filePath;
+    return `${this.config.workspaceRoot}/${cleanPath}`;
+  }
+
   private async toolRead(
     filePath: string,
     offset?: number,
     limit?: number
   ): Promise<unknown> {
+    // Normalize relative paths to absolute
+    const normalizedPath = this.normalizePath(filePath);
+
     // Validate path
-    const pathCheck = isPathAllowed(filePath, this.config.workspaceRoot);
+    const pathCheck = isPathAllowed(normalizedPath, this.config.workspaceRoot);
     if (!pathCheck.allowed) {
       return { success: false, error: pathCheck.reason };
     }
@@ -1096,7 +1113,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       const { readFile } = await import('../services/modal');
 
       // Read file from Modal using session ID
-      const result = await readFile(this.config.sessionId, filePath);
+      const result = await readFile(this.config.sessionId, normalizedPath);
       if (!result.success || !result.content) {
         throw new Error(result.error || 'Failed to read file');
       }
@@ -1110,7 +1127,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       return {
         success: true,
         content,
-        path: filePath,
+        path: normalizedPath,
         totalSize,
         offset: actualOffset,
         limit: actualLimit,
@@ -1128,8 +1145,11 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
   }
 
   private async toolWrite(filePath: string, content: string): Promise<unknown> {
+    // Normalize relative paths to absolute
+    const normalizedPath = this.normalizePath(filePath);
+
     // Validate path
-    const pathCheck = isPathAllowed(filePath, this.config.workspaceRoot);
+    const pathCheck = isPathAllowed(normalizedPath, this.config.workspaceRoot);
     if (!pathCheck.allowed) {
       return { success: false, error: pathCheck.reason };
     }
@@ -1140,7 +1160,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       const { streamCodeGeneration } = await import('../services/code-streaming');
 
       // Stream code generation to frontend in real-time (if enabled)
-      const fileName = filePath.split('/').pop() || filePath;
+      const fileName = normalizedPath.split('/').pop() || normalizedPath;
       const enableStreaming = process.env.ENABLE_CODE_STREAMING !== 'false';
 
       if (enableStreaming) {
@@ -1155,14 +1175,14 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       }
 
       // Write file to Modal (happens immediately, streaming is for visual effect)
-      const writeResult = await writeFile(this.config.sessionId, filePath, content);
+      const writeResult = await writeFile(this.config.sessionId, normalizedPath, content);
       if (!writeResult.success) {
         throw new Error(writeResult.error || 'Failed to write file');
       }
 
       return {
         success: true,
-        path: filePath,
+        path: normalizedPath,
         bytesWritten: content.length,
       };
     } catch (error) {
@@ -1178,8 +1198,11 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
     oldString: string,
     newString: string
   ): Promise<unknown> {
+    // Normalize relative paths to absolute
+    const normalizedPath = this.normalizePath(filePath);
+
     // Validate path
-    const pathCheck = isPathAllowed(filePath, this.config.workspaceRoot);
+    const pathCheck = isPathAllowed(normalizedPath, this.config.workspaceRoot);
     if (!pathCheck.allowed) {
       return { success: false, error: pathCheck.reason };
     }
@@ -1189,7 +1212,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       const { readFile, writeFile } = await import('../services/modal');
 
       // Read current file content
-      const readResult = await readFile(this.config.sessionId, filePath);
+      const readResult = await readFile(this.config.sessionId, normalizedPath);
       if (!readResult.success || !readResult.content) {
         throw new Error(readResult.error || 'Failed to read file');
       }
@@ -1222,14 +1245,14 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       const newContent = currentContent.replace(oldString, newString);
 
       // Write back to Modal
-      const writeResult = await writeFile(this.config.sessionId, filePath, newContent);
+      const writeResult = await writeFile(this.config.sessionId, normalizedPath, newContent);
       if (!writeResult.success) {
         throw new Error(writeResult.error || 'Failed to write file');
       }
 
       return {
         success: true,
-        path: filePath,
+        path: normalizedPath,
         replacements: 1,
       };
     } catch (error) {

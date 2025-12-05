@@ -106,17 +106,19 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
             // - toolBlocks: [{id, name, input}, ...] (detailed format)
             // - toolsUsed: ["list_files", "Read", ...] (simple format from streaming route)
             if (msg.role === "assistant" && msg.metadata) {
-              // Detailed format with toolBlocks
+              // Detailed format with toolBlocks (includes input AND output)
               if (msg.metadata.toolBlocks?.length > 0) {
                 for (const tool of msg.metadata.toolBlocks) {
+                  // Use formatToolResult to show rich details like file paths and bytes
                   expandedMessages.push({
                     id: `${msg.id}_tool_${tool.id}`,
-                    role: "assistant",
-                    content: "",
+                    role: "system",
+                    content: formatToolResultFromHistory(tool.name, tool.input, tool.output, tool.isError),
                     timestamp: new Date(msg.timestamp),
-                    type: "tool_use",
+                    type: tool.isError ? "tool_error" : "tool_result",
                     toolName: tool.name,
                     toolInput: tool.input,
+                    toolOutput: tool.output,
                   });
                 }
               }
@@ -656,6 +658,85 @@ function formatToolResult(toolName: string, output: any): string {
 
     case "suggest_next_question":
       return `🎉 ${output.performance}\n${output.reason}\n${output.suggestion}`;
+
+    default:
+      return `✅ ${toolName} completed`;
+  }
+}
+
+/**
+ * Format tool result from history (database)
+ * Uses both input and output to show rich details like file paths
+ */
+function formatToolResultFromHistory(
+  toolName: string,
+  input: Record<string, unknown>,
+  output: unknown,
+  isError: boolean
+): string {
+  const out = output as Record<string, any> | undefined;
+
+  // Handle errors
+  if (isError || out?.success === false || out?.error) {
+    return `❌ ${toolName} failed: ${out?.error || 'Unknown error'}`;
+  }
+
+  switch (toolName) {
+    case "Read":
+    case "read_file": {
+      const path = out?.path || input?.file_path || input?.path || '?';
+      const size = out?.content?.length || out?.totalSize || '?';
+      return `✅ Read ${path} (${size} chars)`;
+    }
+
+    case "Write":
+    case "write_file": {
+      const path = out?.path || input?.file_path || input?.path || '?';
+      const bytes = out?.bytesWritten || (input?.content as string)?.length || '?';
+      return `✅ Wrote ${path} (${bytes} bytes)`;
+    }
+
+    case "Edit": {
+      const path = out?.path || input?.file_path || input?.path || '?';
+      const replacements = out?.replacements || 1;
+      return `✅ Edited ${path} (${replacements} replacement${replacements !== 1 ? 's' : ''})`;
+    }
+
+    case "Bash":
+    case "execute_bash": {
+      const cmd = String(input?.command || '').slice(0, 60);
+      const exitCode = out?.exitCode;
+      const exitInfo = exitCode !== undefined ? ` (exit: ${exitCode})` : '';
+      return `✅ Ran: ${cmd}${cmd.length >= 60 ? '...' : ''}${exitInfo}`;
+    }
+
+    case "Grep": {
+      const pattern = input?.pattern || '?';
+      const matchCount = out?.matches?.length || 0;
+      return `✅ Searched for "${pattern}" - ${matchCount} matches`;
+    }
+
+    case "Glob": {
+      const pattern = input?.pattern || '?';
+      const fileCount = out?.files?.length || 0;
+      return `✅ Found ${fileCount} files matching "${pattern}"`;
+    }
+
+    case "list_files": {
+      const path = out?.path || input?.path || '/workspace';
+      const count = out?.count || out?.files?.length || 0;
+      return `✅ Listed ${count} items in ${path}`;
+    }
+
+    case "run_tests": {
+      const passed = out?.passed || 0;
+      const total = out?.total || 0;
+      return `✅ Tests: ${passed}/${total} passed`;
+    }
+
+    case "suggest_next_question": {
+      return `🎉 ${out?.performance || ''}\n${out?.reason || ''}\n${out?.suggestion || ''}`;
+    }
 
     default:
       return `✅ ${toolName} completed`;

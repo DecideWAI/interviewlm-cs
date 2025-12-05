@@ -56,20 +56,25 @@ export async function executeReadFile(
   limit?: number
 ): Promise<ReadFileToolOutput> {
   // Handle both new and legacy signatures
-  const filePath = typeof filePathOrInput === 'string'
+  const rawPath = typeof filePathOrInput === 'string'
     ? filePathOrInput
     : filePathOrInput.path;
 
+  // Normalize path to always be absolute (matching file tree paths)
+  const filePath = rawPath.startsWith("/") ? rawPath : `/workspace/${rawPath}`;
+
   try {
     const readResult = await modal.readFile(sessionId, filePath);
-    if (!readResult.success || !readResult.content) {
+    if (!readResult.success) {
       return {
         success: false,
         error: readResult.error || "Failed to read file",
         path: filePath,
       };
     }
-    let content = readResult.content;
+
+    // Handle empty file or missing content
+    let content = readResult.content ?? "";
 
     // Apply offset and limit if provided
     if (offset !== undefined && offset > 0) {
@@ -82,7 +87,7 @@ export async function executeReadFile(
     return {
       success: true,
       content,
-      path: filePath,
+      path: filePath,  // Return normalized absolute path
     };
   } catch (error) {
     return {

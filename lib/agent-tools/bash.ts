@@ -47,12 +47,20 @@ export async function executeBash(
 
     const result = await modal.runCommand(sessionId, sanitizedCommand, "/workspace");
 
-    return {
+    // Include error info for failed commands so UI shows meaningful message
+    const output: BashToolOutput = {
       success: result.exitCode === 0,
       stdout: result.stdout,
       stderr: result.stderr,
       exitCode: result.exitCode,
     };
+
+    // Add error field if command failed
+    if (result.exitCode !== 0) {
+      output.error = result.stderr || result.error || `Command exited with code ${result.exitCode}`;
+    }
+
+    return output;
   } catch (error) {
     return {
       success: false,

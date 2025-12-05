@@ -49,6 +49,7 @@ const Terminal = dynamic(
   { ssr: false }
 );
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -62,7 +63,20 @@ import {
   Terminal as TerminalIcon,
   BookOpen,
   FileCode,
+  X,
+  Loader2,
+  Check,
 } from "lucide-react";
+
+// Tab interface for multi-tab editor support
+interface OpenTab {
+  id: string;
+  name: string;
+  path: string;
+  content: string;
+  language: string;
+  isDirty: boolean;
+}
 
 // Session initialization data interface
 interface SessionData {
@@ -109,7 +123,9 @@ export default function InterviewPage() {
 
   // UI state
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
+  const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
   const [code, setCode] = useState("");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [isAIChatOpen, setIsAIChatOpen] = useState(true);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
@@ -472,14 +488,25 @@ export default function InterviewPage() {
     // Update local state immediately (optimistic update)
     setCode(newCode);
 
+    // Mark current tab as dirty and reset save status
+    if (selectedFile) {
+      setOpenTabs(prev => prev.map(tab =>
+        tab.path === selectedFile.path
+          ? { ...tab, content: newCode, isDirty: true }
+          : tab
+      ));
+      setSaveStatus("idle"); // Reset when user types
+    }
+
     // Clear previous debounce timer
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
 
-    // Debounce API call (2 seconds)
+    // Debounce API call (1 second for faster auto-save)
     debounceTimerRef.current = setTimeout(async () => {
       if (sessionData && selectedFile) {
+        setSaveStatus("saving");
         try {
           await fetch(`/api/interview/${candidateId}/files`, {
             method: "POST",
@@ -490,11 +517,21 @@ export default function InterviewPage() {
               language: sessionData.question.language,
             }),
           });
+          // Mark tab as clean after successful save
+          setOpenTabs(prev => prev.map(tab =>
+            tab.path === selectedFile.path
+              ? { ...tab, isDirty: false }
+              : tab
+          ));
+          setSaveStatus("saved");
+          // Clear "saved" status after 2 seconds
+          setTimeout(() => setSaveStatus("idle"), 2000);
         } catch (err) {
           console.error("Failed to sync file:", err);
+          setSaveStatus("idle");
         }
       }
-    }, 2000); // 2 second debounce
+    }, 1000); // 1 second debounce for faster auto-save
   }, [sessionData, selectedFile, candidateId]);
 
   const handleRunTests = async () => {
@@ -780,13 +817,22 @@ export default function InterviewPage() {
 
   const handleFileSelect = async (file: FileNode) => {
     if (file.type === "file") {
+      // Save current tab's content before switching
+      if (selectedFile && openTabs.length > 0) {
+        setOpenTabs(prev => prev.map(tab =>
+          tab.path === selectedFile.path
+            ? { ...tab, content: code }
+            : tab
+        ));
+      }
+
       // CRITICAL FIX: Flush pending save before switching files
       // Without this, debounced changes to current file are lost
       if (debounceTimerRef.current && sessionData && selectedFile) {
         clearTimeout(debounceTimerRef.current);
         debounceTimerRef.current = null;
 
-        // Save current file immediately
+        // Save current file immediately to server
         try {
           await fetch(`/api/interview/${candidateId}/files`, {
             method: "POST",
@@ -805,29 +851,239 @@ export default function InterviewPage() {
 
       setSelectedFile(file);
 
-      // Load file content from Modal volume
-      try {
-        const response = await fetch(
-          `/api/interview/${candidateId}/files?path=${encodeURIComponent(file.path)}`
-        );
+      // Check if file is already open in a tab
+      const existingTab = openTabs.find(tab => tab.path === file.path);
 
-        if (response.ok) {
-          const responseJson = await response.json();
-          // Handle both wrapped { success, data } and direct response formats
-          const data = responseJson.data || responseJson;
-          // Ensure content is a string (defensive check)
-          const fileContent = typeof data.content === 'string' ? data.content : '';
-          setCode(fileContent || extractStarterCode(sessionData?.question.starterCode));
-        } else {
-          // Fallback to starter code if file read fails
-          console.error("Failed to load file content");
-          setCode(extractStarterCode(sessionData?.question.starterCode));
+      if (existingTab) {
+        // Switch to existing tab, use cached content
+        setCode(existingTab.content);
+      } else {
+        // Create tab IMMEDIATELY with loading state, then load content async
+        const newTabId = `tab-${Date.now()}`;
+        const newTab: OpenTab = {
+          id: newTabId,
+          name: file.name,
+          path: file.path,
+          content: "", // Will be populated after fetch
+          language: getLanguageFromFileName(file.name),
+          isDirty: false,
+        };
+
+        // Add tab immediately (with duplicate check)
+        setOpenTabs(prev => {
+          if (prev.some(tab => tab.path === file.path)) {
+            return prev;
+          }
+          return [...prev, newTab];
+        });
+
+        // Set empty code while loading
+        setCode("");
+
+        // Load file content from Modal volume asynchronously
+        try {
+          const response = await fetch(
+            `/api/interview/${candidateId}/files?path=${encodeURIComponent(file.path)}`
+          );
+
+          if (response.ok) {
+            const responseJson = await response.json();
+            const data = responseJson.data || responseJson;
+            const fileContent = typeof data.content === 'string' ? data.content : '';
+
+            // Update code and tab content
+            setCode(fileContent);
+            setOpenTabs(prev => prev.map(tab =>
+              tab.path === file.path ? { ...tab, content: fileContent } : tab
+            ));
+          } else {
+            console.error("Failed to load file content:", response.status);
+          }
+        } catch (err) {
+          console.error("Error loading file:", err);
         }
-      } catch (err) {
-        console.error("Error loading file:", err);
-        // Fallback to starter code
-        setCode(extractStarterCode(sessionData?.question.starterCode));
       }
+    }
+  };
+
+  // Handle tab close
+  const handleTabClose = async (tabPath: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent tab selection
+
+    const tabToClose = openTabs.find(tab => tab.path === tabPath);
+    if (!tabToClose) return;
+
+    // If tab has unsaved changes, save first
+    if (tabToClose.isDirty && sessionData) {
+      try {
+        await fetch(`/api/interview/${candidateId}/files`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            path: tabToClose.path,
+            content: tabToClose.content,
+            language: tabToClose.language,
+          }),
+        });
+      } catch (err) {
+        console.error("Failed to save file before closing:", err);
+      }
+    }
+
+    // Remove tab
+    const newTabs = openTabs.filter(tab => tab.path !== tabPath);
+    setOpenTabs(newTabs);
+
+    // If we closed the active tab, switch to another
+    if (selectedFile?.path === tabPath) {
+      if (newTabs.length > 0) {
+        // Switch to the last tab
+        const lastTab = newTabs[newTabs.length - 1];
+        setSelectedFile({ id: lastTab.id, name: lastTab.name, path: lastTab.path, type: "file" });
+        setCode(lastTab.content);
+      } else {
+        // No tabs left
+        setSelectedFile(null);
+        setCode("");
+      }
+    }
+  };
+
+  // Handle switching to a tab
+  const handleTabSwitch = (tab: OpenTab) => {
+    // Save current tab's content first
+    if (selectedFile && openTabs.length > 0) {
+      setOpenTabs(prev => prev.map(t =>
+        t.path === selectedFile.path
+          ? { ...t, content: code }
+          : t
+      ));
+    }
+
+    setSelectedFile({ id: tab.id, name: tab.name, path: tab.path, type: "file" });
+    setCode(tab.content);
+  };
+
+  // Refresh file list from server
+  const refreshFiles = async () => {
+    if (!sessionData) return;
+
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/files`);
+      if (response.ok) {
+        const responseJson = await response.json();
+        const data = responseJson.data || responseJson;
+        // Update files in session data
+        if (data.files) {
+          setSessionData(prev => prev ? { ...prev, files: data.files } : null);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to refresh files:", err);
+    }
+  };
+
+  // Handle file creation from FileTree
+  const handleFileCreate = async (fileName: string, type: "file" | "folder") => {
+    if (!sessionData) return;
+
+    // Normalize the path
+    const fullPath = fileName.startsWith("/")
+      ? fileName
+      : `/workspace/${fileName}`;
+
+    try {
+      // Create empty file via API
+      const response = await fetch(`/api/interview/${candidateId}/files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: fullPath,
+          content: "",
+          language: getLanguageFromFileName(fileName),
+        }),
+      });
+
+      if (response.ok) {
+        // Refresh file list to show new file
+        await refreshFiles();
+        toast.success("File created", {
+          description: `Created ${fileName}`,
+          duration: 2000,
+        });
+      } else {
+        const error = await response.json();
+        toast.error("Failed to create file", {
+          description: error.error?.message || "Unknown error",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to create file:", err);
+      toast.error("Failed to create file", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  };
+
+  // Helper to determine language from file name
+  const getLanguageFromFileName = (fileName: string): string => {
+    const ext = fileName.split(".").pop()?.toLowerCase();
+    const languageMap: Record<string, string> = {
+      js: "javascript",
+      ts: "typescript",
+      py: "python",
+      go: "go",
+      md: "markdown",
+      json: "json",
+    };
+    return languageMap[ext || ""] || "text";
+  };
+
+  // Handle file deletion from FileTree
+  const handleFileDelete = async (path: string) => {
+    if (!sessionData) return;
+
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/files`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+
+      if (response.ok) {
+        // Refresh file list to reflect deletion
+        await refreshFiles();
+        toast.success("File deleted", {
+          description: `Deleted ${path.split("/").pop()}`,
+          duration: 2000,
+        });
+
+        // Remove the tab for the deleted file
+        const newTabs = openTabs.filter(tab => tab.path !== path);
+        setOpenTabs(newTabs);
+
+        // If the deleted file was selected, switch to another tab or clear
+        if (selectedFile?.path === path) {
+          if (newTabs.length > 0) {
+            const lastTab = newTabs[newTabs.length - 1];
+            setSelectedFile({ id: lastTab.id, name: lastTab.name, path: lastTab.path, type: "file" });
+            setCode(lastTab.content);
+          } else {
+            setSelectedFile(null);
+            setCode("");
+          }
+        }
+      } else {
+        const error = await response.json();
+        toast.error("Failed to delete file", {
+          description: error.error || "Unknown error",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to delete file:", err);
+      toast.error("Failed to delete file", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
     }
   };
 
@@ -1002,6 +1258,8 @@ export default function InterviewPage() {
                     files={sessionData.files}
                     selectedFile={selectedFile?.path}
                     onFileSelect={handleFileSelect}
+                    onFileCreate={handleFileCreate}
+                    onFileDelete={handleFileDelete}
                     className="flex-1"
                   />
                 )}
@@ -1018,13 +1276,66 @@ export default function InterviewPage() {
               <Panel defaultSize={panelSizes.vertical[0]} minSize={30}>
                 <div className="h-full flex flex-col border-b border-border">
                   {/* Editor Tabs */}
-                  <div className="border-b border-border bg-background-secondary flex items-center px-2">
-                    <div className="flex items-center gap-1 px-3 py-2 bg-background border-r border-border text-sm">
-                      <Code2 className="h-4 w-4 text-primary" />
-                      <span className="text-text-primary">
-                        {selectedFile?.name || "index.ts"}
-                      </span>
+                  <div className="border-b border-border bg-background-secondary flex items-center">
+                    <div className="flex items-center overflow-x-auto flex-1">
+                      {openTabs.length === 0 ? (
+                        // Show placeholder when no tabs
+                        <div className="flex items-center gap-1 px-3 py-2 text-sm text-text-tertiary">
+                          <Code2 className="h-4 w-4" />
+                          <span>No file open</span>
+                        </div>
+                      ) : (
+                        // Show all open tabs
+                        openTabs.map((tab) => (
+                          <div
+                            key={tab.path}
+                            onClick={() => handleTabSwitch(tab)}
+                            className={cn(
+                              "group flex items-center gap-1 px-3 py-2 text-sm cursor-pointer border-r border-border transition-colors",
+                              selectedFile?.path === tab.path
+                                ? "bg-background text-text-primary"
+                                : "bg-background-secondary text-text-secondary hover:bg-background-tertiary"
+                            )}
+                          >
+                            <Code2 className={cn(
+                              "h-4 w-4",
+                              selectedFile?.path === tab.path ? "text-primary" : "text-text-tertiary"
+                            )} />
+                            <span className="truncate max-w-[120px]">{tab.name}</span>
+                            {tab.isDirty && (
+                              <span className="w-2 h-2 rounded-full bg-primary ml-1" title="Unsaved changes" />
+                            )}
+                            <button
+                              onClick={(e) => handleTabClose(tab.path, e)}
+                              className="ml-1 p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-background-hover transition-all"
+                              title="Close tab"
+                            >
+                              <X className="h-3 w-3 text-text-tertiary hover:text-text-primary" />
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
+                    {/* Auto-save status indicator */}
+                    {openTabs.length > 0 && (
+                      <div className="flex items-center gap-1.5 px-3 py-2 text-xs text-text-tertiary border-l border-border">
+                        {saveStatus === "saving" && (
+                          <>
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            <span>Saving...</span>
+                          </>
+                        )}
+                        {saveStatus === "saved" && (
+                          <>
+                            <Check className="h-3 w-3 text-success" />
+                            <span className="text-success">Saved</span>
+                          </>
+                        )}
+                        {saveStatus === "idle" && (
+                          <span className="text-text-muted">Auto-save on</span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Editor */}
@@ -1092,7 +1403,10 @@ export default function InterviewPage() {
                     ref={aiChatRef}
                     sessionId={candidateId}
                     onFileModified={async (path) => {
-                      // Reload file content when AI modifies it
+                      // Always refresh file tree when AI modifies files
+                      await refreshFiles();
+
+                      // Reload file content if the modified file is currently selected
                       if (selectedFile && selectedFile.path === path) {
                         try {
                           const response = await fetch(
@@ -1100,14 +1414,36 @@ export default function InterviewPage() {
                           );
                           if (response.ok) {
                             const responseJson = await response.json();
-                            // Handle both wrapped { success, data } and direct response formats
                             const data = responseJson.data || responseJson;
-                            // Ensure content is a string (defensive check)
                             const fileContent = typeof data.content === 'string' ? data.content : '';
                             setCode(fileContent);
+                            // Update tab content too
+                            setOpenTabs(prev => prev.map(tab =>
+                              tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
+                            ));
                           }
                         } catch (err) {
                           console.error("Failed to reload file:", err);
+                        }
+                      } else {
+                        // File is not open - update tab if it exists
+                        const existingTab = openTabs.find(tab => tab.path === path);
+                        if (existingTab) {
+                          try {
+                            const response = await fetch(
+                              `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
+                            );
+                            if (response.ok) {
+                              const responseJson = await response.json();
+                              const data = responseJson.data || responseJson;
+                              const fileContent = typeof data.content === 'string' ? data.content : '';
+                              setOpenTabs(prev => prev.map(tab =>
+                                tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
+                              ));
+                            }
+                          } catch (err) {
+                            console.error("Failed to update tab content:", err);
+                          }
                         }
                       }
                     }}

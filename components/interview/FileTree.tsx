@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
-import { ChevronRight, ChevronDown, File, Folder, FolderOpen, Plus, Trash2 } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { ChevronRight, ChevronDown, File, Folder, FolderOpen, Plus, FolderPlus, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
 
 export interface FileNode {
   id: string;
@@ -28,10 +29,12 @@ interface FileTreeNodeProps {
   level: number;
   selectedFile?: string;
   onFileSelect: (file: FileNode) => void;
+  onFileDelete?: (path: string) => void;
 }
 
-function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect }: FileTreeNodeProps) {
+function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect, onFileDelete }: FileTreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+  const [isHovered, setIsHovered] = useState(false);
   const isSelected = selectedFile === node.path;
   const isFolder = node.type === "folder";
 
@@ -78,6 +81,13 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect }: Fi
     }
   };
 
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm(`Delete "${node.name}"?`)) {
+      onFileDelete?.(node.path);
+    }
+  };
+
   return (
     <div>
       <div
@@ -88,13 +98,15 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect }: Fi
         aria-label={`${isFolder ? 'Folder' : 'File'}: ${node.name}`}
         tabIndex={isSelected ? 0 : -1}
         className={cn(
-          "flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-background-hover transition-colors text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+          "group flex items-center gap-1 px-2 py-1 cursor-pointer hover:bg-background-hover transition-colors text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
           isSelected && "bg-background-tertiary text-primary",
           !isSelected && "text-text-secondary"
         )}
         style={{ paddingLeft: `${level * 12 + 8}px` }}
         onClick={handleClick}
         onKeyDown={handleKeyDown}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
       >
         {isFolder ? (
           <>
@@ -115,7 +127,16 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect }: Fi
             <File className="h-4 w-4 flex-shrink-0" />
           </>
         )}
-        <span className="truncate">{node.name}</span>
+        <span className="truncate flex-1">{node.name}</span>
+        {isHovered && onFileDelete && (
+          <button
+            onClick={handleDelete}
+            className="opacity-0 group-hover:opacity-100 text-text-tertiary hover:text-error transition-all p-0.5 rounded"
+            title={`Delete ${node.name}`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
 
       {isFolder && isExpanded && node.children && (
@@ -128,6 +149,7 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect }: Fi
               level={level + 1}
               selectedFile={selectedFile}
               onFileSelect={onFileSelect}
+              onFileDelete={onFileDelete}
             />
           ))}
         </div>
@@ -145,7 +167,18 @@ export function FileTree({
   onFileDelete,
   className
 }: FileTreeProps) {
-  const handleFileCreate = (path: string, type: "file" | "folder") => {
+  const [isCreating, setIsCreating] = useState<"file" | "folder" | null>(null);
+  const [newItemName, setNewItemName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-focus input when creating
+  useEffect(() => {
+    if (isCreating && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isCreating]);
+
+  const handleCreate = (name: string, type: "file" | "folder") => {
     // Record file creation event
     fetch(`/api/interview/${sessionId}/events`, {
       method: "POST",
@@ -153,13 +186,32 @@ export function FileTree({
       body: JSON.stringify({
         eventType: "file_create",
         data: {
-          path,
+          path: name,
           type,
         },
       }),
     }).catch((err) => console.error("Failed to record file creation:", err));
 
-    onFileCreate?.(path, type);
+    onFileCreate?.(name, type);
+  };
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && newItemName.trim()) {
+      handleCreate(newItemName.trim(), isCreating!);
+      setIsCreating(null);
+      setNewItemName("");
+    } else if (e.key === "Escape") {
+      setIsCreating(null);
+      setNewItemName("");
+    }
+  };
+
+  const handleInputBlur = () => {
+    // Small delay to allow click events to register first
+    setTimeout(() => {
+      setIsCreating(null);
+      setNewItemName("");
+    }, 150);
   };
 
   const handleFileDelete = (path: string) => {
@@ -180,24 +232,55 @@ export function FileTree({
 
   return (
     <div className={cn("bg-background overflow-y-auto", className)}>
+      {/* Header with action buttons */}
       <div className="border-b border-border p-2 flex items-center justify-between">
         <span className="text-xs font-semibold text-text-primary">Files</span>
         {onFileCreate && (
-          <button
-            onClick={() => {
-              const fileName = prompt("Enter file name:");
-              if (fileName) {
-                handleFileCreate(fileName, "file");
-              }
-            }}
-            className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
-            title="Create new file"
-            aria-label="Create new file"
-          >
-            <Plus className="h-4 w-4" />
-          </button>
+          <div className="flex items-center gap-0.5">
+            <button
+              onClick={() => setIsCreating("file")}
+              className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
+              title="New File"
+              aria-label="New File"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setIsCreating("folder")}
+              className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
+              title="New Folder"
+              aria-label="New Folder"
+            >
+              <FolderPlus className="h-4 w-4" />
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Inline creation input (VS Code style) */}
+      {isCreating && (
+        <div
+          className="flex items-center gap-1.5 px-2 py-1 bg-background-tertiary/50 border-b border-border"
+          style={{ paddingLeft: "20px" }}
+        >
+          {isCreating === "folder" ? (
+            <Folder className="h-4 w-4 flex-shrink-0 text-primary" />
+          ) : (
+            <File className="h-4 w-4 flex-shrink-0 text-text-secondary" />
+          )}
+          <Input
+            ref={inputRef}
+            value={newItemName}
+            onChange={(e) => setNewItemName(e.target.value)}
+            onKeyDown={handleInputKeyDown}
+            onBlur={handleInputBlur}
+            placeholder={isCreating === "folder" ? "folder-name" : "filename.ts"}
+            className="h-6 flex-1 text-sm py-0 px-1.5 bg-background border-primary/50 focus:border-primary"
+          />
+        </div>
+      )}
+
+      {/* File tree */}
       <div role="tree" aria-label="Project files" className="py-2">
         {files.map((node) => (
           <FileTreeNode
@@ -207,6 +290,7 @@ export function FileTree({
             level={0}
             selectedFile={selectedFile}
             onFileSelect={onFileSelect}
+            onFileDelete={onFileDelete ? handleFileDelete : undefined}
           />
         ))}
       </div>

@@ -178,13 +178,13 @@ export async function POST(
           // Send message with streaming callbacks
           const agentResponse = await agent.sendMessageStreaming(enhancedMessage, {
             onTextDelta: (delta: string) => {
-              sendEvent("thinking", { delta });
+              sendEvent("content", { delta });
             },
             onToolStart: (toolName: string, toolId: string, input: unknown) => {
-              sendEvent("tool_start", { tool: toolName, id: toolId, input });
+              sendEvent("tool_use_start", { toolName, toolId, input });
             },
             onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
-              sendEvent("tool_result", { tool: toolName, id: toolId, result, isError });
+              sendEvent("tool_result", { toolName, toolId, output: result, isError });
             },
           });
 
