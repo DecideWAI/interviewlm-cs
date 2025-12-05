@@ -141,6 +141,82 @@ async function main() {
 
   console.log(`✅ Created ${seedsCreated} problem seeds (${seedsSkipped} already existed)`);
 
+  // Seed technologies
+  console.log("\n🔧 Seeding technologies...");
+
+  const technologies = [
+    // Languages
+    { slug: "python", name: "Python", category: "language", icon: "FileCode2", description: "General-purpose programming language", color: "#3776AB", pairedWithIds: ["fastapi", "django", "flask", "pytest", "sqlalchemy"] },
+    { slug: "javascript", name: "JavaScript", category: "language", icon: "FileCode2", description: "Dynamic programming language for web", color: "#F7DF1E", pairedWithIds: ["react", "nodejs", "express", "jest"] },
+    { slug: "typescript", name: "TypeScript", category: "language", icon: "FileCode2", description: "Typed superset of JavaScript", color: "#3178C6", pairedWithIds: ["react", "nodejs", "express", "jest", "nextjs"] },
+    { slug: "go", name: "Go", category: "language", icon: "FileCode2", description: "Statically typed compiled language", color: "#00ADD8", pairedWithIds: ["gin", "postgresql", "redis"] },
+    { slug: "java", name: "Java", category: "language", icon: "FileCode2", description: "Object-oriented programming language", color: "#007396", pairedWithIds: ["spring", "junit", "maven"] },
+    { slug: "csharp", name: "C#", category: "language", icon: "FileCode2", description: "Modern, object-oriented language", color: "#239120", pairedWithIds: ["dotnet", "entityframework", "nunit"] },
+    { slug: "ruby", name: "Ruby", category: "language", icon: "FileCode2", description: "Dynamic, open source language", color: "#CC342D", pairedWithIds: ["rails", "rspec"] },
+    { slug: "rust", name: "Rust", category: "language", icon: "FileCode2", description: "Systems programming language", color: "#CE422B", pairedWithIds: ["actix", "tokio"] },
+    // Frameworks
+    { slug: "react", name: "React", category: "framework", icon: "Atom", description: "JavaScript library for building UIs", color: "#61DAFB", pairedWithIds: ["typescript", "javascript", "jest", "nextjs"] },
+    { slug: "nextjs", name: "Next.js", category: "framework", icon: "Triangle", description: "React framework for production", color: "#000000", pairedWithIds: ["react", "typescript", "vercel"] },
+    { slug: "nodejs", name: "Node.js", category: "framework", icon: "Hexagon", description: "JavaScript runtime", color: "#339933", pairedWithIds: ["express", "javascript", "typescript"] },
+    { slug: "express", name: "Express", category: "framework", icon: "Server", description: "Fast Node.js web framework", color: "#000000", pairedWithIds: ["nodejs", "mongodb", "postgresql"] },
+    { slug: "django", name: "Django", category: "framework", icon: "Database", description: "Python web framework", color: "#092E20", pairedWithIds: ["python", "postgresql", "redis"] },
+    { slug: "fastapi", name: "FastAPI", category: "framework", icon: "Zap", description: "Modern Python web framework", color: "#009688", pairedWithIds: ["python", "postgresql", "redis"] },
+    { slug: "flask", name: "Flask", category: "framework", icon: "Beaker", description: "Python micro web framework", color: "#000000", pairedWithIds: ["python", "postgresql", "mongodb"] },
+    { slug: "spring", name: "Spring", category: "framework", icon: "Leaf", description: "Java enterprise framework", color: "#6DB33F", pairedWithIds: ["java", "postgresql", "mysql"] },
+    { slug: "rails", name: "Rails", category: "framework", icon: "Train", description: "Ruby web framework", color: "#CC0000", pairedWithIds: ["ruby", "postgresql", "redis"] },
+    { slug: "gin", name: "Gin", category: "framework", icon: "Wind", description: "Go web framework", color: "#00ADD8", pairedWithIds: ["go", "postgresql", "redis"] },
+    { slug: "vue", name: "Vue.js", category: "framework", icon: "Triangle", description: "Progressive JavaScript framework", color: "#4FC08D", pairedWithIds: ["javascript", "typescript", "nuxt"] },
+    { slug: "angular", name: "Angular", category: "framework", icon: "Shield", description: "TypeScript-based framework", color: "#DD0031", pairedWithIds: ["typescript", "rxjs"] },
+    // Databases
+    { slug: "postgresql", name: "PostgreSQL", category: "database", icon: "Database", description: "Advanced open source database", color: "#336791", pairedWithIds: ["python", "nodejs", "go"] },
+    { slug: "mongodb", name: "MongoDB", category: "database", icon: "Database", description: "Document-oriented database", color: "#47A248", pairedWithIds: ["nodejs", "python", "express"] },
+    { slug: "mysql", name: "MySQL", category: "database", icon: "Database", description: "Popular relational database", color: "#4479A1", pairedWithIds: ["python", "java", "php"] },
+    { slug: "redis", name: "Redis", category: "database", icon: "Database", description: "In-memory data store", color: "#DC382D", pairedWithIds: ["nodejs", "python", "go"] },
+    { slug: "sqlite", name: "SQLite", category: "database", icon: "Database", description: "Lightweight embedded database", color: "#003B57", pairedWithIds: ["python", "nodejs", "mobile"] },
+    // Testing
+    { slug: "jest", name: "Jest", category: "testing", icon: "TestTube", description: "JavaScript testing framework", color: "#C21325", pairedWithIds: ["javascript", "typescript", "react"] },
+    { slug: "pytest", name: "Pytest", category: "testing", icon: "TestTube", description: "Python testing framework", color: "#0A9EDC", pairedWithIds: ["python", "django", "fastapi"] },
+    { slug: "junit", name: "JUnit", category: "testing", icon: "TestTube", description: "Java testing framework", color: "#25A162", pairedWithIds: ["java", "spring"] },
+    { slug: "rspec", name: "RSpec", category: "testing", icon: "TestTube", description: "Ruby testing framework", color: "#CC342D", pairedWithIds: ["ruby", "rails"] },
+    { slug: "cypress", name: "Cypress", category: "testing", icon: "TestTube", description: "E2E testing framework", color: "#17202C", pairedWithIds: ["javascript", "react", "vue"] },
+    // Tools
+    { slug: "docker", name: "Docker", category: "tool", icon: "Container", description: "Container platform", color: "#2496ED", pairedWithIds: ["kubernetes", "nodejs", "python"] },
+    { slug: "kubernetes", name: "Kubernetes", category: "tool", icon: "Cloud", description: "Container orchestration", color: "#326CE5", pairedWithIds: ["docker", "aws", "gcp"] },
+    { slug: "git", name: "Git", category: "tool", icon: "GitBranch", description: "Version control system", color: "#F05032", pairedWithIds: ["github", "gitlab"] },
+    { slug: "aws", name: "AWS", category: "tool", icon: "Cloud", description: "Amazon cloud platform", color: "#FF9900", pairedWithIds: ["docker", "kubernetes", "terraform"] },
+    { slug: "graphql", name: "GraphQL", category: "tool", icon: "Share2", description: "API query language", color: "#E10098", pairedWithIds: ["nodejs", "react", "apollo"] },
+  ];
+
+  let techCreated = 0;
+  let techSkipped = 0;
+
+  for (const tech of technologies) {
+    const existing = await prisma.technology.findUnique({
+      where: { slug: tech.slug },
+    });
+
+    if (existing) {
+      techSkipped++;
+      continue;
+    }
+
+    await prisma.technology.create({
+      data: {
+        slug: tech.slug,
+        name: tech.name,
+        category: tech.category,
+        icon: tech.icon,
+        description: tech.description,
+        color: tech.color,
+        pairedWithIds: tech.pairedWithIds,
+        isActive: true,
+      },
+    });
+    techCreated++;
+  }
+
+  console.log(`✅ Created ${techCreated} technologies (${techSkipped} already existed)`);
+
   console.log("\n🎉 Seed completed successfully!");
   console.log("\nTest credentials:");
   console.log("  Email: test@interviewlm.com");

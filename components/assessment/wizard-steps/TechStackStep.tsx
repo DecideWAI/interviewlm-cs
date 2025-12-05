@@ -48,8 +48,10 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
       try {
         const response = await fetch("/api/technologies");
         if (response.ok) {
-          const data = await response.json();
-          setTechnologies(data);
+          const json = await response.json();
+          // Handle both wrapped { data: [...] } and direct array responses
+          const data = json.data || json;
+          setTechnologies(Array.isArray(data) ? data : []);
         } else {
           console.error("Failed to fetch technologies");
         }

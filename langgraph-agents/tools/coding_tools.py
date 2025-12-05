@@ -32,6 +32,14 @@ except ImportError:
     ASYNCPG_AVAILABLE = False
     asyncpg = None
 
+# Redis for distributed locking
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    redis = None
+
 from ..config import settings
 
 
@@ -52,12 +60,64 @@ class SandboxManager:
 
     Sandbox IDs are persisted to database to survive process restarts.
     Priority: 1) In-memory cache, 2) Reconnect from DB, 3) Create new
+
+    Uses Redis distributed lock to prevent multiple sandboxes per session.
     """
 
     _sandboxes: dict[str, "modal.Sandbox"] = {}
     _sandbox_ids: dict[str, str] = {}  # session_id -> sandbox_id mapping
+    _pending: dict[str, bool] = {}  # In-process pending creations
     _app: Optional["modal.App"] = None
     _image: Optional["modal.Image"] = None
+    _redis_client: Optional["redis.Redis"] = None
+
+    @classmethod
+    def _get_redis(cls) -> Optional["redis.Redis"]:
+        """Get Redis client for distributed locking."""
+        if not REDIS_AVAILABLE:
+            return None
+        if cls._redis_client is None:
+            redis_url = getattr(settings, 'redis_url', None) or os.environ.get('REDIS_URL')
+            if redis_url:
+                try:
+                    cls._redis_client = redis.from_url(redis_url)
+                    # Test connection
+                    cls._redis_client.ping()
+                    print("[SandboxManager] Redis connected for distributed locking")
+                except Exception as e:
+                    print(f"[SandboxManager] Failed to connect to Redis: {e}")
+                    cls._redis_client = None
+        return cls._redis_client
+
+    @classmethod
+    def _acquire_lock(cls, session_id: str, timeout: int = 120) -> Optional[Any]:
+        """Acquire distributed lock for sandbox creation."""
+        redis_client = cls._get_redis()
+        if not redis_client:
+            return None  # No Redis, fall back to in-process only
+        try:
+            lock = redis_client.lock(
+                f"sandbox:{session_id}",
+                timeout=timeout,
+                blocking_timeout=60,
+            )
+            if lock.acquire(blocking=True):
+                print(f"[SandboxManager] Acquired lock for sandbox:{session_id}")
+                return lock
+            return None
+        except Exception as e:
+            print(f"[SandboxManager] Failed to acquire lock: {e}")
+            return None
+
+    @classmethod
+    def _release_lock(cls, lock: Any) -> None:
+        """Release distributed lock."""
+        if lock:
+            try:
+                lock.release()
+                print("[SandboxManager] Released lock")
+            except Exception as e:
+                print(f"[SandboxManager] Failed to release lock: {e}")
 
     @classmethod
     def _get_app(cls) -> "modal.App":
@@ -205,8 +265,13 @@ class SandboxManager:
 
         Priority:
         1. Return from in-memory cache (fastest)
-        2. Reconnect to existing sandbox from database (survives restart)
-        3. Create new sandbox (fallback)
+        2. Check if creation is pending (same process)
+        3. Acquire distributed lock
+        4. Re-check cache after lock (another process may have created it)
+        5. Reconnect to existing sandbox from database (survives restart)
+        6. Create new sandbox (fallback)
+
+        Uses Redis distributed lock to prevent multiple sandboxes per session.
 
         Args:
             session_id: Unique session identifier
@@ -217,37 +282,69 @@ class SandboxManager:
         if not MODAL_AVAILABLE:
             raise RuntimeError("Modal SDK not available. Install with: pip install modal")
 
-        # 1. Check in-memory cache first
+        # 1. Check in-memory cache first (fast path)
         if session_id in cls._sandboxes:
             print(f"[SandboxManager] Using cached sandbox for session {session_id}")
             return cls._sandboxes[session_id]
 
-        # 2. Try to reconnect from database
+        # 2. Check if creation is pending in same process (prevent local race)
+        if session_id in cls._pending:
+            print(f"[SandboxManager] Waiting for pending sandbox creation for {session_id}")
+            # Simple spin wait - in production would use proper async coordination
+            import time
+            for _ in range(60):  # Wait up to 60 seconds
+                if session_id in cls._sandboxes:
+                    return cls._sandboxes[session_id]
+                time.sleep(1)
+            raise RuntimeError(f"Timeout waiting for sandbox creation for {session_id}")
+
+        # Mark as pending
+        cls._pending[session_id] = True
+
+        # 3. Acquire distributed lock
+        lock = cls._acquire_lock(session_id)
+
         try:
-            # Get sandbox ID from DB
+            # 4. Re-check cache after lock (another instance may have created it)
+            if session_id in cls._sandboxes:
+                print(f"[SandboxManager] Found cached sandbox after lock for {session_id}")
+                return cls._sandboxes[session_id]
+
+            # 5. Try to reconnect from database
             try:
-                sandbox_id = asyncio.get_event_loop().run_until_complete(
-                    cls._get_sandbox_id_from_db(session_id)
-                )
-            except RuntimeError:
-                sandbox_id = asyncio.run(cls._get_sandbox_id_from_db(session_id))
+                # Get sandbox ID from DB
+                try:
+                    sandbox_id = asyncio.get_event_loop().run_until_complete(
+                        cls._get_sandbox_id_from_db(session_id)
+                    )
+                except RuntimeError:
+                    sandbox_id = asyncio.run(cls._get_sandbox_id_from_db(session_id))
 
-            if sandbox_id:
-                sandbox = cls._reconnect_to_sandbox(sandbox_id)
-                if sandbox:
-                    cls._sandboxes[session_id] = sandbox
-                    cls._sandbox_ids[session_id] = sandbox_id
-                    return sandbox
+                if sandbox_id:
+                    print(f"[SandboxManager] Found sandbox ID {sandbox_id} in DB for {session_id}")
+                    sandbox = cls._reconnect_to_sandbox(sandbox_id)
+                    if sandbox:
+                        cls._sandboxes[session_id] = sandbox
+                        cls._sandbox_ids[session_id] = sandbox_id
+                        return sandbox
+                    else:
+                        # Sandbox no longer exists, clear stale ID
+                        print(f"[SandboxManager] Clearing stale sandbox ID {sandbox_id}")
                 else:
-                    # Sandbox no longer exists, clear stale ID
-                    print(f"[SandboxManager] Clearing stale sandbox ID {sandbox_id}")
-        except Exception as e:
-            print(f"[SandboxManager] Error checking DB for sandbox: {e}")
+                    print(f"[SandboxManager] No existing sandbox found in DB for {session_id}")
+            except Exception as e:
+                print(f"[SandboxManager] Error checking DB for sandbox: {e}")
 
-        # 3. Create new sandbox
-        sandbox = cls._create_new_sandbox(session_id)
-        cls._sandboxes[session_id] = sandbox
-        return sandbox
+            # 6. Create new sandbox
+            print(f"[SandboxManager] Creating NEW sandbox for session {session_id}")
+            sandbox = cls._create_new_sandbox(session_id)
+            cls._sandboxes[session_id] = sandbox
+            return sandbox
+
+        finally:
+            # Always release lock and clear pending flag
+            cls._pending.pop(session_id, None)
+            cls._release_lock(lock)
 
     @classmethod
     def terminate_sandbox(cls, session_id: str) -> bool:

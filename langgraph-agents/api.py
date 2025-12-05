@@ -31,6 +31,7 @@ from agents import (
     create_coding_agent,
     create_interview_agent,
     create_evaluation_agent,
+    create_question_evaluation_agent,
     create_supervisor,
 )
 from config import settings
@@ -144,6 +145,42 @@ class EvaluationResponse(BaseModel):
     communication: dict
     confidence: float
     bias_flags: list[str]
+
+
+class QuestionEvaluationRequest(BaseModel):
+    """Request to evaluate a single question submission."""
+    session_id: str
+    candidate_id: str
+    question_id: str
+    question_title: str
+    question_description: str
+    question_difficulty: str = "medium"
+    question_requirements: Optional[list[str]] = None
+    code: str
+    language: str
+    file_name: Optional[str] = None
+    test_output: Optional[str] = None
+    tests_passed: Optional[int] = None
+    tests_failed: Optional[int] = None
+    passing_threshold: int = 70
+    use_agent_mode: bool = False  # If True, use Claude Code tools
+
+
+class QuestionEvaluationCriterion(BaseModel):
+    """Single criterion score."""
+    score: int
+    maxScore: int = 20
+    feedback: str
+
+
+class QuestionEvaluationResponse(BaseModel):
+    """Question evaluation result response."""
+    overallScore: int
+    passed: bool
+    criteria: dict[str, QuestionEvaluationCriterion]
+    feedback: str
+    strengths: list[str]
+    improvements: list[str]
 
 
 class SupervisorWorkflowRequest(BaseModel):
@@ -464,6 +501,79 @@ async def evaluate_session(request: EvaluationRequest):
             communication=result["communication"],
             confidence=result["overall_confidence"],
             bias_flags=result.get("bias_flags", []),
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Question Evaluation Agent Endpoints
+# =============================================================================
+
+@app.post("/api/question-evaluation/evaluate", response_model=QuestionEvaluationResponse, dependencies=[Depends(verify_api_key)])
+async def evaluate_question(request: QuestionEvaluationRequest):
+    """
+    Evaluate a single question submission during an interview.
+
+    Uses 5 criteria (20 points each = 100 total):
+    1. Problem Completion - Does solution meet requirements?
+    2. Code Quality - Clean, readable, well-organized?
+    3. Best Practices - Follows language conventions?
+    4. Error Handling - Handles edge cases?
+    5. Efficiency - Reasonably performant?
+
+    Returns scores and feedback to determine if candidate can proceed.
+    """
+    try:
+        agent = create_question_evaluation_agent(use_agent_mode=request.use_agent_mode)
+
+        result = await agent.evaluate_question(
+            session_id=request.session_id,
+            candidate_id=request.candidate_id,
+            question_id=request.question_id,
+            question_title=request.question_title,
+            question_description=request.question_description,
+            question_difficulty=request.question_difficulty,
+            code=request.code,
+            language=request.language,
+            question_requirements=request.question_requirements,
+            file_name=request.file_name,
+            test_output=request.test_output,
+            tests_passed=request.tests_passed,
+            tests_failed=request.tests_failed,
+            passing_threshold=request.passing_threshold,
+        )
+
+        # Convert to API response format (camelCase for frontend)
+        return QuestionEvaluationResponse(
+            overallScore=result["overall_score"],
+            passed=result["passed"],
+            criteria={
+                "problemCompletion": QuestionEvaluationCriterion(
+                    score=result["criteria"]["problem_completion"]["score"],
+                    feedback=result["criteria"]["problem_completion"]["feedback"],
+                ),
+                "codeQuality": QuestionEvaluationCriterion(
+                    score=result["criteria"]["code_quality"]["score"],
+                    feedback=result["criteria"]["code_quality"]["feedback"],
+                ),
+                "bestPractices": QuestionEvaluationCriterion(
+                    score=result["criteria"]["best_practices"]["score"],
+                    feedback=result["criteria"]["best_practices"]["feedback"],
+                ),
+                "errorHandling": QuestionEvaluationCriterion(
+                    score=result["criteria"]["error_handling"]["score"],
+                    feedback=result["criteria"]["error_handling"]["feedback"],
+                ),
+                "efficiency": QuestionEvaluationCriterion(
+                    score=result["criteria"]["efficiency"]["score"],
+                    feedback=result["criteria"]["efficiency"]["feedback"],
+                ),
+            },
+            feedback=result["feedback"],
+            strengths=result["strengths"],
+            improvements=result["improvements"],
         )
 
     except Exception as e:

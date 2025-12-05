@@ -213,3 +213,97 @@ class SupervisorState(TypedDict):
 
     # Processing state
     workflow_complete: bool
+
+
+# =============================================================================
+# Question Evaluation Types (5-criteria single question evaluation)
+# =============================================================================
+
+class QuestionCriterionScore(TypedDict):
+    """Score for a single question evaluation criterion."""
+    score: int  # 0-20
+    feedback: str
+
+
+class QuestionEvaluationCriteria(TypedDict):
+    """All 5 criteria scores for question evaluation."""
+    problem_completion: QuestionCriterionScore  # Does solution meet requirements?
+    code_quality: QuestionCriterionScore  # Clean, readable, well-organized?
+    best_practices: QuestionCriterionScore  # Follows language conventions?
+    error_handling: QuestionCriterionScore  # Handles edge cases?
+    efficiency: QuestionCriterionScore  # Reasonably performant?
+
+
+class QuestionEvaluationResult(TypedDict):
+    """Complete evaluation result for a single question."""
+    session_id: str
+    candidate_id: str
+    question_id: str
+
+    # 5-criteria scores (20 points each = 100 total)
+    overall_score: int  # 0-100
+    passed: bool  # Score >= threshold
+    criteria: QuestionEvaluationCriteria
+
+    # Feedback
+    feedback: str
+    strengths: list[str]
+    improvements: list[str]
+
+    # Metadata
+    evaluated_at: str
+    model: str
+
+
+class QuestionEvaluationAgentState(TypedDict):
+    """
+    State for the Question Evaluation Agent.
+
+    Evaluates a single question submission during an interview
+    to determine if the candidate can proceed to the next question.
+    Uses 5 criteria (20 points each = 100 total):
+    1. Problem Completion
+    2. Code Quality
+    3. Best Practices
+    4. Error Handling
+    5. Efficiency
+    """
+    # Message history
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+
+    # Session context
+    session_id: str
+    candidate_id: str
+    question_id: str
+
+    # Question context
+    question_title: str
+    question_description: str
+    question_requirements: list[str] | None
+    question_difficulty: str
+
+    # Code to evaluate
+    code: str
+    language: str
+    file_name: str | None
+
+    # Optional: Test results from sandbox
+    test_output: str | None
+    tests_passed: int | None
+    tests_failed: int | None
+
+    # Passing threshold
+    passing_threshold: int  # Default 70
+
+    # Evaluation in progress
+    problem_completion_score: QuestionCriterionScore | None
+    code_quality_score: QuestionCriterionScore | None
+    best_practices_score: QuestionCriterionScore | None
+    error_handling_score: QuestionCriterionScore | None
+    efficiency_score: QuestionCriterionScore | None
+
+    # Final result
+    evaluation_result: QuestionEvaluationResult | None
+
+    # Processing state
+    evaluation_complete: bool

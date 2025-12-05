@@ -14,6 +14,7 @@ import { QuestionProgressHeader } from "@/components/interview/QuestionProgressH
 import { QuestionCompletionCard } from "@/components/interview/QuestionCompletionCard";
 import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
 import { QuestionTransition } from "@/components/interview/QuestionTransition";
+import { EvaluationPanel, EvaluationResult } from "@/components/interview/EvaluationPanel";
 import type { QuestionPerformance } from "@/components/interview/QuestionTransition";
 import { resetConversation } from "@/lib/chat-resilience";
 import { useSessionRecovery, SessionState } from "@/hooks/useSessionRecovery";
@@ -66,6 +67,8 @@ import {
   X,
   Loader2,
   Check,
+  Sparkles,
+  ClipboardCheck,
 } from "lucide-react";
 
 // Tab interface for multi-tab editor support
@@ -158,6 +161,12 @@ export default function InterviewPage() {
   } | null>(null);
   const [buildingOn, setBuildingOn] = useState<string>("");
   const [difficultyCalibrated, setDifficultyCalibrated] = useState(false);
+
+  // Evaluation state
+  const [rightPanelTab, setRightPanelTab] = useState<"chat" | "evaluation">("chat");
+  const [evaluationResult, setEvaluationResult] = useState<EvaluationResult | null>(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [passingThreshold, setPassingThreshold] = useState(70);
 
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -564,6 +573,55 @@ export default function InterviewPage() {
       }
     } catch (err) {
       console.error("Failed to run tests:", err);
+    }
+  };
+
+  const handleEvaluate = async () => {
+    if (!sessionData || isEvaluating) return;
+
+    setIsEvaluating(true);
+    setRightPanelTab("evaluation"); // Switch to evaluation tab
+
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/evaluate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          language: sessionData.question.language,
+          questionId: sessionData.question.id,
+          fileName: selectedFile?.name,
+        }),
+      });
+
+      if (response.ok) {
+        const responseJson = await response.json();
+        const result = responseJson.data || responseJson;
+        setEvaluationResult(result);
+
+        if (result.passed) {
+          toast.success("Evaluation passed!", {
+            description: `Score: ${result.overallScore}/100`,
+          });
+        } else {
+          toast.warning("Needs improvement", {
+            description: `Score: ${result.overallScore}/100. Review feedback to improve.`,
+          });
+        }
+      } else {
+        const errorData = await response.json();
+        console.error("Evaluation failed:", errorData);
+        toast.error("Evaluation failed", {
+          description: errorData.error || "Please try again.",
+        });
+      }
+    } catch (err) {
+      console.error("Failed to evaluate:", err);
+      toast.error("Evaluation failed", {
+        description: "An unexpected error occurred.",
+      });
+    } finally {
+      setIsEvaluating(false);
     }
   };
 
@@ -1180,9 +1238,15 @@ export default function InterviewPage() {
             </div>
 
             {/* Actions */}
-            <Button size="sm" variant="outline" onClick={handleRunTests}>
-              <Play className="h-4 w-4 mr-2" />
-              Run Tests
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleEvaluate}
+              disabled={isEvaluating}
+              loading={isEvaluating}
+            >
+              <Sparkles className="h-4 w-4 mr-2" />
+              {isEvaluating ? "Evaluating..." : "Evaluate"}
             </Button>
 
             <Button
@@ -1405,73 +1469,120 @@ export default function InterviewPage() {
             </PanelGroup>
           </Panel>
 
-          {/* Right Sidebar - AI Chat */}
+          {/* Right Sidebar - AI Chat / Evaluation */}
           {isAIChatOpen && (
             <>
               <PanelResizeHandle className="w-1 bg-border hover:bg-primary transition-colors" />
               <Panel defaultSize={panelSizes.horizontal[2]} minSize={20} maxSize={50}>
-                <div className="h-full border-l border-border">
-                  <AIChat
-                    ref={aiChatRef}
-                    sessionId={candidateId}
-                    onFileModified={async (path) => {
-                      // Always refresh file tree when AI modifies files
-                      await refreshFiles();
+                <div className="h-full border-l border-border flex flex-col bg-background">
+                  {/* Tab Headers */}
+                  <div className="border-b border-border bg-background-secondary flex">
+                    <button
+                      onClick={() => setRightPanelTab("chat")}
+                      className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                        rightPanelTab === "chat"
+                          ? "text-primary border-b-2 border-primary bg-background"
+                          : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <MessageSquare className="h-4 w-4" />
+                        <span>AI Chat</span>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => setRightPanelTab("evaluation")}
+                      className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
+                        rightPanelTab === "evaluation"
+                          ? "text-primary border-b-2 border-primary bg-background"
+                          : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                      }`}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                        <ClipboardCheck className="h-4 w-4" />
+                        <span>Evaluation</span>
+                        {evaluationResult?.passed && (
+                          <CheckCircle2 className="h-3 w-3 text-success" />
+                        )}
+                      </div>
+                    </button>
+                  </div>
 
-                      // Reload file content if the modified file is currently selected
-                      if (selectedFile && selectedFile.path === path) {
-                        try {
-                          const response = await fetch(
-                            `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
-                          );
-                          if (response.ok) {
-                            const responseJson = await response.json();
-                            const data = responseJson.data || responseJson;
-                            const fileContent = typeof data.content === 'string' ? data.content : '';
-                            setCode(fileContent);
-                            // Update tab content too
-                            setOpenTabs(prev => prev.map(tab =>
-                              tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
-                            ));
-                          }
-                        } catch (err) {
-                          console.error("Failed to reload file:", err);
-                        }
-                      } else {
-                        // File is not open - update tab if it exists
-                        const existingTab = openTabs.find(tab => tab.path === path);
-                        if (existingTab) {
-                          try {
-                            const response = await fetch(
-                              `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
-                            );
-                            if (response.ok) {
-                              const responseJson = await response.json();
-                              const data = responseJson.data || responseJson;
-                              const fileContent = typeof data.content === 'string' ? data.content : '';
-                              setOpenTabs(prev => prev.map(tab =>
-                                tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
-                              ));
+                  {/* Tab Content */}
+                  <div className="flex-1 min-h-0">
+                    {rightPanelTab === "chat" ? (
+                      <AIChat
+                        ref={aiChatRef}
+                        sessionId={candidateId}
+                        onFileModified={async (path) => {
+                          // Always refresh file tree when AI modifies files
+                          await refreshFiles();
+
+                          // Reload file content if the modified file is currently selected
+                          if (selectedFile && selectedFile.path === path) {
+                            try {
+                              const response = await fetch(
+                                `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
+                              );
+                              if (response.ok) {
+                                const responseJson = await response.json();
+                                const data = responseJson.data || responseJson;
+                                const fileContent = typeof data.content === 'string' ? data.content : '';
+                                setCode(fileContent);
+                                // Update tab content too
+                                setOpenTabs(prev => prev.map(tab =>
+                                  tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
+                                ));
+                              }
+                            } catch (err) {
+                              console.error("Failed to reload file:", err);
                             }
-                          } catch (err) {
-                            console.error("Failed to update tab content:", err);
+                          } else {
+                            // File is not open - update tab if it exists
+                            const existingTab = openTabs.find(tab => tab.path === path);
+                            if (existingTab) {
+                              try {
+                                const response = await fetch(
+                                  `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
+                                );
+                                if (response.ok) {
+                                  const responseJson = await response.json();
+                                  const data = responseJson.data || responseJson;
+                                  const fileContent = typeof data.content === 'string' ? data.content : '';
+                                  setOpenTabs(prev => prev.map(tab =>
+                                    tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
+                                  ));
+                                }
+                              } catch (err) {
+                                console.error("Failed to update tab content:", err);
+                              }
+                            }
                           }
-                        }
-                      }
-                    }}
-                    onTestResultsUpdated={(results) => {
-                      // Update test results display
-                      setTestResults({
-                        passed: results.passed || 0,
-                        total: results.total || 0,
-                      });
-                    }}
-                    onSuggestNextQuestion={(suggestion) => {
-                      // AI suggests moving to next question
-                      console.log("AI suggests next question:", suggestion.reason);
-                      setShowCompletionCard(true);
-                    }}
-                  />
+                        }}
+                        onTestResultsUpdated={(results) => {
+                          // Update test results display
+                          setTestResults({
+                            passed: results.passed || 0,
+                            total: results.total || 0,
+                          });
+                        }}
+                        onSuggestNextQuestion={(suggestion) => {
+                          // AI suggests moving to next question
+                          console.log("AI suggests next question:", suggestion.reason);
+                          setShowCompletionCard(true);
+                        }}
+                      />
+                    ) : (
+                      <EvaluationPanel
+                        evaluationResult={evaluationResult}
+                        isEvaluating={isEvaluating}
+                        onEvaluate={handleEvaluate}
+                        onProceed={handleNextQuestion}
+                        isLastQuestion={currentQuestionIndex + 1 >= totalQuestions}
+                        passingThreshold={passingThreshold}
+                      />
+                    )}
+                  </div>
                 </div>
               </Panel>
             </>
