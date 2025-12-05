@@ -168,237 +168,155 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     });
 
     try {
-      // Send current message to agent endpoint with retry logic
-      const response = await fetchWithRetry(
-        `/api/interview/${sessionId}/chat/agent`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message: userMessage.content,
-          }),
-        },
-        {
-          maxRetries: 3,
-          initialDelay: 2000,
-          maxDelay: 16000,
-          onRetry: (attempt, delay) => {
-            setIsReconnecting(true);
-            setError(`Connection issue. Retrying in ${delay / 1000}s... (attempt ${attempt}/3)`);
-          },
-        }
-      );
+      // Use streaming GET endpoint for real-time updates
+      const url = new URL(`/api/interview/${sessionId}/chat/agent`, window.location.origin);
+      url.searchParams.set("message", userMessage.content);
 
-      setIsReconnecting(false);
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: { "Accept": "text/event-stream" },
+      });
 
       if (!response.ok || !response.body) {
         throw new Error("Failed to connect to AI");
       }
 
-      // Check content type to determine handling strategy
-      const contentType = response.headers.get("Content-Type");
+      // Handle SSE Streaming response
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
 
-      if (contentType && contentType.includes("application/json")) {
-        // Handle standard JSON response (non-streaming)
-        const jsonResponse = await response.json();
+      let assistantMessageId = (Date.now() + 1).toString();
+      let fullContent = "";
+      let tokenUsage: { inputTokens: number; outputTokens: number } | undefined;
+      let buffer = ""; // Buffer for incomplete SSE messages
 
-        // Handle wrapped response from success() helper: { success: true, data: {...} }
-        const data = jsonResponse.data ?? jsonResponse;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
 
-        // Process tool usage if present
-        if (data.toolsUsed && data.toolsUsed.length > 0) {
-          // Add tool use messages retrospectively
-          data.toolsUsed.forEach((toolName: string, index: number) => {
-            const toolId = `tool_${Date.now()}_${index}`;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
 
-            // Add tool use message
-            const toolUseMessage: Message = {
-              id: `${Date.now()}_use_${index}`,
-              role: "system",
-              content: formatToolUse(toolName, { status: "completed" }),
-              timestamp: new Date(),
-              type: "tool_use",
-              toolName: toolName,
-            };
-            setMessages((prev) => [...prev, toolUseMessage]);
+        // Keep the last line in buffer if it doesn't end with newline (incomplete)
+        buffer = lines.pop() || "";
 
-            // Add tool result message
-            const toolResultMessage: Message = {
-              id: `${Date.now()}_result_${index}`,
-              role: "system",
-              content: formatToolResult(toolName, { success: true }),
-              timestamp: new Date(),
-              type: "tool_result",
-              toolName: toolName,
-            };
-            setMessages((prev) => [...prev, toolResultMessage]);
+        let currentEventType = "";
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            currentEventType = line.substring(6).trim();
+          } else if (line.startsWith("data:") && currentEventType) {
+            try {
+              const data = JSON.parse(line.substring(5).trim());
 
-            // Handle side effects
-            if (toolName === "Write" || toolName === "Edit") {
-              // We don't have the exact path in the simple list, but we can trigger a refresh
-              // The API returns filesModified array which is more accurate
-            }
-          });
-        }
+              switch (currentEventType) {
+                case "content":
+                  fullContent += data.delta;
+                  setCurrentStreamingMessage(fullContent);
+                  break;
 
-        // Handle file modifications
-        if (data.filesModified && data.filesModified.length > 0) {
-          data.filesModified.forEach((path: string) => {
-            onFileModified?.(path);
-          });
-        }
+                case "tool_use_start":
+                  // Show tool as running
+                  setCurrentToolUse({
+                    toolName: data.toolName,
+                    toolId: data.toolId,
+                    status: "running",
+                  });
+                  // Add tool use message to show input
+                  const toolUseMsg: Message = {
+                    id: `${Date.now()}_tool_use_${data.toolId}`,
+                    role: "system",
+                    content: formatToolUse(data.toolName, data.input),
+                    timestamp: new Date(),
+                    type: "tool_use",
+                    toolName: data.toolName,
+                    toolInput: data.input,
+                  };
+                  setMessages((prev) => [...prev, toolUseMsg]);
+                  break;
 
-        // Add assistant response
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: data.response,
-          timestamp: new Date(),
-          tokenUsage: data.usage,
-        };
+                case "tool_result":
+                  setCurrentToolUse(null);
 
-        setMessages((prev) => [...prev, assistantMessage]);
+                  const toolResultMessage: Message = {
+                    id: `${Date.now()}_tool_result_${data.toolId}`,
+                    role: "system",
+                    content: formatToolResult(data.toolName, data.output),
+                    timestamp: new Date(),
+                    type: data.isError ? "tool_error" : "tool_result",
+                    toolName: data.toolName,
+                    toolOutput: data.output,
+                  };
+                  setMessages((prev) => [...prev, toolResultMessage]);
 
-        // Add to conversation history
-        conversationHistory.current.push({
-          role: "assistant",
-          content: data.response,
-        });
+                  // Handle side effects
+                  if ((data.toolName === "Write" || data.toolName === "Edit") && !data.isError) {
+                    const filePath = data.output?.path;
+                    if (filePath) {
+                      onFileModified?.(filePath);
+                    }
+                  }
 
-        setIsLoading(false);
-        setIsConnected(true);
-      } else {
-        // Handle SSE Streaming response
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
+                  if (data.toolName === "run_tests" && !data.isError) {
+                    onTestResultsUpdated?.(data.output);
+                  }
 
-        let assistantMessageId = (Date.now() + 1).toString();
-        let fullContent = "";
-        let tokenUsage: { inputTokens: number; outputTokens: number } | undefined;
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value);
-          const lines = chunk.split("\n");
-
-          for (const line of lines) {
-            if (line.startsWith("event:")) {
-              const eventType = line.substring(6).trim();
-              const nextLineIndex = lines.indexOf(line) + 1;
-              if (nextLineIndex < lines.length && lines[nextLineIndex].startsWith("data:")) {
-                const dataLine = lines[nextLineIndex];
-                const data = JSON.parse(dataLine.substring(5).trim());
-
-                switch (eventType) {
-                  case "content":
-                    fullContent += data.delta;
-                    setCurrentStreamingMessage(fullContent);
-                    break;
-
-                  case "tool_use_start":
-                    setCurrentToolUse({
-                      toolName: data.toolName,
-                      toolId: data.toolId,
-                      status: "running",
+                  if (data.toolName === "suggest_next_question" && !data.isError) {
+                    onSuggestNextQuestion?.({
+                      reason: data.output.reason,
+                      performance: data.output.performance,
                     });
-                    break;
+                  }
+                  break;
 
-                  case "tool_use":
-                    const toolUseMessage: Message = {
-                      id: `${Date.now()}_tool_use_${data.toolId}`,
-                      role: "system",
-                      content: formatToolUse(data.toolName, data.input),
-                      timestamp: new Date(),
-                      type: "tool_use",
-                      toolName: data.toolName,
-                      toolInput: data.input,
-                    };
-                    setMessages((prev) => [...prev, toolUseMessage]);
-                    break;
+                case "iteration":
+                  // Optional: could show "Thinking... (iteration X)" for complex requests
+                  console.log(`[AIChat] Agent iteration ${data.iteration}`);
+                  break;
 
-                  case "tool_result":
-                    setCurrentToolUse(null);
+                case "usage":
+                  tokenUsage = {
+                    inputTokens: data.inputTokens,
+                    outputTokens: data.outputTokens,
+                  };
+                  break;
 
-                    const toolResultMessage: Message = {
-                      id: `${Date.now()}_tool_result_${data.toolId}`,
-                      role: "system",
-                      content: formatToolResult(data.toolName, data.output),
-                      timestamp: new Date(),
-                      type: "tool_result",
-                      toolName: data.toolName,
-                      toolOutput: data.output,
-                    };
-                    setMessages((prev) => [...prev, toolResultMessage]);
+                case "done":
+                  const assistantMessage: Message = {
+                    id: assistantMessageId,
+                    role: "assistant",
+                    content: fullContent,
+                    timestamp: new Date(),
+                    tokenUsage,
+                  };
 
-                    // Handle side effects
-                    if (data.toolName === "write_file" && data.output.success) {
-                      onFileModified?.(data.output.path);
-                    }
+                  setMessages((prev) => [...prev, assistantMessage]);
+                  setCurrentStreamingMessage("");
+                  setIsLoading(false);
+                  setIsConnected(true);
 
-                    if (data.toolName === "run_tests" && data.output.success) {
-                      onTestResultsUpdated?.(data.output);
-                    }
+                  // Add to conversation history
+                  conversationHistory.current.push({
+                    role: "assistant",
+                    content: fullContent,
+                  });
+                  break;
 
-                    if (data.toolName === "suggest_next_question" && data.output.success) {
-                      onSuggestNextQuestion?.({
-                        reason: data.output.reason,
-                        performance: data.output.performance,
-                      });
-                    }
-                    break;
+                case "error":
+                  setError(data.error || "An error occurred");
+                  setIsLoading(false);
+                  setIsConnected(false);
+                  setCurrentStreamingMessage("");
 
-                  case "tool_error":
-                    setCurrentToolUse(null);
-
-                    const toolErrorMessage: Message = {
-                      id: `${Date.now()}_tool_error`,
-                      role: "system",
-                      content: `❌ Error: ${data.error}`,
-                      timestamp: new Date(),
-                      type: "tool_error",
-                      toolName: data.toolName,
-                    };
-                    setMessages((prev) => [...prev, toolErrorMessage]);
-                    break;
-
-                  case "usage":
-                    tokenUsage = {
-                      inputTokens: data.inputTokens,
-                      outputTokens: data.outputTokens,
-                    };
-                    break;
-
-                  case "done":
-                    const assistantMessage: Message = {
-                      id: assistantMessageId,
-                      role: "assistant",
-                      content: fullContent,
-                      timestamp: new Date(),
-                      tokenUsage,
-                    };
-
-                    setMessages((prev) => [...prev, assistantMessage]);
-                    setCurrentStreamingMessage("");
-                    setIsLoading(false);
-                    setIsConnected(true);
-
-                    // Add to conversation history
-                    conversationHistory.current.push({
-                      role: "assistant",
-                      content: fullContent,
-                    });
-                    break;
-
-                  case "error":
-                    setError(data.error || "An error occurred");
-                    setIsLoading(false);
-                    setIsConnected(false);
-                    setCurrentStreamingMessage("");
-                    break;
-                }
+                  // If retryable, show a more helpful message
+                  if (data.retryable) {
+                    setIsReconnecting(true);
+                    setTimeout(() => setIsReconnecting(false), 3000);
+                  }
+                  break;
               }
+              currentEventType = ""; // Reset after processing
+            } catch (parseErr) {
+              console.error("[AIChat] Failed to parse SSE data:", parseErr);
             }
           }
         }
@@ -684,22 +602,39 @@ function formatToolUse(toolName: string, input: any): string {
  * Format tool result for display
  */
 function formatToolResult(toolName: string, output: any): string {
-  if (output.success === false) {
-    return `❌ ${toolName} failed: ${output.error}`;
+  if (output?.success === false || output?.error) {
+    return `❌ ${toolName} failed: ${output.error || 'Unknown error'}`;
   }
 
   switch (toolName) {
+    case "Read":
     case "read_file":
-      return `✅ Read ${output.path} (${output.content?.length || 0} bytes)`;
+      return `✅ Read ${output.path} (${output.content?.length || output.totalSize || 0} chars)`;
 
+    case "Write":
     case "write_file":
       return `✅ Wrote ${output.path} (${output.bytesWritten || 0} bytes)`;
+
+    case "Edit":
+      return `✅ Edited ${output.path} (${output.replacements || 1} replacement${output.replacements !== 1 ? 's' : ''})`;
 
     case "run_tests":
       return `✅ Tests: ${output.passed}/${output.total} passed`;
 
+    case "Bash":
     case "execute_bash":
-      return `✅ Command executed (exit code: ${output.exitCode || 0})`;
+      const exitInfo = output.exitCode !== undefined ? ` (exit: ${output.exitCode})` : '';
+      const stdoutPreview = output.stdout?.slice(0, 100) || '';
+      return `✅ Command executed${exitInfo}${stdoutPreview ? `\n${stdoutPreview}${output.stdout?.length > 100 ? '...' : ''}` : ''}`;
+
+    case "Grep":
+      return `✅ Found ${output.matches?.length || 0} matches`;
+
+    case "Glob":
+      return `✅ Found ${output.files?.length || 0} files`;
+
+    case "list_files":
+      return `✅ Listed ${output.count || output.files?.length || 0} items in ${output.path}`;
 
     case "suggest_next_question":
       return `🎉 ${output.performance}\n${output.reason}\n${output.suggestion}`;

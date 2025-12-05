@@ -3,7 +3,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { publishAIInteraction } from "@/lib/queues";
-import { createCodingAgent } from "@/lib/agents/coding-agent";
+import { createCodingAgent, type StreamingEvent } from "@/lib/agents/coding-agent";
 import type { HelpfulnessLevel } from "@/lib/types/agent";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
@@ -348,3 +348,297 @@ function calculatePromptQuality(
 
   return Math.max(1, Math.min(5, score));
 }
+
+/**
+ * GET /api/interview/[id]/chat/agent
+ * Streaming Claude chat using CodingAgent with SSE
+ * Query params: message (required), helpfulnessLevel (optional)
+ *
+ * This provides the same agent capabilities as POST but with real-time streaming.
+ */
+export const GET = withErrorHandling(
+  async (
+    request: NextRequest,
+    { params }: { params: Promise<{ id: string }> }
+  ) => {
+    const { id } = await params;
+
+    // Apply rate limiting
+    const rateLimited = await standardRateLimit(request);
+    if (rateLimited) return rateLimited;
+
+    // Check authentication
+    const session = await getSession();
+    if (!session?.user) {
+      throw new AuthorizationError();
+    }
+
+    // Parse query parameters
+    const { searchParams } = new URL(request.url);
+    const message = searchParams.get("message");
+    const helpfulnessLevel = searchParams.get("helpfulnessLevel") as HelpfulnessLevel | null;
+
+    if (!message) {
+      throw new ValidationError("Message is required");
+    }
+
+    logger.debug('[Chat Agent Stream] Request received', {
+      candidateId: id,
+      messageLength: message.length,
+      helpfulnessLevel: helpfulnessLevel || 'pair-programming',
+    });
+
+    // Verify candidate exists and belongs to authorized organization
+    const candidate = await prisma.candidate.findUnique({
+      where: { id },
+      include: {
+        organization: {
+          include: {
+            members: {
+              where: { userId: session.user.id },
+            },
+          },
+        },
+        sessionRecording: true,
+      },
+    });
+
+    if (!candidate) {
+      throw new NotFoundError("Interview session");
+    }
+
+    // Check authorization
+    const isOrgMember = candidate.organization.members.length > 0;
+    const isSelfInterview = candidate.email === session.user.email;
+
+    if (!isOrgMember && !isSelfInterview) {
+      throw new AuthorizationError("You do not have access to this interview session");
+    }
+
+    // Get or create session recording
+    let sessionRecording = candidate.sessionRecording;
+    if (!sessionRecording) {
+      sessionRecording = await prisma.sessionRecording.create({
+        data: {
+          candidateId: id,
+          status: "ACTIVE",
+        },
+      });
+    }
+
+    // Get current question for problem statement
+    const currentQuestion = await prisma.generatedQuestion.findFirst({
+      where: {
+        candidateId: id,
+        status: "IN_PROGRESS",
+      },
+    });
+
+    let problemStatement: string | undefined;
+    if (currentQuestion) {
+      problemStatement = `${currentQuestion.title}\n\n${currentQuestion.description}`;
+    }
+
+    const startTime = Date.now();
+
+    // Create CodingAgent instance
+    const agent = await createCodingAgent({
+      sessionId: id,
+      candidateId: id,
+      sessionRecordingId: sessionRecording.id,
+      helpfulnessLevel: (helpfulnessLevel || "pair-programming") as HelpfulnessLevel,
+      workspaceRoot: "/workspace",
+      problemStatement,
+    });
+
+    // Load conversation history
+    const previousInteractions = await prisma.claudeInteraction.findMany({
+      where: { sessionId: sessionRecording.id },
+      orderBy: { timestamp: "asc" },
+      select: { role: true, content: true },
+    });
+
+    if (previousInteractions.length > 0) {
+      agent.loadConversationHistory(
+        previousInteractions.map((interaction) => ({
+          role: interaction.role as "user" | "assistant",
+          content: interaction.content,
+        }))
+      );
+    }
+
+    // Create SSE stream
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const toolsUsed: string[] = [];
+        const filesModified: string[] = [];
+        let fullResponse = '';
+        let inputTokens = 0;
+        let outputTokens = 0;
+        let modelName = '';
+
+        try {
+          // Stream agent response
+          for await (const event of agent.sendMessageStreaming(message)) {
+            switch (event.type) {
+              case 'text_delta':
+                fullResponse += event.text;
+                controller.enqueue(
+                  encoder.encode(`event: content\ndata: ${JSON.stringify({ delta: event.text })}\n\n`)
+                );
+                break;
+
+              case 'tool_use_start':
+                toolsUsed.push(event.toolName);
+                controller.enqueue(
+                  encoder.encode(`event: tool_use_start\ndata: ${JSON.stringify({
+                    toolName: event.toolName,
+                    toolId: event.toolId,
+                    input: event.input,
+                  })}\n\n`)
+                );
+                break;
+
+              case 'tool_use_complete':
+                // Track file modifications
+                if ((event.toolName === 'Write' || event.toolName === 'Edit') && !event.isError) {
+                  const filePath = (event.output as any)?.path;
+                  if (filePath && !filesModified.includes(filePath)) {
+                    filesModified.push(filePath);
+                  }
+                }
+                controller.enqueue(
+                  encoder.encode(`event: tool_result\ndata: ${JSON.stringify({
+                    toolName: event.toolName,
+                    toolId: event.toolId,
+                    output: event.output,
+                    isError: event.isError,
+                  })}\n\n`)
+                );
+                break;
+
+              case 'iteration_start':
+                controller.enqueue(
+                  encoder.encode(`event: iteration\ndata: ${JSON.stringify({ iteration: event.iteration })}\n\n`)
+                );
+                break;
+
+              case 'done':
+                inputTokens = event.response.metadata?.usage?.input_tokens || 0;
+                outputTokens = event.response.metadata?.usage?.output_tokens || 0;
+                modelName = event.response.metadata?.model || '';
+                break;
+
+              case 'error':
+                controller.enqueue(
+                  encoder.encode(`event: error\ndata: ${JSON.stringify({ error: event.error })}\n\n`)
+                );
+                controller.close();
+                return;
+            }
+          }
+
+          const latency = Date.now() - startTime;
+
+          // Record interaction to database
+          const interaction = await prisma.claudeInteraction.create({
+            data: {
+              sessionId: sessionRecording.id,
+              role: "user",
+              content: message,
+              model: modelName,
+              inputTokens,
+              outputTokens,
+              latency,
+            },
+          });
+
+          // Store assistant response with tool metadata
+          await prisma.claudeInteraction.create({
+            data: {
+              sessionId: sessionRecording.id,
+              role: "assistant",
+              content: fullResponse,
+              model: modelName,
+              metadata: toolsUsed.length > 0 ? { toolsUsed, filesModified } : undefined,
+            },
+          });
+
+          // Calculate and update prompt quality
+          const promptQuality = calculatePromptQuality(message);
+          await prisma.claudeInteraction.update({
+            where: { id: interaction.id },
+            data: { promptQuality },
+          });
+
+          logger.info('[Chat Agent Stream] Completed', {
+            candidateId: id,
+            sessionId: sessionRecording.id,
+            inputTokens,
+            outputTokens,
+            latency,
+            toolsUsed: toolsUsed.length,
+            filesModified: filesModified.length,
+          });
+
+          // Publish AI interaction event
+          publishAIInteraction({
+            sessionId: sessionRecording.id,
+            timestamp: new Date(),
+            candidateMessage: message,
+            aiResponse: fullResponse,
+            toolsUsed: toolsUsed as any,
+            filesModified,
+          }).catch((error) => {
+            logger.error("Failed to publish AI interaction event", error as Error, {
+              sessionId: sessionRecording.id,
+            });
+          });
+
+          // Send usage and done events
+          controller.enqueue(
+            encoder.encode(`event: usage\ndata: ${JSON.stringify({ inputTokens, outputTokens })}\n\n`)
+          );
+          controller.enqueue(encoder.encode(`event: done\ndata: {}\n\n`));
+          controller.close();
+
+        } catch (error) {
+          logger.error("Streaming agent error", error as Error, {
+            candidateId: id,
+            sessionId: sessionRecording?.id,
+          });
+
+          // Check for overload error
+          const isOverloaded = (error as any)?.status === 529 ||
+            (error as any)?.message?.includes('overloaded');
+
+          if (isOverloaded) {
+            controller.enqueue(
+              encoder.encode(`event: error\ndata: ${JSON.stringify({
+                error: "Claude AI is experiencing high demand. Please try again in a few seconds.",
+                retryable: true,
+              })}\n\n`)
+            );
+          } else {
+            controller.enqueue(
+              encoder.encode(`event: error\ndata: ${JSON.stringify({
+                error: error instanceof Error ? error.message : "Unknown error",
+              })}\n\n`)
+            );
+          }
+          controller.close();
+        }
+      },
+    });
+
+    // Return SSE response
+    return new NextResponse(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+);
