@@ -183,6 +183,11 @@ export async function streamCodeGeneration(
     delayMs?: number; // Delay between chunks
   } = {}
 ): Promise<void> {
+  // Guard against undefined/null code
+  if (!fullCode) {
+    return;
+  }
+
   const { chunkSize = 5, delayMs = 20 } = options;
 
   // Start streaming

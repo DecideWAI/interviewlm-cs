@@ -8,9 +8,13 @@
 
 import { ModalClient } from "modal";
 import prisma from "@/lib/prisma";
+import { acquireLock } from "@/lib/utils/redis-lock";
 
 // Sandbox session cache (in-memory for performance, but we also persist to DB)
 const sandboxes = new Map<string, { sandbox: any; sandboxId: string; createdAt: Date }>();
+
+// In-memory pending creations (prevents race conditions within same process)
+const pendingCreations = new Map<string, Promise<any>>();
 
 // Configuration
 const SANDBOX_TIMEOUT_MS = 3600 * 1000; // 1 hour
@@ -119,18 +123,10 @@ async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sand
 async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
   try {
     const modal = getModalClient();
-    // Try to get the sandbox by ID using Modal's lookup mechanism
-    const sandbox = await modal.sandboxes.get(sandboxId);
-
-    // Verify sandbox is still alive by running a simple command
-    const proc = await exec(sandbox, ["echo", "alive"]);
-    const exitCode = await proc.exitCode();
-
-    if (exitCode === 0) {
-      console.log(`[Modal] Reconnected to existing sandbox ${sandboxId}`);
-      return sandbox;
-    }
-    return null;
+    const sandbox = await modal.sandboxes.fromId(sandboxId);
+    // If we got here without error, sandbox exists
+    console.log(`[Modal] Reconnected to existing sandbox ${sandboxId}`);
+    return sandbox;
   } catch (error) {
     console.log(`[Modal] Failed to reconnect to sandbox ${sandboxId}:`, error instanceof Error ? error.message : 'Unknown error');
     return null;
@@ -171,48 +167,62 @@ export async function createSandbox(sessionId: string): Promise<SandboxInstance>
 /**
  * Get or create sandbox for a session
  *
- * Priority:
- * 1. Return from in-memory cache (fastest)
- * 2. Reconnect to existing sandbox from database (survives server restart)
- * 3. Create new sandbox (fallback)
+ * Uses Redis distributed lock to prevent race conditions across server instances.
+ * Falls back to in-memory pending map when Redis is unavailable.
  */
 export async function getOrCreateSandbox(sessionId: string): Promise<any> {
   // 1. Check in-memory cache first
   const cached = sandboxes.get(sessionId);
   if (cached) {
-    console.log(`[Modal] Using cached sandbox ${cached.sandboxId} for session ${sessionId}`);
     return cached.sandbox;
   }
 
-  // 2. Try to reconnect to existing sandbox from database
-  try {
-    const candidate = await prisma.candidate.findUnique({
-      where: { id: sessionId },
-      select: { volumeId: true },
-    });
-
-    if (candidate?.volumeId) {
-      const sandbox = await reconnectToSandbox(candidate.volumeId);
-      if (sandbox) {
-        // Cache for future use
-        sandboxes.set(sessionId, {
-          sandbox,
-          sandboxId: candidate.volumeId,
-          createdAt: new Date()
-        });
-        return sandbox;
-      }
-      // Sandbox no longer exists, clear the stale ID
-      console.log(`[Modal] Clearing stale sandbox ID ${candidate.volumeId} for session ${sessionId}`);
-    }
-  } catch (dbError) {
-    console.warn(`[Modal] Database lookup failed:`, dbError);
+  // 2. Check if there's a local pending creation (same process)
+  const pending = pendingCreations.get(sessionId);
+  if (pending) {
+    return pending;
   }
 
-  // 3. Create a new sandbox
-  console.log(`[Modal] Creating new sandbox for session ${sessionId}`);
-  await createSandbox(sessionId);
-  return sandboxes.get(sessionId)!.sandbox;
+  // 3. Acquire distributed lock and create
+  const lock = await acquireLock(`sandbox:${sessionId}`, {
+    ttlMs: 60000,
+    waitTimeoutMs: 30000,
+    retryIntervalMs: 200,
+  });
+
+  const creationPromise = (async () => {
+    try {
+      // Check cache again after acquiring lock
+      const cachedAgain = sandboxes.get(sessionId);
+      if (cachedAgain) return cachedAgain.sandbox;
+
+      // Try to reconnect from database
+      try {
+        const candidate = await prisma.candidate.findUnique({
+          where: { id: sessionId },
+          select: { volumeId: true },
+        });
+
+        if (candidate?.volumeId) {
+          const sandbox = await reconnectToSandbox(candidate.volumeId);
+          if (sandbox) {
+            sandboxes.set(sessionId, { sandbox, sandboxId: candidate.volumeId, createdAt: new Date() });
+            return sandbox;
+          }
+        }
+      } catch {}
+
+      // Create new sandbox
+      await createSandbox(sessionId);
+      return sandboxes.get(sessionId)!.sandbox;
+    } finally {
+      pendingCreations.delete(sessionId);
+      await lock.release();
+    }
+  })();
+
+  pendingCreations.set(sessionId, creationPromise);
+  return creationPromise;
 }
 
 /**
@@ -235,7 +245,7 @@ export async function runCommand(
 
     const stdout = await proc.stdout.readText();
     const stderr = await proc.stderr.readText();
-    const exitCode = await proc.exitCode();
+    const exitCode = await proc.exitCode;
 
     return {
       success: exitCode === 0,
@@ -287,7 +297,7 @@ export async function readFile(
 
     const proc = await exec(sandbox, ["cat", absPath]);
     const content = await proc.stdout.readText();
-    const exitCode = await proc.exitCode();
+    const exitCode = await proc.exitCode;
 
     if (exitCode !== 0) {
       const stderr = await proc.stderr.readText();

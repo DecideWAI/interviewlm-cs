@@ -18,6 +18,17 @@ import type {
   HelpfulnessLevel,
   AgentTool,
 } from '../types/agent';
+
+/**
+ * Streaming event types for real-time UI updates
+ */
+export type StreamingEvent =
+  | { type: 'text_delta'; text: string }
+  | { type: 'tool_use_start'; toolName: string; toolId: string; input: Record<string, unknown> }
+  | { type: 'tool_use_complete'; toolName: string; toolId: string; output: unknown; isError: boolean }
+  | { type: 'iteration_start'; iteration: number }
+  | { type: 'done'; response: AgentResponse }
+  | { type: 'error'; error: string };
 import { AGENT_MODEL_RECOMMENDATIONS } from '../constants/models';
 import { HELPFULNESS_CONFIGS } from '../types/agent';
 import {
@@ -204,6 +215,263 @@ export class CodingAgent {
         toolCallCount: this.toolCallCount,
       },
     };
+  }
+
+  /**
+   * Send a message with streaming response
+   * Yields events as they happen for real-time UI updates
+   */
+  async *sendMessageStreaming(message: string): AsyncGenerator<StreamingEvent, void, unknown> {
+    // Add user message to conversation
+    this.conversation.push({
+      role: 'user',
+      content: message,
+    });
+
+    // Check rate limits
+    const rateLimitCheck = checkRateLimit(this.conversation);
+    if (rateLimitCheck.exceeded) {
+      yield { type: 'error', error: rateLimitCheck.reason! };
+      return;
+    }
+
+    // Trim conversation history if too long
+    this.trimConversationHistory();
+
+    // Get allowed tools based on helpfulness level
+    const tools = this.getTools();
+
+    // Build system prompt with security constraints
+    const systemPrompt = this.buildSystemPromptWithCaching();
+
+    // Track aggregated results
+    let finalText = '';
+    const toolsUsed: AgentTool[] = [];
+    const filesModified: string[] = [];
+    let totalUsage = {
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+    };
+    let lastModel = '';
+
+    const MAX_ITERATIONS = 25;
+    let iterations = 0;
+
+    try {
+      // Agentic loop with streaming
+      while (iterations < MAX_ITERATIONS) {
+        iterations++;
+        yield { type: 'iteration_start', iteration: iterations };
+
+        // Use streaming API to get real-time text updates
+        const stream = await this.client.messages.stream({
+          model: this.config.model || AGENT_MODEL_RECOMMENDATIONS.codingAgent,
+          max_tokens: 4096,
+          system: systemPrompt,
+          messages: sanitizeMessages(this.conversation),
+          tools: tools as Anthropic.Messages.Tool[],
+        });
+
+        // Collect response content while streaming text
+        let iterationText = '';
+        const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+        let currentToolInput: Record<string, unknown> = {};
+        let currentToolId = '';
+        let currentToolName = '';
+
+        // Stream events
+        for await (const event of stream) {
+          if (event.type === 'content_block_delta') {
+            if (event.delta.type === 'text_delta') {
+              iterationText += event.delta.text;
+              finalText += event.delta.text;
+              yield { type: 'text_delta', text: event.delta.text };
+            } else if (event.delta.type === 'input_json_delta') {
+              // Accumulating tool input JSON
+              // This is streamed in chunks, so we just track it
+            }
+          } else if (event.type === 'content_block_start') {
+            if (event.content_block.type === 'tool_use') {
+              currentToolId = event.content_block.id;
+              currentToolName = event.content_block.name;
+              currentToolInput = {};
+            }
+          } else if (event.type === 'content_block_stop') {
+            // If we were building a tool use block, finalize it
+            if (currentToolId && currentToolName) {
+              toolUseBlocks.push({
+                id: currentToolId,
+                name: currentToolName,
+                input: currentToolInput,
+              });
+              currentToolId = '';
+              currentToolName = '';
+              currentToolInput = {};
+            }
+          } else if (event.type === 'message_start') {
+            totalUsage.input_tokens += event.message.usage.input_tokens;
+            lastModel = event.message.model;
+          } else if (event.type === 'message_delta') {
+            // @ts-ignore
+            totalUsage.output_tokens += event.usage?.output_tokens || 0;
+          }
+        }
+
+        // Get the final message for complete tool inputs
+        const finalMessage = await stream.finalMessage();
+
+        // Extract complete tool use blocks from final message
+        const completeToolBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+        for (const content of finalMessage.content) {
+          if (content.type === 'tool_use') {
+            completeToolBlocks.push({
+              id: content.id,
+              name: content.name,
+              input: content.input as Record<string, unknown>,
+            });
+          }
+        }
+
+        // Handle max_tokens without tool use
+        if (finalMessage.stop_reason === 'max_tokens' && completeToolBlocks.length === 0) {
+          this.conversation.push({
+            role: 'assistant',
+            content: finalMessage.content,
+          });
+          this.conversation.push({
+            role: 'user',
+            content: 'Continue your response from where you left off.',
+          });
+          continue;
+        }
+
+        // If no tool uses, we're done
+        if (completeToolBlocks.length === 0) {
+          this.conversation.push({
+            role: 'assistant',
+            content: finalMessage.content,
+          });
+          break;
+        }
+
+        // Execute tools and yield progress events
+        const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string; is_error?: boolean }> = [];
+
+        for (const toolBlock of completeToolBlocks) {
+          this.toolCallCount++;
+          toolsUsed.push(toolBlock.name as AgentTool);
+
+          // Yield tool start event
+          yield {
+            type: 'tool_use_start',
+            toolName: toolBlock.name,
+            toolId: toolBlock.id,
+            input: toolBlock.input,
+          };
+
+          // Execute tool
+          let toolResult: unknown;
+          let isError = false;
+
+          try {
+            const timeoutMs = toolBlock.name === 'Bash' ? 60000 : 30000;
+            toolResult = await Promise.race([
+              this.executeTool(toolBlock.name, toolBlock.input),
+              new Promise((_, reject) => {
+                setTimeout(() => reject(new Error(`Tool ${toolBlock.name} timed out after ${timeoutMs}ms`)), timeoutMs);
+              }),
+            ]);
+          } catch (error) {
+            toolResult = {
+              success: false,
+              error: error instanceof Error ? error.message : 'Tool execution failed',
+            };
+            isError = true;
+          }
+
+          // Track file modifications
+          if (toolBlock.name === 'Write' || toolBlock.name === 'Edit') {
+            const filePath = (toolBlock.input as { file_path?: string }).file_path;
+            if (filePath) {
+              filesModified.push(filePath);
+            }
+          }
+
+          // Check for error in result
+          if ((toolResult as any)?.success === false || (toolResult as any)?.error) {
+            isError = true;
+          }
+
+          // Yield tool complete event
+          yield {
+            type: 'tool_use_complete',
+            toolName: toolBlock.name,
+            toolId: toolBlock.id,
+            output: toolResult,
+            isError,
+          };
+
+          // Truncate large outputs
+          let resultContent = JSON.stringify(toolResult);
+          const MAX_OUTPUT_SIZE = 5000;
+          if (resultContent.length > MAX_OUTPUT_SIZE) {
+            const truncatedResult = {
+              ...(toolResult as object),
+              _truncated: true,
+              _hint: 'Output truncated. Use offset/limit params to read more.',
+            };
+            resultContent = JSON.stringify(truncatedResult).slice(0, MAX_OUTPUT_SIZE);
+          }
+
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: toolBlock.id,
+            content: resultContent,
+            ...(isError && { is_error: true }),
+          });
+        }
+
+        // Add assistant response and tool results to conversation
+        this.conversation.push({
+          role: 'assistant',
+          content: finalMessage.content,
+        });
+        this.conversation.push({
+          role: 'user',
+          content: toolResults,
+        });
+
+        if (finalMessage.stop_reason === 'end_turn') {
+          break;
+        }
+      }
+
+      if (iterations >= MAX_ITERATIONS) {
+        finalText += '\n\n[Agent reached maximum iteration limit]';
+      }
+
+      // Yield final done event
+      yield {
+        type: 'done',
+        response: {
+          text: finalText || 'I apologize, but I encountered an error processing your request.',
+          toolsUsed,
+          filesModified,
+          metadata: {
+            model: lastModel,
+            usage: totalUsage,
+            toolCallCount: this.toolCallCount,
+          },
+        },
+      };
+    } catch (error) {
+      yield {
+        type: 'error',
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
   }
 
   /**
