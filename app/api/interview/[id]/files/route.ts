@@ -126,7 +126,8 @@ Given a string s, return the longest palindromic substring in s.`,
 
     // If requesting specific file content
     if (filePath) {
-      const result = await modal.readFile(volumeId, filePath);
+      // Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
+      const result = await modal.readFile(candidateId, filePath);
       if (!result.success) {
         return NextResponse.json(
           { error: result.error || "Failed to read file" },
@@ -246,7 +247,8 @@ export async function POST(
       // IMPORTANT: Fetch previous content BEFORE writing new content
       // This allows us to calculate diffs
       try {
-        const result = await modal.readFile(volumeId, path);
+        // Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
+        const result = await modal.readFile(candidateId, path);
         previousContent = result.success ? result.content : undefined;
       } catch (error) {
         // File doesn't exist yet, this is a new file
@@ -255,7 +257,8 @@ export async function POST(
     }
 
     // Write file to Modal volume
-    await modal.writeFile(volumeId, path, content);
+    // Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
+    await modal.writeFile(candidateId, path, content);
 
     // Record file change events after write
     if (candidate.sessionRecording) {

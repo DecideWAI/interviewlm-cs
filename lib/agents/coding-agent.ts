@@ -18,6 +18,11 @@ import type {
   HelpfulnessLevel,
   AgentTool,
 } from '../types/agent';
+import {
+  getTracedAnthropicClient,
+  traceToolExecution,
+  traceAgentSession,
+} from '../observability/langsmith';
 
 /**
  * Streaming event types for real-time UI updates
@@ -53,10 +58,8 @@ export class CodingAgent {
   constructor(config: CodingAgentConfig) {
     this.config = config;
 
-    // Initialize Anthropic client
-    this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-    });
+    // Initialize Anthropic client with LangSmith tracing
+    this.client = getTracedAnthropicClient();
   }
 
   /**
@@ -72,6 +75,18 @@ export class CodingAgent {
    * - Prompt caching for static content
    */
   async sendMessage(message: string): Promise<AgentResponse> {
+    // Wrap entire message handling in LangSmith trace
+    return traceAgentSession(
+      this.config.sessionId,
+      this.config.candidateId || '',
+      async () => this._sendMessageInternal(message)
+    );
+  }
+
+  /**
+   * Internal implementation of sendMessage (traced by wrapper)
+   */
+  private async _sendMessageInternal(message: string): Promise<AgentResponse> {
     // Add user message to conversation
     this.conversation.push({
       role: 'user',
@@ -106,6 +121,7 @@ export class CodingAgent {
     let lastModel = '';
 
     // Maximum iterations to prevent infinite loops
+    // 10 is reasonable - complex tasks rarely need more than 5-7 iterations
     const MAX_ITERATIONS = 25;
     let iterations = 0;
 
@@ -256,7 +272,8 @@ export class CodingAgent {
     };
     let lastModel = '';
 
-    const MAX_ITERATIONS = 25;
+    // 10 is reasonable - complex tasks rarely need more than 5-7 iterations
+    const MAX_ITERATIONS = 10;
     let iterations = 0;
 
     try {
@@ -529,8 +546,8 @@ export class CodingAgent {
 
       // Determine if tool failed - set is_error flag so Claude can retry/adjust
       const isError = (toolResult as any)?.success === false ||
-                      (toolResult as any)?.error !== undefined ||
-                      timedOut;
+        (toolResult as any)?.error !== undefined ||
+        timedOut;
 
       // Truncate large outputs to prevent context overflow
       // Provide hints for Claude to request more if needed
@@ -687,9 +704,9 @@ export class CodingAgent {
 
         // Check if it's a retryable error
         const isOverloaded = error?.status === 529 ||
-                            error?.message?.includes('overloaded') ||
-                            error?.message?.includes('Overloaded') ||
-                            error?.status === 503;
+          error?.message?.includes('overloaded') ||
+          error?.message?.includes('Overloaded') ||
+          error?.status === 503;
 
         const isRateLimited = error?.status === 429;
 
@@ -703,7 +720,7 @@ export class CodingAgent {
 
         // Check for retry-after header (rate limit errors include this)
         const retryAfter = error?.headers?.get?.('retry-after') ||
-                          error?.response?.headers?.['retry-after'];
+          error?.response?.headers?.['retry-after'];
 
         if (retryAfter) {
           // Server told us how long to wait
@@ -973,7 +990,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
 
   /**
    * Execute a tool and return the result
-   * This is a placeholder - actual implementation would interact with the Modal sandbox
+   * All tool executions are traced via LangSmith
    */
   private async executeTool(
     toolName: string,
@@ -988,6 +1005,20 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       };
     }
 
+    // Wrap tool execution in LangSmith trace
+    return traceToolExecution(toolName, input, async () => {
+      // Execute tool based on type
+      return this._executeToolInternal(toolName, input);
+    });
+  }
+
+  /**
+   * Internal tool execution (traced by wrapper)
+   */
+  private async _executeToolInternal(
+    toolName: string,
+    input: Record<string, unknown>
+  ): Promise<unknown> {
     // Execute tool based on type
     switch (toolName) {
       case 'Read':
@@ -1272,7 +1303,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
           .replace(/\*\*/g, '.*')
           .replace(/\*/g, '[^/]*')
           .replace(/\./g, '\\.')
-          + '$'
+        + '$'
       );
 
       const matchedFiles = allFiles
@@ -1315,9 +1346,9 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       const filteredResults = recursive
         ? results
         : results.filter(f => {
-            const relativePath = f.path.replace(targetPath, '').replace(/^\//, '');
-            return !relativePath.includes('/');
-          });
+          const relativePath = f.path.replace(targetPath, '').replace(/^\//, '');
+          return !relativePath.includes('/');
+        });
 
       return {
         success: true,

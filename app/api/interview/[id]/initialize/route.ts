@@ -301,7 +301,7 @@ module.exports = longestPalindrome;`,
       });
 
       for (const file of starterFiles) {
-        await modal.writeFile(volumeId, file.path, file.content);
+        await modal.writeFile(candidateId, file.path, file.content);
       }
 
       // Update candidate with volume ID

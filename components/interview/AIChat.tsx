@@ -102,18 +102,37 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
           const expandedMessages: Message[] = [];
           for (const msg of (data.messages || [])) {
             // For assistant messages with tool metadata, insert tool blocks before the text
-            if (msg.role === "assistant" && msg.metadata?.toolBlocks?.length > 0) {
-              // Add tool_use messages for each tool block
-              for (const tool of msg.metadata.toolBlocks) {
-                expandedMessages.push({
-                  id: `${msg.id}_tool_${tool.id}`,
-                  role: "assistant",
-                  content: "",
-                  timestamp: new Date(msg.timestamp),
-                  type: "tool_use",
-                  toolName: tool.name,
-                  toolInput: tool.input,
-                });
+            // Handle both formats:
+            // - toolBlocks: [{id, name, input}, ...] (detailed format)
+            // - toolsUsed: ["list_files", "Read", ...] (simple format from streaming route)
+            if (msg.role === "assistant" && msg.metadata) {
+              // Detailed format with toolBlocks
+              if (msg.metadata.toolBlocks?.length > 0) {
+                for (const tool of msg.metadata.toolBlocks) {
+                  expandedMessages.push({
+                    id: `${msg.id}_tool_${tool.id}`,
+                    role: "assistant",
+                    content: "",
+                    timestamp: new Date(msg.timestamp),
+                    type: "tool_use",
+                    toolName: tool.name,
+                    toolInput: tool.input,
+                  });
+                }
+              }
+              // Simple format with just tool names (from streaming route)
+              else if (msg.metadata.toolsUsed?.length > 0) {
+                for (let i = 0; i < msg.metadata.toolsUsed.length; i++) {
+                  const toolName = msg.metadata.toolsUsed[i];
+                  expandedMessages.push({
+                    id: `${msg.id}_tool_${i}`,
+                    role: "system",
+                    content: `✅ ${toolName} completed`,
+                    timestamp: new Date(msg.timestamp),
+                    type: "tool_result",
+                    toolName: toolName,
+                  });
+                }
               }
             }
             // Add the original message (text content)
@@ -189,6 +208,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       let fullContent = "";
       let tokenUsage: { inputTokens: number; outputTokens: number } | undefined;
       let buffer = ""; // Buffer for incomplete SSE messages
+      let currentEventType = ""; // Track event type across chunks - MUST be outside while loop
 
       while (true) {
         const { done, value } = await reader.read();
@@ -199,8 +219,6 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
 
         // Keep the last line in buffer if it doesn't end with newline (incomplete)
         buffer = lines.pop() || "";
-
-        let currentEventType = "";
         for (const line of lines) {
           if (line.startsWith("event:")) {
             currentEventType = line.substring(6).trim();
