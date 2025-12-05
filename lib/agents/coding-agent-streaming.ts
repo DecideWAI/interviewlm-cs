@@ -107,7 +107,7 @@ export class StreamingCodingAgent {
       const { text, toolUseBlocks, usage, model, stopReason } = await this.callClaudeStreaming(
         {
           model: this.config.model || AGENT_MODEL_RECOMMENDATIONS.codingAgent,
-          max_tokens: 4096,
+          max_tokens: 32000,
           system: systemPrompt,
           messages: sanitizeMessages(this.conversation),
           tools: tools as Anthropic.Messages.Tool[],
@@ -299,6 +299,18 @@ export class StreamingCodingAgent {
     const toolPromises = toolUseBlocks.map(async (toolBlock) => {
       this.toolCallCount++;
 
+      // Validate Write tool has file_content (most common failure mode)
+      if (toolBlock.name === 'Write' && (toolBlock.input.file_content === undefined || toolBlock.input.file_content === null)) {
+        const error = 'Missing required parameter: file_content. You MUST provide the complete file content. If the file is large, use Edit tool for incremental changes instead.';
+        callbacks.onToolResult?.(toolBlock.name, toolBlock.id, { success: false, error }, true);
+        return {
+          type: 'tool_result' as const,
+          tool_use_id: toolBlock.id,
+          content: JSON.stringify({ success: false, error }),
+          is_error: true,
+        };
+      }
+
       const timeoutMs = toolBlock.name === 'Bash' ? BASH_TIMEOUT_MS : TOOL_TIMEOUT_MS;
 
       let toolResult: unknown;
@@ -372,7 +384,7 @@ export class StreamingCodingAgent {
         return executeWriteFile(
           this.config.sessionId,
           input.file_path as string,
-          input.content as string
+          input.file_content as string
         );
       }
       case 'Edit': {
@@ -407,10 +419,9 @@ export class StreamingCodingAgent {
       }
       case 'ListFiles': {
         const { executeListFiles } = await import('../agent-tools/list-files');
-        return executeListFiles(
-          this.config.sessionId,
-          input.directory as string | undefined
-        );
+        // Accept both 'directory' and 'path' as parameter names
+        const dir = (input.directory || input.path) as string | undefined;
+        return executeListFiles(this.config.sessionId, dir);
       }
       case 'RunTests': {
         const { executeRunTests } = await import('../agent-tools/run-tests');
@@ -514,7 +525,12 @@ ${helpfulnessConfig.allowedTools.join(', ')}
 - When writing code, verify it works by reading the file back
 - If a tool fails, explain the error and try an alternative approach
 - Complete multi-step tasks autonomously without stopping after each step
-- When using Write tool, ALWAYS provide both file_path (starting with /workspace) AND content parameters
+
+**CRITICAL Write Tool Requirements:**
+When using the Write tool, you MUST ALWAYS provide BOTH parameters:
+1. file_path: The absolute path starting with /workspace (e.g., "/workspace/solution.py")
+2. file_content: The COMPLETE file content as a string - this is REQUIRED, never omit it
+If you call Write without file_content, it WILL fail. If the file is large, use Edit for incremental changes instead.
 
 Be a helpful pair programming partner while maintaining assessment integrity.`;
 
@@ -578,15 +594,15 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
           '- Create new source files (solution.js, utils.ts, etc.)\n' +
           '- Rewrite a file when making extensive changes\n' +
           '- Create configuration files (package.json, tsconfig.json)\n\n' +
-          'IMPORTANT: file_path MUST start with /workspace and content is REQUIRED.\n' +
+          'IMPORTANT: file_path MUST start with /workspace and file_content is REQUIRED.\n' +
           'For small, targeted changes to existing files, prefer the Edit tool instead.',
         input_schema: {
           type: 'object',
           properties: {
             file_path: { type: 'string', description: "Absolute path to the file. MUST start with /workspace (e.g., '/workspace/solution.js')" },
-            content: { type: 'string', description: 'The complete file content to write. This parameter is REQUIRED - never omit it.' },
+            file_content: { type: 'string', description: 'The complete file content to write. This parameter is REQUIRED - never omit it.' },
           },
-          required: ['file_path', 'content'],
+          required: ['file_path', 'file_content'],
         },
       },
       {
@@ -661,15 +677,16 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       {
         name: 'ListFiles',
         description:
-          'List contents of a directory. Use this to:\n' +
-          '- See what files exist in the workspace\n' +
-          '- Explore project structure\n' +
+          'List contents of a directory (non-recursive). Use this to:\n' +
+          '- See what files exist in a specific directory\n' +
+          '- Explore project structure one level at a time\n' +
           '- Find files before reading them\n\n' +
-          'Returns file names, types (file/directory), and sizes.',
+          'Returns file names, types (file/directory), and sizes. For recursive search, use Glob instead.',
         input_schema: {
           type: 'object',
           properties: {
-            directory: { type: 'string', description: "Directory to list (default: workspace root '.')" },
+            directory: { type: 'string', description: "Directory to list (default: '/workspace'). Example: '/workspace/src'" },
+            path: { type: 'string', description: "Alias for directory parameter" },
           },
         },
       },

@@ -952,12 +952,12 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
               type: 'string',
               description: 'Absolute path to the file to write. MUST start with /workspace (e.g., /workspace/src/solution.ts)',
             },
-            content: {
+            file_content: {
               type: 'string',
-              description: 'Content to write to the file. This parameter is REQUIRED - never omit it.',
+              description: 'The complete file content to write. This parameter is REQUIRED - never omit it.',
             },
           },
-          required: ['file_path', 'content'],
+          required: ['file_path', 'file_content'],
         },
       },
       {
@@ -1109,7 +1109,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       case 'Write':
         return await this.toolWrite(
           input.file_path as string,
-          input.content as string
+          input.file_content as string
         );
 
       case 'Edit':

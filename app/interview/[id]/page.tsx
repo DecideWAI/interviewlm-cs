@@ -174,6 +174,9 @@ export default function InterviewPage() {
   // AI Chat ref for resetConversation
   const aiChatRef = useRef<AIChatHandle>(null);
 
+  // Prevent duplicate initialization in React 18 strict mode
+  const initializationStartedRef = useRef(false);
+
   const onRestore = useCallback((state: SessionState) => {
     // Auto-restore session state without showing prompt
     console.log('Auto-restoring session from:', new Date(state.lastSaved));
@@ -254,6 +257,12 @@ export default function InterviewPage() {
 
   // Initialize session on mount
   useEffect(() => {
+    // Prevent duplicate initialization in React 18 strict mode
+    if (initializationStartedRef.current) {
+      return;
+    }
+    initializationStartedRef.current = true;
+
     const initializeSession = async () => {
       try {
         setIsInitializing(true);
@@ -700,13 +709,75 @@ export default function InterviewPage() {
     return <MobileBlocker />;
   }
 
-  // Loading state
+  // Loading state - informative initialization screen
   if (isInitializing) {
     return (
       <div className="h-screen flex items-center justify-center bg-background">
-        <div className="text-center">
-          <Spinner className="mx-auto mb-4" />
-          <p className="text-text-secondary">Initializing interview session...</p>
+        <div className="w-full max-w-lg px-6">
+          {/* Header */}
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
+              <Sparkles className="h-8 w-8 text-primary animate-pulse" />
+            </div>
+            <h1 className="text-2xl font-semibold text-text-primary mb-2">
+              Preparing Your Interview
+            </h1>
+            <p className="text-text-secondary">
+              Setting up a personalized coding environment
+            </p>
+          </div>
+
+          {/* Progress Steps */}
+          <div className="space-y-4 mb-8">
+            {[
+              { label: "Generating unique challenge", icon: Code2, tip: "AI is crafting a problem tailored to your role" },
+              { label: "Setting up cloud sandbox", icon: TerminalIcon, tip: "Spinning up an isolated development environment" },
+              { label: "Preparing workspace", icon: FileCode, tip: "Installing tools and configuring your editor" },
+            ].map((step) => (
+              <div
+                key={step.label}
+                className="flex items-center gap-4 p-4 rounded-lg bg-background-secondary border border-border"
+              >
+                <div className="flex-shrink-0">
+                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                    <step.icon className="h-5 w-5 text-primary" />
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-text-primary">{step.label}</span>
+                    <Loader2 className="h-4 w-4 text-primary animate-spin" />
+                  </div>
+                  <p className="text-xs text-text-tertiary mt-0.5">{step.tip}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Progress bar */}
+          <div className="mb-6">
+            <div className="h-1.5 bg-background-tertiary rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-primary to-primary-hover rounded-full animate-progress-grow" />
+            </div>
+            <p className="text-xs text-text-muted text-center mt-2">
+              This usually takes 30-60 seconds
+            </p>
+          </div>
+
+          {/* Tips */}
+          <div className="p-4 rounded-lg bg-background-tertiary/50 border border-border">
+            <div className="flex items-start gap-3">
+              <MessageSquare className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-medium text-text-primary mb-1">Pro Tip</p>
+                <p className="text-xs text-text-secondary">
+                  You&apos;ll have access to Claude AI to help you during the interview.
+                  Use it like a pair programming partner - ask questions, debug together,
+                  and think out loud!
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     );
