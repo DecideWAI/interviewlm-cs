@@ -9,6 +9,7 @@ const writeFileSchema = z.object({
   path: z.string().min(1, "File path is required"),
   content: z.string(),
   language: z.string().optional(),
+  type: z.enum(["file", "folder"]).optional().default("file"),
 });
 
 /**
@@ -144,15 +145,9 @@ Given a string s, return the longest palindromic substring in s.`,
     // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
     const files = await modal.getFileSystem(candidateId, "/workspace");
 
+    fileIdCounter = 0; // Reset counter for each request
     return NextResponse.json({
-      files: files.map((file, index) => ({
-        id: `file-${index}`,
-        name: file.name,
-        type: file.type,
-        path: file.path,
-        language: getLanguageFromExtension(file.name),
-        size: file.size,
-      })),
+      files: files.map(transformFileNode),
       volumeId,
     });
   } catch (error) {
@@ -200,7 +195,7 @@ export async function POST(
       );
     }
 
-    const { path, content, language } = validationResult.data;
+    const { path, content, language, type } = validationResult.data;
 
     // Get candidate
     const candidate = await prisma.candidate.findUnique({
@@ -256,8 +251,38 @@ export async function POST(
       }
     }
 
-    // Write file to Modal volume
+    // Create folder or write file based on type
     // Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
+    if (type === "folder") {
+      // Create directory
+      const result = await modal.createDirectory(candidateId, path);
+      if (!result.success) {
+        return NextResponse.json(
+          { error: result.error || "Failed to create folder" },
+          { status: 500 }
+        );
+      }
+
+      // Record folder creation event
+      if (candidate.sessionRecording) {
+        await sessions.recordEvent(candidate.sessionRecording.id, {
+          type: "folder_create",
+          data: {
+            folderPath: path,
+            folderName: path.split("/").pop() || path,
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+
+      return NextResponse.json({
+        success: true,
+        path,
+        type: "folder",
+      });
+    }
+
+    // Write file to Modal volume
     await modal.writeFile(candidateId, path, content);
 
     // Record file change events after write
@@ -433,4 +458,34 @@ function getLanguageFromExtension(filename: string): string {
     txt: "text",
   };
   return languageMap[ext || ""] || "text";
+}
+
+/**
+ * Helper to transform Modal FileNode to frontend FileNode format
+ * Recursively transforms children for directories
+ */
+let fileIdCounter = 0;
+function transformFileNode(file: { name: string; path: string; type: string; size?: number; children?: any[] }): {
+  id: string;
+  name: string;
+  type: "file" | "folder";
+  path: string;
+  language: string;
+  size?: number;
+  children?: any[];
+} {
+  const transformed: any = {
+    id: `file-${fileIdCounter++}`,
+    name: file.name,
+    type: file.type === "directory" ? "folder" : "file",
+    path: file.path,
+    language: getLanguageFromExtension(file.name),
+    size: file.size,
+  };
+
+  if (file.children && file.children.length > 0) {
+    transformed.children = file.children.map(transformFileNode);
+  }
+
+  return transformed;
 }

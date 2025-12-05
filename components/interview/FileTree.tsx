@@ -29,12 +29,80 @@ interface FileTreeNodeProps {
   level: number;
   selectedFile?: string;
   onFileSelect: (file: FileNode) => void;
+  onFileCreate?: (path: string, type: "file" | "folder") => void;
   onFileDelete?: (path: string) => void;
 }
 
-function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect, onFileDelete }: FileTreeNodeProps) {
+// Inline creation input component
+function InlineCreationInput({
+  type,
+  level,
+  onSubmit,
+  onCancel,
+}: {
+  type: "file" | "folder";
+  level: number;
+  onSubmit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && name.trim()) {
+      onSubmit(name.trim());
+    } else if (e.key === "Escape") {
+      onCancel();
+    }
+  };
+
+  const handleBlur = () => {
+    // Small delay to allow click events to register first
+    setTimeout(() => {
+      onCancel();
+    }, 150);
+  };
+
+  return (
+    <div
+      className="flex items-center gap-1.5 px-2 py-1 bg-background-tertiary/50"
+      style={{ paddingLeft: `${level * 12 + 8}px` }}
+    >
+      <div className="w-4" />
+      {type === "folder" ? (
+        <Folder className="h-4 w-4 flex-shrink-0 text-primary" />
+      ) : (
+        <File className="h-4 w-4 flex-shrink-0 text-text-secondary" />
+      )}
+      <Input
+        ref={inputRef}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
+        placeholder={type === "folder" ? "folder-name" : "filename.ts"}
+        className="h-6 flex-1 text-sm py-0 px-1.5 bg-background border-primary/50 focus:border-primary"
+      />
+    </div>
+  );
+}
+
+function FileTreeNode({
+  sessionId,
+  node,
+  level,
+  selectedFile,
+  onFileSelect,
+  onFileCreate,
+  onFileDelete
+}: FileTreeNodeProps) {
   const [isExpanded, setIsExpanded] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
+  const [isCreating, setIsCreating] = useState<"file" | "folder" | null>(null);
   const isSelected = selectedFile === node.path;
   const isFolder = node.type === "folder";
 
@@ -88,6 +156,22 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect, onFi
     }
   };
 
+  const handleCreateInFolder = (e: React.MouseEvent, type: "file" | "folder") => {
+    e.stopPropagation();
+    setIsCreating(type);
+    // Expand folder when creating inside it
+    if (!isExpanded) {
+      setIsExpanded(true);
+    }
+  };
+
+  const handleCreateSubmit = (name: string) => {
+    // Create file/folder with full path inside this folder
+    const newPath = `${node.path}/${name}`;
+    onFileCreate?.(newPath, isCreating!);
+    setIsCreating(null);
+  };
+
   return (
     <div>
       <div
@@ -128,20 +212,55 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect, onFi
           </>
         )}
         <span className="truncate flex-1">{node.name}</span>
-        {isHovered && onFileDelete && (
-          <button
-            onClick={handleDelete}
-            className="opacity-0 group-hover:opacity-100 text-text-tertiary hover:text-error transition-all p-0.5 rounded"
-            title={`Delete ${node.name}`}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+
+        {/* Action buttons on hover */}
+        {isHovered && (
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            {/* Show create buttons only for folders */}
+            {isFolder && onFileCreate && (
+              <>
+                <button
+                  onClick={(e) => handleCreateInFolder(e, "file")}
+                  className="text-text-tertiary hover:text-primary transition-colors p-0.5 rounded"
+                  title="New File"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={(e) => handleCreateInFolder(e, "folder")}
+                  className="text-text-tertiary hover:text-primary transition-colors p-0.5 rounded"
+                  title="New Folder"
+                >
+                  <FolderPlus className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
+            {onFileDelete && (
+              <button
+                onClick={handleDelete}
+                className="text-text-tertiary hover:text-error transition-colors p-0.5 rounded"
+                title={`Delete ${node.name}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
         )}
       </div>
 
-      {isFolder && isExpanded && node.children && (
+      {/* Children and inline creation input */}
+      {isFolder && isExpanded && (
         <div>
-          {node.children.map((child) => (
+          {/* Inline creation input at the top of folder contents */}
+          {isCreating && (
+            <InlineCreationInput
+              type={isCreating}
+              level={level + 1}
+              onSubmit={handleCreateSubmit}
+              onCancel={() => setIsCreating(null)}
+            />
+          )}
+          {node.children?.map((child) => (
             <FileTreeNode
               key={child.id}
               sessionId={sessionId}
@@ -149,6 +268,7 @@ function FileTreeNode({ sessionId, node, level, selectedFile, onFileSelect, onFi
               level={level + 1}
               selectedFile={selectedFile}
               onFileSelect={onFileSelect}
+              onFileCreate={onFileCreate}
               onFileDelete={onFileDelete}
             />
           ))}
@@ -240,7 +360,7 @@ export function FileTree({
             <button
               onClick={() => setIsCreating("file")}
               className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
-              title="New File"
+              title="New File (root)"
               aria-label="New File"
             >
               <Plus className="h-4 w-4" />
@@ -248,7 +368,7 @@ export function FileTree({
             <button
               onClick={() => setIsCreating("folder")}
               className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
-              title="New Folder"
+              title="New Folder (root)"
               aria-label="New Folder"
             >
               <FolderPlus className="h-4 w-4" />
@@ -257,7 +377,7 @@ export function FileTree({
         )}
       </div>
 
-      {/* Inline creation input (VS Code style) */}
+      {/* Inline creation input for root level */}
       {isCreating && (
         <div
           className="flex items-center gap-1.5 px-2 py-1 bg-background-tertiary/50 border-b border-border"
@@ -290,6 +410,7 @@ export function FileTree({
             level={0}
             selectedFile={selectedFile}
             onFileSelect={onFileSelect}
+            onFileCreate={onFileCreate}
             onFileDelete={onFileDelete ? handleFileDelete : undefined}
           />
         ))}
