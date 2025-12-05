@@ -28,6 +28,9 @@ function getBaseAnthropicClient(): Anthropic {
   if (!baseClient) {
     baseClient = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      defaultHeaders: {
+        "anthropic-beta": "prompt-caching-2024-07-31",
+      },
     });
   }
   return baseClient;

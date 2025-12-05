@@ -53,6 +53,9 @@ export class StreamingCodingAgent {
     this.config = config;
     this.client = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      defaultHeaders: {
+        "anthropic-beta": "prompt-caching-2024-07-31",
+      },
     });
   }
 

@@ -24,20 +24,24 @@ export interface ExecuteBashToolOutput {
  * Tool definition for Claude API
  */
 export const executeBashTool: Anthropic.Tool = {
-  name: "execute_bash",
+  name: "ExecuteBash",
   description:
-    "Execute a bash command in the candidate's sandbox terminal. Use for installing dependencies, running scripts, checking file structure, etc. Commands are executed in the /workspace directory. Be cautious with destructive commands.",
+    "Execute a bash command from the root directory. Use this to:\n" +
+    "- Run system-level commands outside /workspace\n" +
+    "- Access tools installed at system paths\n" +
+    "- Check system configuration or environment\n\n" +
+    "NOTE: For most tasks, prefer the Bash tool which runs in /workspace.\n" +
+    "This tool is for commands that need root-level access.",
   input_schema: {
     type: "object",
     properties: {
       command: {
         type: "string",
-        description:
-          'The bash command to execute (e.g., "npm install lodash", "ls -la", "cat package.json")',
+        description: "The shell command to execute. Examples: 'which node', 'env | grep PATH', 'cat /etc/os-release'",
       },
       timeout: {
         type: "number",
-        description: "Optional timeout in milliseconds (default: 30000ms)",
+        description: "Maximum execution time in milliseconds. Default: 30000 (30 seconds). Use longer for slow operations.",
       },
     },
     required: ["command"],

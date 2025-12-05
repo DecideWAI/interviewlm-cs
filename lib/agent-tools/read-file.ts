@@ -23,22 +23,27 @@ export interface ReadFileToolOutput {
 export const readFileTool: Anthropic.Tool = {
   name: "Read",
   description:
-    "Read the contents of a file in the candidate's workspace. Use this to examine code, understand the current implementation, or check file contents before making changes. The file path should be relative to the workspace root (e.g., 'solution.js', 'tests/test.js').",
+    "Read the contents of a file from the workspace. Use this to:\n" +
+    "- Examine existing code before making changes\n" +
+    "- Understand current implementation details\n" +
+    "- Check configuration files or dependencies\n" +
+    "- Verify file contents after writing\n\n" +
+    "Always read a file before editing it to understand its current state.",
   input_schema: {
     type: "object",
     properties: {
       file_path: {
         type: "string",
         description:
-          "Path to the file relative to workspace root (e.g., 'solution.js', 'src/index.ts')",
+          "Path to the file (e.g., 'solution.js', 'src/utils.ts', 'package.json'). Paths are relative to /workspace.",
       },
       offset: {
         type: "number",
-        description: "Character offset to start reading from (optional)",
+        description: "Line number to start reading from. Use for large files to read specific sections.",
       },
       limit: {
         type: "number",
-        description: "Maximum number of characters to read (optional)",
+        description: "Maximum number of lines to read. Use for large files to avoid overwhelming output.",
       },
     },
     required: ["file_path"],

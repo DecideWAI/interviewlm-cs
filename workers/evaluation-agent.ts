@@ -131,6 +131,9 @@ class EvaluationAgentWorker {
   constructor() {
     this.client = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      defaultHeaders: {
+        "anthropic-beta": "prompt-caching-2024-07-31",
+      },
     });
 
     this.worker = new Worker(
@@ -727,7 +730,7 @@ class EvaluationAgentWorker {
 
   /**
    * LLM-based code review
-   * Uses Claude to evaluate code quality with circuit breaker and retry
+   * Uses Claude to evaluate code quality with circuit breaker, retry, and prompt caching
    */
   private async llmCodeReview(recording: SessionRecording): Promise<number> {
     const snapshots = recording.codeSnapshots || [];
@@ -738,6 +741,36 @@ class EvaluationAgentWorker {
       .map(([path, content]) => `// ${path}\n${content}`)
       .join('\n\n');
 
+    // Static system instructions (cacheable - ensures consistency across evaluations)
+    const staticInstructions = `You are a code quality evaluator for technical interview assessments.
+
+Your role is to objectively rate code quality on a scale of 0-100.
+
+Evaluation criteria and weights:
+1. Readability (25%): Clear naming, logical structure, appropriate comments
+2. Maintainability (25%): Modular design, separation of concerns, DRY principle
+3. Efficiency (20%): Algorithm complexity, resource usage, performance
+4. Best Practices (20%): Language idioms, design patterns, security
+5. Error Handling (10%): Edge cases, validation, graceful failures
+
+Scoring guidelines:
+- 90-100: Exceptional - Production-ready, well-documented, optimized
+- 70-89: Good - Minor improvements possible, follows best practices
+- 50-69: Adequate - Functional but needs refactoring
+- 30-49: Below Average - Significant issues, unclear logic
+- 0-29: Poor - Major problems, non-functional, or incomplete
+
+IMPORTANT: Respond with ONLY a single number between 0-100. No explanations.`;
+
+    // Build system prompt with caching (cast to any for cache_control support)
+    const systemBlocks = [
+      {
+        type: 'text' as const,
+        text: staticInstructions,
+        cache_control: { type: 'ephemeral' },
+      },
+    ];
+
     try {
       // Use circuit breaker and retry for Claude API
       return await retry(
@@ -746,9 +779,7 @@ class EvaluationAgentWorker {
             const response = await this.client.messages.create({
               model: AGENT_MODEL_RECOMMENDATIONS.evaluationAgent,
               max_tokens: 1024,
-              system: `You are a code quality evaluator. Rate the code quality on a scale of 0-100.
-Consider: readability, maintainability, efficiency, best practices, error handling.
-Respond with ONLY a number between 0-100.`,
+              system: systemBlocks,
               messages: [
                 {
                   role: 'user',
@@ -756,6 +787,12 @@ Respond with ONLY a number between 0-100.`,
                 },
               ],
             });
+
+            // Log cache metrics
+            const usageAny = response.usage as any;
+            if (usageAny.cache_creation_input_tokens || usageAny.cache_read_input_tokens) {
+              console.log(`[Evaluation Agent] Cache metrics - created: ${usageAny.cache_creation_input_tokens || 0}, read: ${usageAny.cache_read_input_tokens || 0}`);
+            }
 
             const text = response.content[0].type === 'text' ? response.content[0].text : '0';
             const score = parseInt(text.trim(), 10);

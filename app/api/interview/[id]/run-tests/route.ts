@@ -9,9 +9,12 @@ import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { strictRateLimit } from "@/lib/middleware/rate-limit";
 
-// Initialize Anthropic client
+// Initialize Anthropic client with caching beta
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY || "",
+  defaultHeaders: {
+    "anthropic-beta": "prompt-caching-2024-07-31",
+  },
 });
 
 // Request validation schema

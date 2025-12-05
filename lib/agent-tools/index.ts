@@ -28,7 +28,6 @@ export type {
 } from "./read-file";
 
 export type {
-  WriteFileToolInput,
   WriteFileToolOutput,
 } from "./write-file";
 

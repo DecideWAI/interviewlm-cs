@@ -27,21 +27,26 @@ export interface GrepToolOutput {
 export const grepTool: Anthropic.Tool = {
   name: "Grep",
   description:
-    "Search for a text pattern in files. Returns matching lines with file paths and line numbers. Useful for finding function definitions, usages, imports, or any text patterns across the codebase.",
+    "Search file contents for a text pattern. Use this to:\n" +
+    "- Find function/variable definitions and usages\n" +
+    "- Locate TODOs, FIXMEs, or specific comments\n" +
+    "- Find import statements or dependencies\n" +
+    "- Search for error messages or strings\n\n" +
+    "Returns matching lines with file paths and line numbers. Supports regex patterns.",
   input_schema: {
     type: "object",
     properties: {
       pattern: {
         type: "string",
-        description: "The regex pattern to search for (e.g., 'function\\s+\\w+', 'TODO', 'import.*lodash')",
+        description: "Text or regex pattern to search for. Examples: 'TODO', 'function solve', 'import.*lodash'",
       },
       path: {
         type: "string",
-        description: "Directory or file to search in, relative to workspace root. Defaults to '.'",
+        description: "Directory or file to search in (default: entire workspace). Example: 'src' to search only src/",
       },
       include: {
         type: "string",
-        description: "File pattern to include (e.g., '*.ts', '*.js'). Defaults to all files.",
+        description: "Filter by file type. Examples: '*.ts' for TypeScript, '*.js' for JavaScript",
       },
     },
     required: ["pattern"],

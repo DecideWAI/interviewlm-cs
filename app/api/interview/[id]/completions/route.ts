@@ -163,6 +163,9 @@ async function generateCompletions(params: {
   try {
     const client = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
+      defaultHeaders: {
+        "anthropic-beta": "prompt-caching-2024-07-31",
+      },
     });
 
     // Build context - show surrounding lines

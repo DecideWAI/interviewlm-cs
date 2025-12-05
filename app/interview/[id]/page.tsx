@@ -125,6 +125,7 @@ export default function InterviewPage() {
   const [selectedFile, setSelectedFile] = useState<FileNode | null>(null);
   const [openTabs, setOpenTabs] = useState<OpenTab[]>([]);
   const [code, setCode] = useState("");
+  const [isFileLoading, setIsFileLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [isAIChatOpen, setIsAIChatOpen] = useState(true);
   const [timeRemaining, setTimeRemaining] = useState(0);
@@ -877,8 +878,9 @@ export default function InterviewPage() {
           return [...prev, newTab];
         });
 
-        // Set empty code while loading
+        // Set empty code and show loading state
         setCode("");
+        setIsFileLoading(true);
 
         // Load file content from Modal volume asynchronously
         try {
@@ -901,6 +903,8 @@ export default function InterviewPage() {
           }
         } catch (err) {
           console.error("Error loading file:", err);
+        } finally {
+          setIsFileLoading(false);
         }
       }
     }
@@ -1339,7 +1343,15 @@ export default function InterviewPage() {
                   </div>
 
                   {/* Editor */}
-                  <div className="flex-1 min-h-0">
+                  <div className="flex-1 min-h-0 relative">
+                    {isFileLoading && (
+                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+                        <div className="flex flex-col items-center gap-3">
+                          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                          <span className="text-sm text-text-secondary">Loading file...</span>
+                        </div>
+                      </div>
+                    )}
                     <CodeEditor
                       sessionId={candidateId}
                       questionId={sessionData.question.id}

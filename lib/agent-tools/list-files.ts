@@ -23,15 +23,19 @@ export interface ListFilesToolOutput {
  * Tool definition for Claude API
  */
 export const listFilesTool: Anthropic.Tool = {
-  name: "list_files",
+  name: "ListFiles",
   description:
-    "List files and directories in a specified directory. Returns names, types (file/directory), and sizes. Useful for understanding project structure and finding files to work with.",
+    "List contents of a directory. Use this to:\n" +
+    "- See what files exist in the workspace\n" +
+    "- Explore project structure\n" +
+    "- Find files before reading them\n\n" +
+    "Returns file names, types (file/directory), and sizes. Use Glob for pattern-based search.",
   input_schema: {
     type: "object",
     properties: {
       directory: {
         type: "string",
-        description: "Directory to list, relative to workspace root. Defaults to '.' (workspace root).",
+        description: "Directory to list (default: workspace root '.'). Example: 'src' to list src/ contents",
       },
     },
   },

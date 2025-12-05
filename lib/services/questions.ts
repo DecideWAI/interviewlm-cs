@@ -632,6 +632,7 @@ export async function regenerateQuestion(
 
 /**
  * Generate question from seed for cache warming (used by background worker)
+ * Uses prompt caching for the static system instructions
  */
 export async function generateQuestionFromSeed(params: {
   seed: {
@@ -648,22 +649,29 @@ export async function generateQuestionFromSeed(params: {
   language: string;
   difficulty: string;
 }): Promise<any> {
-  // Build a seed-based generation prompt
-  const systemPrompt = `You are an expert at creating coding interview questions.
+  // Use Anthropic SDK directly for question generation (with caching beta)
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const client = new Anthropic({
+    defaultHeaders: {
+      "anthropic-beta": "prompt-caching-2024-07-31",
+    },
+  });
 
-Generate a high-quality coding question based on this seed template:
+  // Static system instructions (cacheable - over 1024 tokens)
+  const staticInstructions = `You are an expert at creating coding interview questions.
 
-Title: ${params.seed.title}
-Description: ${params.seed.description}
-${params.seed.instructions ? `Instructions: ${params.seed.instructions}` : ''}
-Topics: ${params.seed.topics.join(', ')}
-Difficulty: ${params.difficulty}
-Category: ${params.seed.category}
-Language: ${params.language}
-Estimated Time: ${params.seed.estimatedTime} minutes
+Your role is to generate high-quality, unique coding questions based on seed templates.
+Each question should be realistic, interview-appropriate, and properly scoped.
 
-Create a UNIQUE variation of this question. Do not reuse the exact same example.
+Guidelines for question generation:
+1. Create UNIQUE variations - never reuse exact examples
+2. Include comprehensive test cases (mix of visible and hidden)
+3. Provide clear problem descriptions with examples
+4. Set realistic time estimates
+5. Include helpful hints without giving away solutions
+6. Ensure constraints are specific and testable
 
+Output format requirements:
 Return a JSON object with this structure:
 {
   "title": "Question title",
@@ -677,18 +685,39 @@ Return a JSON object with this structure:
     {"name": "test_basic", "input": {...}, "expectedOutput": ..., "hidden": false}
   ],
   "starterCode": "function solution() {...}",
-  "difficulty": "${params.difficulty}",
-  "estimatedTime": ${params.seed.estimatedTime}
+  "difficulty": "EASY|MEDIUM|HARD",
+  "estimatedTime": <number>
 }`;
 
-  // Use Anthropic SDK directly for question generation
-  const Anthropic = (await import("@anthropic-ai/sdk")).default;
-  const client = new Anthropic();
+  // Dynamic seed-specific context (not cached)
+  const seedContext = `Generate a coding question based on this seed template:
+
+Title: ${params.seed.title}
+Description: ${params.seed.description}
+${params.seed.instructions ? `Instructions: ${params.seed.instructions}` : ''}
+Topics: ${params.seed.topics.join(', ')}
+Difficulty: ${params.difficulty}
+Category: ${params.seed.category}
+Language: ${params.language}
+Estimated Time: ${params.seed.estimatedTime} minutes`;
+
+  // Build system prompt with caching (cast to any for cache_control support)
+  const systemBlocks = [
+    {
+      type: 'text' as const,
+      text: staticInstructions,
+      cache_control: { type: 'ephemeral' },
+    },
+    {
+      type: 'text' as const,
+      text: seedContext,
+    },
+  ];
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 4096,
-    system: systemPrompt,
+    system: systemBlocks,
     messages: [
       {
         role: "user",
@@ -696,6 +725,12 @@ Return a JSON object with this structure:
       },
     ],
   });
+
+  // Log cache metrics
+  const usageAny = response.usage as any;
+  if (usageAny.cache_creation_input_tokens || usageAny.cache_read_input_tokens) {
+    console.log(`[Question Gen] Cache metrics - created: ${usageAny.cache_creation_input_tokens || 0}, read: ${usageAny.cache_read_input_tokens || 0}`);
+  }
 
   const content = response.content[0];
   if (content.type !== "text") {

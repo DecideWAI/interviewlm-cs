@@ -128,9 +128,18 @@ export function sanitizeToolOutput(toolName: string, output: any): any {
 
 /**
  * Sanitize user messages to prevent context injection
+ * Optionally adds cache breakpoints for prompt caching optimization
+ *
+ * Cache strategy:
+ * - Add cache_control to the last assistant message before the current turn
+ * - This caches all previous conversation context
+ * - New messages get added to the cached prefix, saving 90% on input tokens
+ *
+ * @param messages - Conversation messages to sanitize
+ * @param enableCaching - Whether to add cache breakpoints (default: true)
  */
-export function sanitizeMessages(messages: any[]): any[] {
-  return messages
+export function sanitizeMessages(messages: any[], enableCaching: boolean = true): any[] {
+  const filtered = messages
     .filter(msg => {
       // Only allow user and assistant roles
       if (msg.role !== "user" && msg.role !== "assistant") {
@@ -153,13 +162,66 @@ export function sanitizeMessages(messages: any[]): any[] {
       }
 
       return true;
-    })
-    .map(msg => ({
+    });
+
+  // If caching is disabled or not enough messages, just return sanitized messages
+  if (!enableCaching || filtered.length < 4) {
+    return filtered.map(msg => ({
       role: msg.role,
       content: typeof msg.content === "string"
         ? msg.content.substring(0, 10000) // Max message length
         : msg.content,
     }));
+  }
+
+  // Find the last assistant message before the final user message
+  // This is the optimal cache breakpoint
+  let lastAssistantIndex = -1;
+  for (let i = filtered.length - 2; i >= 0; i--) {
+    if (filtered[i].role === "assistant") {
+      lastAssistantIndex = i;
+      break;
+    }
+  }
+
+  return filtered.map((msg, index) => {
+    const sanitizedContent = typeof msg.content === "string"
+      ? msg.content.substring(0, 10000) // Max message length
+      : msg.content;
+
+    // Add cache breakpoint to the last assistant message before current turn
+    if (enableCaching && index === lastAssistantIndex) {
+      // For string content, wrap in content block with cache_control
+      if (typeof sanitizedContent === "string") {
+        return {
+          role: msg.role,
+          content: [
+            {
+              type: "text",
+              text: sanitizedContent,
+              cache_control: { type: "ephemeral" },
+            },
+          ],
+        };
+      }
+      // For array content (tool_use, tool_result blocks), add cache to last block
+      if (Array.isArray(sanitizedContent) && sanitizedContent.length > 0) {
+        const contentCopy = [...sanitizedContent];
+        const lastBlock = { ...contentCopy[contentCopy.length - 1] };
+        lastBlock.cache_control = { type: "ephemeral" };
+        contentCopy[contentCopy.length - 1] = lastBlock;
+        return {
+          role: msg.role,
+          content: contentCopy,
+        };
+      }
+    }
+
+    return {
+      role: msg.role,
+      content: sanitizedContent,
+    };
+  });
 }
 
 /**
