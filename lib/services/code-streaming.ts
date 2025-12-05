@@ -20,6 +20,9 @@ export interface CodeStreamEvent {
   error?: string;
 }
 
+// Track active streaming operations to prevent overlapping
+const activeStreams = new Map<string, boolean>(); // key: `${sessionId}:${fileName}`
+
 /**
  * Code Stream Manager
  * Manages SSE connections and broadcasts code updates
@@ -69,7 +72,7 @@ class CodeStreamManager extends EventEmitter {
   streamCodeDelta(event: CodeStreamEvent): void {
     const clients = this.activeStreams.get(event.sessionId);
     if (!clients || clients.size === 0) {
-      console.log(`[CodeStreaming] No active clients for session ${event.sessionId}`);
+      // No active clients - silently skip (this is normal when SSE not connected)
       return;
     }
 
@@ -188,48 +191,66 @@ export async function streamCodeGeneration(
     return;
   }
 
-  const { chunkSize = 5, delayMs = 20 } = options;
+  // Prevent overlapping streams for the same file
+  const streamKey = `${sessionId}:${fileName}`;
+  if (activeStreams.get(streamKey)) {
+    // Previous stream still running - skip this one
+    return;
+  }
 
-  // Start streaming
-  codeStreamManager.startStreaming(sessionId, fileName);
+  // Skip streaming if no active clients (avoid unnecessary work)
+  if (!codeStreamManager.hasActiveStreams(sessionId)) {
+    return;
+  }
 
-  // Track cursor position
-  let currentLine = 1; // Lines start at 1
-  let currentColumn = 0; // Columns start at 0
+  activeStreams.set(streamKey, true);
 
-  // Stream in chunks
-  for (let i = 0; i < fullCode.length; i += chunkSize) {
-    const chunk = fullCode.substring(i, Math.min(i + chunkSize, fullCode.length));
+  try {
+    const { chunkSize = 5, delayMs = 20 } = options;
 
-    // Calculate position based on content streamed so far
-    // Count newlines in the chunk
-    for (let j = 0; j < chunk.length; j++) {
-      const char = chunk[j];
-      if (char === '\n') {
-        currentLine++;
-        currentColumn = 0;
-      } else {
-        currentColumn++;
+    // Start streaming
+    codeStreamManager.startStreaming(sessionId, fileName);
+
+    // Track cursor position
+    let currentLine = 1; // Lines start at 1
+    let currentColumn = 0; // Columns start at 0
+
+    // Stream in chunks
+    for (let i = 0; i < fullCode.length; i += chunkSize) {
+      const chunk = fullCode.substring(i, Math.min(i + chunkSize, fullCode.length));
+
+      // Calculate position based on content streamed so far
+      // Count newlines in the chunk
+      for (let j = 0; j < chunk.length; j++) {
+        const char = chunk[j];
+        if (char === '\n') {
+          currentLine++;
+          currentColumn = 0;
+        } else {
+          currentColumn++;
+        }
+      }
+
+      codeStreamManager.streamCodeDelta({
+        sessionId,
+        fileName,
+        delta: chunk,
+        type: 'delta',
+        position: {
+          line: currentLine,
+          column: currentColumn,
+        },
+      });
+
+      // Small delay to create typing effect
+      if (i + chunkSize < fullCode.length) {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
 
-    codeStreamManager.streamCodeDelta({
-      sessionId,
-      fileName,
-      delta: chunk,
-      type: 'delta',
-      position: {
-        line: currentLine,
-        column: currentColumn,
-      },
-    });
-
-    // Small delay to create typing effect
-    if (i + chunkSize < fullCode.length) {
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
+    // Complete streaming
+    codeStreamManager.completeStreaming(sessionId, fileName, fullCode);
+  } finally {
+    activeStreams.delete(streamKey);
   }
-
-  // Complete streaming
-  codeStreamManager.completeStreaming(sessionId, fileName, fullCode);
 }

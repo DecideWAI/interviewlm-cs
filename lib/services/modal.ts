@@ -119,13 +119,30 @@ async function createNewSandbox(sessionId: string): Promise<{ sandbox: any; sand
 
 /**
  * Try to reconnect to an existing sandbox by ID
+ * Verifies the sandbox is still healthy by running a simple command
  */
 async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
   try {
     const modal = getModalClient();
     const sandbox = await modal.sandboxes.fromId(sandboxId);
-    // If we got here without error, sandbox exists
-    console.log(`[Modal] Reconnected to existing sandbox ${sandboxId}`);
+
+    // Verify sandbox is healthy by running a simple command with timeout
+    const healthCheck = Promise.race([
+      (async () => {
+        const proc = await sandbox["exec"](["echo", "ok"]);
+        const output = await proc.stdout.readText();
+        return output.trim() === "ok";
+      })(),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 5000))
+    ]);
+
+    const isHealthy = await healthCheck;
+    if (!isHealthy) {
+      console.log(`[Modal] Sandbox ${sandboxId} failed health check, will create new one`);
+      return null;
+    }
+
+    console.log(`[Modal] Reconnected to healthy sandbox ${sandboxId}`);
     return sandbox;
   } catch (error) {
     console.log(`[Modal] Failed to reconnect to sandbox ${sandboxId}:`, error instanceof Error ? error.message : 'Unknown error');
@@ -171,7 +188,7 @@ export async function createSandbox(sessionId: string): Promise<SandboxInstance>
  * Falls back to in-memory pending map when Redis is unavailable.
  */
 export async function getOrCreateSandbox(sessionId: string): Promise<any> {
-  // 1. Check in-memory cache first
+  // 1. Check in-memory cache first (fast path)
   const cached = sandboxes.get(sessionId);
   if (cached) {
     return cached.sandbox;
@@ -180,23 +197,40 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
   // 2. Check if there's a local pending creation (same process)
   const pending = pendingCreations.get(sessionId);
   if (pending) {
+    console.log(`[Modal] Waiting for pending sandbox creation for session ${sessionId}`);
     return pending;
   }
 
-  // 3. Acquire distributed lock and create
-  const lock = await acquireLock(`sandbox:${sessionId}`, {
-    ttlMs: 60000,
-    waitTimeoutMs: 30000,
-    retryIntervalMs: 200,
+  // 3. Create the promise FIRST, then set it in pending map IMMEDIATELY
+  // This prevents race conditions where multiple requests start before the map is set
+  let resolveCreation!: (sandbox: any) => void;
+  let rejectCreation!: (error: Error) => void;
+  const creationPromise = new Promise<any>((resolve, reject) => {
+    resolveCreation = resolve;
+    rejectCreation = reject;
   });
 
-  const creationPromise = (async () => {
-    try {
-      // Check cache again after acquiring lock
-      const cachedAgain = sandboxes.get(sessionId);
-      if (cachedAgain) return cachedAgain.sandbox;
+  // Set pending IMMEDIATELY before any async work
+  pendingCreations.set(sessionId, creationPromise);
 
-      // Try to reconnect from database
+  // 4. Now do the actual creation work
+  (async () => {
+    // Acquire distributed lock (for multi-instance protection)
+    const lock = await acquireLock(`sandbox:${sessionId}`, {
+      ttlMs: 60000,
+      waitTimeoutMs: 30000,
+      retryIntervalMs: 200,
+    });
+
+    try {
+      // Check cache again after acquiring lock (another instance may have created it)
+      const cachedAgain = sandboxes.get(sessionId);
+      if (cachedAgain) {
+        resolveCreation(cachedAgain.sandbox);
+        return;
+      }
+
+      // Try to reconnect from database (sandbox may exist from previous server run)
       try {
         const candidate = await prisma.candidate.findUnique({
           where: { id: sessionId },
@@ -204,24 +238,35 @@ export async function getOrCreateSandbox(sessionId: string): Promise<any> {
         });
 
         if (candidate?.volumeId) {
+          console.log(`[Modal] Attempting to reconnect to sandbox ${candidate.volumeId} for session ${sessionId}`);
           const sandbox = await reconnectToSandbox(candidate.volumeId);
           if (sandbox) {
             sandboxes.set(sessionId, { sandbox, sandboxId: candidate.volumeId, createdAt: new Date() });
-            return sandbox;
+            resolveCreation(sandbox);
+            return;
           }
         }
-      } catch {}
+      } catch (dbError) {
+        console.log(`[Modal] Could not lookup sandbox from database:`, dbError);
+      }
 
-      // Create new sandbox
+      // Create new sandbox (no existing one found)
+      console.log(`[Modal] Creating new sandbox for session ${sessionId}`);
       await createSandbox(sessionId);
-      return sandboxes.get(sessionId)!.sandbox;
+      const newSandbox = sandboxes.get(sessionId)?.sandbox;
+      if (newSandbox) {
+        resolveCreation(newSandbox);
+      } else {
+        rejectCreation(new Error('Failed to create sandbox'));
+      }
+    } catch (error) {
+      rejectCreation(error instanceof Error ? error : new Error('Unknown error creating sandbox'));
     } finally {
       pendingCreations.delete(sessionId);
       await lock.release();
     }
   })();
 
-  pendingCreations.set(sessionId, creationPromise);
   return creationPromise;
 }
 
@@ -292,21 +337,36 @@ export async function readFile(
   filePath: string
 ): Promise<{ success: boolean; content?: string; error?: string }> {
   try {
+    console.log(`[Modal] Reading file ${filePath} for session ${sessionId}`);
     const sandbox = await getOrCreateSandbox(sessionId);
     const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
 
-    const proc = await exec(sandbox, ["cat", absPath]);
-    const content = await proc.stdout.readText();
-    const exitCode = await proc.exitCode;
+    // Add timeout to prevent hanging on stale sandboxes
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('File read timed out after 10s')), 10000);
+    });
 
-    if (exitCode !== 0) {
-      const stderr = await proc.stderr.readText();
-      return { success: false, error: stderr };
-    }
+    const readPromise = (async () => {
+      // Note: 'exec' here is Modal sandbox exec, not Node child_process
+      const proc = await sandbox["exec"](["cat", absPath]);
+      const content = await proc.stdout.readText();
+      const exitCode = await proc.exitCode;
 
-    return { success: true, content };
+      if (exitCode !== 0) {
+        const stderr = await proc.stderr.readText();
+        return { success: false, error: stderr || `File not found: ${absPath}` };
+      }
+
+      return { success: true, content };
+    })();
+
+    const result = await Promise.race([readPromise, timeoutPromise]);
+    console.log(`[Modal] Successfully read file ${filePath}`);
+    return result;
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
+    const errorMsg = error instanceof Error ? error.message : "Unknown error";
+    console.error(`[Modal] Failed to read file ${filePath}:`, errorMsg);
+    return { success: false, error: errorMsg };
   }
 }
 
