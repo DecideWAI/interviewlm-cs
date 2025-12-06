@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { publishAIInteraction } from "@/lib/queues";
 import { createCodingAgent, type StreamingEvent } from "@/lib/agents/coding-agent";
+import { withAgentTrace } from "@/lib/observability/langsmith";
 import type { HelpfulnessLevel } from "@/lib/types/agent";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
@@ -487,6 +488,16 @@ export const GET = withErrorHandling(
         let outputTokens = 0;
         let modelName = '';
 
+        // Wrap the entire message processing with LangSmith trace
+        // This groups all LLM calls under a single "user message" run
+        await withAgentTrace(
+          "agent_turn",
+          {
+            sessionId: id,
+            candidateId: id,
+            message: message.slice(0, 100), // First 100 chars for preview
+          },
+          async () => {
         try {
           // Stream agent response
           for await (const event of agent.sendMessageStreaming(message)) {
@@ -652,6 +663,8 @@ export const GET = withErrorHandling(
           }
           controller.close();
         }
+          } // Close withAgentTrace async callback
+        ); // Close withAgentTrace call
       },
     });
 

@@ -8,7 +8,8 @@
 
 import prisma from "@/lib/prisma";
 import { getChatCompletion } from "./claude";
-import type { Difficulty, GeneratedQuestion, AssessmentType } from "@/lib/prisma-types";
+import type { Difficulty, GeneratedQuestion } from "@/lib/prisma-types";
+import type { AssessmentType } from "@/types/assessment";
 import type {
   RequiredTechStack,
   BaseProblem,
@@ -214,7 +215,7 @@ export class IncrementalQuestionGenerator {
       seniorityExpectations,
       timeRemaining: Math.floor(context.timeRemaining / 60), // Convert to minutes
       irtTargeting,
-      assessmentType: context.assessmentType || seed.assessmentType,
+      assessmentType: (context.assessmentType || seed.assessmentType || undefined) as AssessmentType | undefined,
     });
 
     // Generate question using Claude

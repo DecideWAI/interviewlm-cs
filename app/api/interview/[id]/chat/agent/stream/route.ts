@@ -21,6 +21,7 @@ import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { publishAIInteraction } from "@/lib/queues";
 import { createStreamingCodingAgent } from "@/lib/agents/coding-agent-streaming";
+import { traceAgentSession } from "@/lib/observability/langsmith";
 import type { HelpfulnessLevel } from "@/lib/types/agent";
 
 // Request validation schema (passed as query params for GET/SSE)
@@ -149,44 +150,53 @@ export async function POST(
         };
 
         try {
-          // Create streaming agent
-          const agent = await createStreamingCodingAgent({
-            sessionId: id,
-            candidateId: id,
-            sessionRecordingId: sessionRecording!.id,
-            helpfulnessLevel: (helpfulnessLevel || "pair-programming") as HelpfulnessLevel,
-            workspaceRoot: "/workspace",
-            problemStatement,
-          });
+          // Wrap the entire agent interaction with LangSmith trace
+          // This groups all LLM calls and tool executions under a single "user message" run
+          const agentResponse = await traceAgentSession(
+            id, // sessionId (used as thread_id to group all messages from same session)
+            id, // candidateId
+            async () => {
+              // Create streaming agent
+              const agent = await createStreamingCodingAgent({
+                sessionId: id,
+                candidateId: id,
+                sessionRecordingId: sessionRecording!.id,
+                helpfulnessLevel: (helpfulnessLevel || "pair-programming") as HelpfulnessLevel,
+                workspaceRoot: "/workspace",
+                problemStatement,
+              });
 
-          // Load conversation history
-          const previousInteractions = await prisma.claudeInteraction.findMany({
-            where: { sessionId: sessionRecording!.id },
-            orderBy: { timestamp: "asc" },
-            select: { role: true, content: true },
-          });
+              // Load conversation history
+              const previousInteractions = await prisma.claudeInteraction.findMany({
+                where: { sessionId: sessionRecording!.id },
+                orderBy: { timestamp: "asc" },
+                select: { role: true, content: true },
+              });
 
-          if (previousInteractions.length > 0) {
-            agent.loadConversationHistory(
-              previousInteractions.map((i) => ({
-                role: i.role as "user" | "assistant",
-                content: i.content,
-              }))
-            );
-          }
+              if (previousInteractions.length > 0) {
+                agent.loadConversationHistory(
+                  previousInteractions.map((i) => ({
+                    role: i.role as "user" | "assistant",
+                    content: i.content,
+                  }))
+                );
+              }
 
-          // Send message with streaming callbacks
-          const agentResponse = await agent.sendMessageStreaming(enhancedMessage, {
-            onTextDelta: (delta: string) => {
-              sendEvent("content", { delta });
+              // Send message with streaming callbacks
+              return agent.sendMessageStreaming(enhancedMessage, {
+                onTextDelta: (delta: string) => {
+                  sendEvent("content", { delta });
+                },
+                onToolStart: (toolName: string, toolId: string, input: unknown) => {
+                  sendEvent("tool_use_start", { toolName, toolId, input });
+                },
+                onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
+                  sendEvent("tool_result", { toolName, toolId, output: result, isError });
+                },
+              });
             },
-            onToolStart: (toolName: string, toolId: string, input: unknown) => {
-              sendEvent("tool_use_start", { toolName, toolId, input });
-            },
-            onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
-              sendEvent("tool_result", { toolName, toolId, output: result, isError });
-            },
-          });
+            { message: enhancedMessage } // Include message for tracing context
+          );
 
           const latency = Date.now() - startTime;
           const modelName = agentResponse.metadata?.model as string | undefined;

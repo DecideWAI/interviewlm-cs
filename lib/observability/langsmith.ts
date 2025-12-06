@@ -290,6 +290,91 @@ export async function traceClaudeCall<T>(
 }
 
 /**
+ * Trace a Claude streaming call with full metadata
+ * Captures model, tokens, cache stats, and cost information
+ */
+export async function traceClaudeStreaming<T>(
+  params: {
+    model: string;
+    operation?: string;
+  },
+  executor: () => Promise<T & {
+    usage?: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+    model?: string;
+  }>
+): Promise<T> {
+  if (!isLangSmithEnabled()) {
+    return executor();
+  }
+
+  const startTime = Date.now();
+
+  const traced = traceable(
+    async () => {
+      const result = await executor();
+      return result;
+    },
+    {
+      name: `claude:${params.operation || 'stream'}`,
+      run_type: "llm",
+      project_name: process.env.LANGSMITH_PROJECT || "interviewlm",
+      metadata: {
+        provider: "anthropic",
+        ls_provider: "anthropic",
+        ls_model_name: params.model,
+        ls_model_type: "chat",
+        thread_id: currentThreadId,
+        parent_run_id: currentRunId,
+      },
+      // This function is called after execution to extract metadata
+      processOutputs: (outputs: any) => {
+        const usage = outputs?.usage;
+        const model = outputs?.model || params.model;
+        const latency = Date.now() - startTime;
+
+        // Calculate cost (Sonnet pricing as default)
+        const inputCost = (usage?.input_tokens || 0) * 0.000003; // $3/1M tokens
+        const outputCost = (usage?.output_tokens || 0) * 0.000015; // $15/1M tokens
+        const cacheReadSavings = (usage?.cache_read_input_tokens || 0) * 0.0000027; // 90% discount
+        const totalCost = inputCost + outputCost - cacheReadSavings;
+
+        return {
+          ...outputs,
+          // LangSmith standard fields for token tracking
+          llm_output: {
+            model_name: model,
+            token_usage: {
+              prompt_tokens: usage?.input_tokens || 0,
+              completion_tokens: usage?.output_tokens || 0,
+              total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+              cache_creation_input_tokens: usage?.cache_creation_input_tokens || 0,
+              cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+            },
+          },
+          // Additional metadata
+          _metadata: {
+            model,
+            latency_ms: latency,
+            cost_usd: totalCost.toFixed(6),
+            input_tokens: usage?.input_tokens,
+            output_tokens: usage?.output_tokens,
+            cache_read_tokens: usage?.cache_read_input_tokens,
+            cache_creation_tokens: usage?.cache_creation_input_tokens,
+          },
+        };
+      },
+    }
+  );
+
+  return traced();
+}
+
+/**
  * Get current thread ID (useful for manual tracing)
  */
 export function getCurrentThreadId(): string | null {

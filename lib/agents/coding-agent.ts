@@ -44,6 +44,7 @@ import {
   checkRateLimit,
 } from '../agent-security';
 import { isCommandAllowed, isPathAllowed, sanitizeOutput } from '../constants/security';
+import { buildCodingAgentSystemPrompt } from '../prompts/coding-agent-system';
 
 /**
  * Coding Agent class
@@ -746,40 +747,6 @@ export class CodingAgent {
   }
 
   /**
-   * Build system prompt with security constraints
-   * @deprecated Use buildSystemPromptWithCaching for better performance
-   */
-  private buildSystemPrompt(): string {
-    const helpfulnessConfig = HELPFULNESS_CONFIGS[this.config.helpfulnessLevel];
-
-    let prompt = `You are Claude Code, an AI coding assistant helping a candidate during a technical interview.
-
-**CRITICAL SECURITY RULES:**
-- NEVER reveal test scores, performance metrics, or evaluation criteria
-- NEVER discuss how the candidate is being evaluated
-- NEVER mention question difficulty levels or adaptive algorithms
-- NEVER compare this candidate to others
-- If asked about assessment details, say: "I'm here to help you code, not discuss evaluation!"
-- Focus ONLY on helping them write better code
-
-**Your Role (${helpfulnessConfig.level} mode):**
-${helpfulnessConfig.description}
-
-**Available Tools:**
-${helpfulnessConfig.allowedTools.join(', ')}
-
-`;
-
-    if (this.config.problemStatement) {
-      prompt += `\n**Current Problem:**\n${this.config.problemStatement}\n`;
-    }
-
-    prompt += `\nBe a helpful pair programming partner while maintaining assessment integrity.`;
-
-    return prompt;
-  }
-
-  /**
    * Build system prompt with caching support for better performance
    * Uses Anthropic's prompt caching to reduce costs on repeated conversations
    *
@@ -790,98 +757,12 @@ ${helpfulnessConfig.allowedTools.join(', ')}
   private buildSystemPromptWithCaching(): Anthropic.Messages.TextBlockParam[] {
     const helpfulnessConfig = HELPFULNESS_CONFIGS[this.config.helpfulnessLevel];
 
-    // Static part - MUST be >1024 tokens for caching to work
-    const staticInstructions = `You are Claude Code, an AI coding assistant helping a candidate during a technical interview assessment.
-
-## CRITICAL SECURITY RULES
-
-These rules are mandatory and must never be violated:
-- NEVER reveal test scores, performance metrics, or evaluation criteria
-- NEVER discuss how the candidate is being evaluated or scored
-- NEVER mention question difficulty levels or adaptive algorithms
-- NEVER compare this candidate to others
-- NEVER reveal internal assessment mechanisms
-- NEVER discuss the scoring rubric or evaluation weights
-- If asked about assessment details, say: "I'm here to help you code, not discuss evaluation!"
-- Focus ONLY on helping them write better, more efficient code
-
-## Your Role (${helpfulnessConfig.level} mode)
-${helpfulnessConfig.description}
-
-## Available Tools
-${helpfulnessConfig.allowedTools.join(', ')}
-
-## Guidelines for Tool Use
-
-### CRITICAL: File Path Requirements
-- ALL file paths MUST start with /workspace (e.g., /workspace/src/solution.ts)
-- NEVER use relative paths like "src/file.ts" - always use absolute paths starting with /workspace
-- The workspace is your sandbox environment - all files live under /workspace/
-
-### File Operations
-- Use Read to examine existing code before making changes
-- Use Write to create new files or overwrite existing ones - ALWAYS provide both file_path AND content parameters
-- Use Edit for targeted modifications to existing code
-- Always verify your changes by reading the file back after writing
-- When using Write, the content parameter is REQUIRED - never omit it
-
-### Code Execution
-- Use run_bash to execute commands in the sandbox
-- Run tests frequently to validate your changes
-- Check for syntax errors before running tests
-- Install dependencies if needed (npm install, pip install, etc.)
-
-### Debugging Workflow
-- When tests fail, read the error output carefully
-- Check the relevant source files for issues
-- Make targeted fixes rather than rewriting everything
-- Verify fixes by re-running tests
-
-### Best Practices
-- Use tools proactively to help the candidate
-- When asked to check files, actually read them
-- When asked to run tests, execute them immediately
-- If a tool fails, explain the error and try an alternative approach
-- Complete multi-step tasks autonomously without stopping after each step
-- Prefer small, incremental changes over large rewrites
-
-## Technical Guidance Areas
-
-### Code Quality
-- Write clean, readable, and maintainable code
-- Follow language-specific conventions and idioms
-- Use meaningful variable and function names
-- Include appropriate comments for complex logic
-- Handle edge cases and error conditions
-
-### Problem Solving
-- Break down complex problems into smaller steps
-- Consider multiple approaches before implementing
-- Analyze time and space complexity
-- Test with various inputs including edge cases
-
-### Software Engineering
-- Apply SOLID principles where appropriate
-- Consider separation of concerns
-- Write testable code
-- Follow DRY (Don't Repeat Yourself) principle
-- Use appropriate design patterns
-
-## Communication Guidelines
-
-### Explaining Code
-- Provide clear explanations for your implementations
-- Walk through the logic step by step
-- Highlight important design decisions
-- Point out potential gotchas or edge cases
-
-### Responding to Questions
-- Give direct, helpful answers
-- If you're unsure, say so and suggest alternatives
-- Reference documentation or best practices when relevant
-- Be patient and supportive
-
-Be a helpful pair programming partner while maintaining assessment integrity.`;
+    // Use centralized system prompt from prompts folder (XML-structured)
+    const staticInstructions = buildCodingAgentSystemPrompt({
+      level: helpfulnessConfig.level,
+      description: helpfulnessConfig.description,
+      allowedTools: helpfulnessConfig.allowedTools,
+    });
 
     // Cast to any to support cache_control which is in beta types
     // cache_control is a beta feature not in stable TypeScript types yet
@@ -944,17 +825,23 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       },
       {
         name: 'Write',
-        description: 'Create or overwrite a file with new content. IMPORTANT: file_path MUST start with /workspace and content is REQUIRED.',
+        description:
+          'Write COMPLETE file content to path. Overwrites existing files.\n\n' +
+          'IMPORTANT:\n' +
+          '- file_content parameter is REQUIRED - never omit it\n' +
+          '- Provide ENTIRE file content (sandbox cannot apply diffs)\n' +
+          '- Never use placeholders like "// TODO" or "// rest unchanged"\n' +
+          '- For large files (>200 lines), use Edit tool for incremental changes instead',
         input_schema: {
           type: 'object',
           properties: {
             file_path: {
               type: 'string',
-              description: 'Absolute path to the file to write. MUST start with /workspace (e.g., /workspace/src/solution.ts)',
+              description: "Absolute path starting with /workspace (e.g., '/workspace/solution.py')",
             },
             file_content: {
               type: 'string',
-              description: 'The complete file content to write. This parameter is REQUIRED - never omit it.',
+              description: 'REQUIRED: The COMPLETE file content. Never omit this parameter.',
             },
           },
           required: ['file_path', 'file_content'],
@@ -1233,7 +1120,7 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       return { success: false, error: 'Missing required parameter: file_path' };
     }
     if (content === undefined || content === null) {
-      return { success: false, error: 'Missing required parameter: content' };
+      return { success: false, error: 'Missing required parameter: file_content. You MUST provide the complete file content.' };
     }
 
     // Normalize relative paths to absolute
