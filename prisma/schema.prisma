@@ -235,6 +235,7 @@ model Candidate {
   invitationExpiresAt DateTime?           @map("invitation_expires_at")
   deadlineAt          DateTime?           @map("deadline_at")
   volumeId            String?             @map("volume_id")
+  sandboxCreatedAt    DateTime?           @map("sandbox_created_at")
   overallScore        Float?              @map("overall_score")
   codingScore         Float?              @map("coding_score")
   communicationScore  Float?              @map("communication_score")

@@ -13,6 +13,21 @@ import { acquireLock } from "@/lib/utils/redis-lock";
 // Sandbox session cache (in-memory for performance, but we also persist to DB)
 const sandboxes = new Map<string, { sandbox: any; sandboxId: string; createdAt: Date }>();
 
+/**
+ * Clear sandbox from in-memory cache (for testing)
+ * Does NOT terminate the sandbox - just removes from cache to simulate server restart
+ */
+export function clearSandboxCache(sessionId: string): boolean {
+  return sandboxes.delete(sessionId);
+}
+
+/**
+ * Check if sandbox is in cache (for testing)
+ */
+export function isSandboxCached(sessionId: string): boolean {
+  return sandboxes.has(sessionId);
+}
+
 // In-memory pending creations (prevents race conditions within same process)
 const pendingCreations = new Map<string, Promise<any>>();
 
@@ -143,75 +158,73 @@ function getImageForLanguage(language?: string): string {
 /**
  * Create a new sandbox for a session with mounted volume (internal use)
  * The volume is persistent - files survive sandbox restarts
+ *
+ * OPTIMIZATION: Trust Modal to handle volume attachment - no manual verification needed.
+ * Modal guarantees volume is mounted when sandboxes.create() returns.
  */
 async function createNewSandbox(sessionId: string, language?: string): Promise<{ sandbox: any; sandboxId: string; volumeName: string }> {
   const modal = getModalClient();
-
-  // Get or create the app
-  const app = await modal.apps.fromName("interviewlm-executor", { createIfMissing: true });
-
-  // Get or create persistent volume for this session
-  const volume = await getOrCreateVolume(sessionId);
   const volumeName = getVolumeName(sessionId);
 
+  // OPTIMIZATION: Parallelize app + volume creation (saves ~1-2s)
+  const [app, volume] = await Promise.all([
+    modal.apps.fromName("interviewlm-executor", { createIfMissing: true }),
+    getOrCreateVolume(sessionId),
+  ]);
+
   // OPTIMIZATION: Use language-specific images to avoid runtime installations
-  // This saves ~8-10 seconds by not having to install Python or other tools
   const imageName = getImageForLanguage(language);
   console.log(`[Modal] Using image ${imageName} for language: ${language || 'default'}`);
   const image = modal.images.fromRegistry(imageName);
 
   // Create sandbox with the image AND mounted volume
-  // The volume is mounted at /workspace - files persist here
+  // Modal handles volume attachment - no need to verify manually
   const sandbox = await modal.sandboxes.create(app, image, {
     timeoutMs: SANDBOX_TIMEOUT_MS,
-    cpu: 2.0,
-    memoryMiB: 2048,
+    cpu: 0.5,
+    cpuLimit: 2.0,
+    memoryMiB: 512,
+    memoryLimitMiB: 4096,
     volumes: {
       "/workspace": volume,
     },
   });
 
-  // Only install tools that aren't in the base image
-  const isPython = ['python', 'py'].includes(language?.toLowerCase() || '');
-  const isNode = ['javascript', 'typescript', 'js', 'ts'].includes(language?.toLowerCase() || '') || !language;
-
-  const installPromises: Promise<void>[] = [];
-
-  if (isPython) {
-    // Python image: just need pytest (Python is pre-installed)
-    console.log(`[Modal] Installing pytest...`);
-    installPromises.push(
-      runSandboxCommand(sandbox, ["pip", "install", "pytest", "-q"])
-        .then((proc: any) => proc.exitCode)
-        .then(() => { /* done */ })
-    );
-  } else if (isNode) {
-    // Node image: verify Node.js is available (should be pre-installed)
-    const nodeCheckProc = await runSandboxCommand(sandbox, ["node", "--version"]);
-    const nodeVersion = await nodeCheckProc.stdout.readText();
-    console.log(`[Modal] Node.js version: ${nodeVersion.trim()}`);
-  }
-
-  // Wait for all installations to complete
-  if (installPromises.length > 0) {
-    await Promise.all(installPromises);
-  }
-
   const sandboxId = sandbox.sandboxId;
+
+  // OPTIMIZATION: Skip Node version check - we know it's pre-installed in the image
+  // Only install pytest for Python (async, non-blocking for sandbox ready state)
+  const isPython = ['python', 'py'].includes(language?.toLowerCase() || '');
+  if (isPython) {
+    // Install pytest in background - don't block sandbox creation
+    console.log(`[Modal] Installing pytest in background...`);
+    runSandboxCommand(sandbox, ["pip", "install", "pytest", "-q"])
+      .then((proc: any) => proc.exitCode)
+      .catch((err: Error) => console.warn(`[Modal] pytest install warning:`, err.message));
+  }
+
   console.log(`[Modal] Created new sandbox ${sandboxId} with volume ${volumeName} for session ${sessionId}`);
 
   return { sandbox, sandboxId, volumeName };
 }
 
 // Timeout for getting sandbox reference (cold sandboxes can be slow to wake)
-const RECONNECT_TIMEOUT_MS = 10000; // 10s to get sandbox reference
-const HEALTH_CHECK_TIMEOUT_MS = 15000; // 15s for health check
+// OPTIMIZED: Reduced from 10s/15s to 2s/2s for faster failure detection
+// If sandbox doesn't respond in 2s, it's likely dead - create new one faster
+const RECONNECT_TIMEOUT_MS = 2000; // 2s to get sandbox reference
+const HEALTH_CHECK_TIMEOUT_MS = 2000; // 2s for health check
+
+// Warm sandbox threshold - skip health check if created within this time
+const WARM_SANDBOX_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Try to reconnect to an existing sandbox by ID
  * If reconnection fails, terminates the old sandbox and returns null
+ *
+ * @param sandboxId - The sandbox ID to reconnect to
+ * @param skipHealthCheck - Skip health check for warm sandboxes (created recently)
  */
-async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
+async function reconnectToSandbox(sandboxId: string, skipHealthCheck = false): Promise<any | null> {
   let sandbox: any = null;
   try {
     const modal = getModalClient();
@@ -233,21 +246,33 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
       return null;
     }
 
-    console.log(`[Modal] Got sandbox reference for ${sandboxId} in ${Date.now() - startTime}ms, running health check...`);
+    const elapsed = Date.now() - startTime;
+    console.log(`[Modal] Got sandbox reference for ${sandboxId} in ${elapsed}ms`);
 
-    // Verify sandbox is healthy by running a simple command with timeout
+    // Skip health check for warm sandboxes (recently created) - they're likely still alive
+    if (skipHealthCheck) {
+      console.log(`[Modal] Skipping health check for warm sandbox ${sandboxId}`);
+      return sandbox;
+    }
+
+    // Run quick health check with timeout - simple echo is fastest
+    console.log(`[Modal] Running health check...`);
     const healthCheckStart = Date.now();
     let timeoutId: NodeJS.Timeout | null = null;
 
     const healthCheck = Promise.race([
       (async () => {
         try {
+          // OPTIMIZED: Simple echo is faster than readlink + ls
+          // Just verify sandbox can execute commands
           const proc = await sandbox["exec"](["echo", "ok"]);
           const output = await proc.stdout.readText();
-          const elapsed = Date.now() - healthCheckStart;
-          console.log(`[Modal] Health check response in ${elapsed}ms: "${output.trim()}"`);
+          const exitCode = await proc.exitCode;
+          const healthElapsed = Date.now() - healthCheckStart;
+          console.log(`[Modal] Health check response in ${healthElapsed}ms: exitCode=${exitCode}`);
           if (timeoutId) clearTimeout(timeoutId);
-          return output.trim() === "ok";
+          // Success if command ran and returned "ok"
+          return (exitCode === undefined || exitCode === 0) && output.trim() === "ok";
         } catch (execError) {
           console.log(`[Modal] Health check exec error:`, execError instanceof Error ? execError.message : execError);
           if (timeoutId) clearTimeout(timeoutId);
@@ -265,13 +290,10 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
     const isHealthy = await healthCheck;
     if (!isHealthy) {
       console.log(`[Modal] Sandbox ${sandboxId} failed health check, terminating it`);
-      // Terminate the unhealthy sandbox to free resources
-      try {
-        await sandbox.terminate();
-        console.log(`[Modal] Terminated unhealthy sandbox ${sandboxId}`);
-      } catch (termError) {
+      // Terminate the unhealthy sandbox to free resources - don't await, do it in background
+      sandbox.terminate().catch((termError: Error) => {
         console.warn(`[Modal] Failed to terminate unhealthy sandbox ${sandboxId}:`, termError);
-      }
+      });
       return null;
     }
 
@@ -279,14 +301,9 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
     return sandbox;
   } catch (error) {
     console.log(`[Modal] Failed to reconnect to sandbox ${sandboxId}:`, error instanceof Error ? error.message : 'Unknown error');
-    // Try to terminate the sandbox even if reconnection failed
+    // Try to terminate the sandbox even if reconnection failed - don't await
     if (sandbox) {
-      try {
-        await sandbox.terminate();
-        console.log(`[Modal] Terminated unreachable sandbox ${sandboxId}`);
-      } catch {
-        // Ignore termination errors
-      }
+      sandbox.terminate().catch(() => { /* Ignore */ });
     }
     return null;
   }
@@ -308,7 +325,10 @@ export async function createSandbox(sessionId: string, language?: string): Promi
   try {
     await prisma.candidate.update({
       where: { id: sessionId },
-      data: { volumeId: sandboxId }, // Store sandboxId for quick reconnection
+      data: {
+        volumeId: sandboxId,
+        sandboxCreatedAt: createdAt, // Track when sandbox was created for expiry checks
+      },
     });
     console.log(`[Modal] Persisted sandbox ID ${sandboxId} (volume: ${volumeName}) for session ${sessionId}`);
   } catch (dbError) {
@@ -388,21 +408,43 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
       try {
         const candidate = await prisma.candidate.findUnique({
           where: { id: sessionId },
-          select: { volumeId: true },
+          select: { volumeId: true, sandboxCreatedAt: true },
         });
 
         if (candidate?.volumeId) {
-          console.log(`[Modal] Found volumeId ${candidate.volumeId} in DB, attempting reconnect for session ${sessionId}`);
-          sandbox = await reconnectToSandbox(candidate.volumeId);
-          if (sandbox) {
-            // Store in cache for future requests
-            sandboxes.set(sessionId, { sandbox, sandboxId: candidate.volumeId, createdAt: new Date() });
-            console.log(`[Modal] Successfully reconnected to sandbox ${candidate.volumeId} for session ${sessionId}`);
-            resolveCreation(sandbox);
-            return;
+          // Check if sandbox is likely expired (1-hour timeout with 1-min buffer)
+          // If sandboxCreatedAt is missing (old record), assume expired to avoid reconnect timeout
+          const sandboxAge = candidate.sandboxCreatedAt
+            ? Date.now() - candidate.sandboxCreatedAt.getTime()
+            : Infinity;
+          const isExpired = sandboxAge > SANDBOX_TIMEOUT_MS - 60000;
+          const isWarm = sandboxAge < WARM_SANDBOX_THRESHOLD_MS;
+
+          if (isExpired) {
+            console.log(`[Modal] Sandbox ${candidate.volumeId} expired (age: ${Math.round(sandboxAge / 1000)}s), skipping reconnect`);
+            // Clear stale sandbox ID - don't waste time trying to reconnect
+            await prisma.candidate.update({
+              where: { id: sessionId },
+              data: { volumeId: null, sandboxCreatedAt: null },
+            });
+          } else {
+            console.log(`[Modal] Found volumeId ${candidate.volumeId} in DB (age: ${Math.round(sandboxAge / 1000)}s, warm: ${isWarm})`);
+            // Skip health check for warm sandboxes (created within last 5 minutes)
+            sandbox = await reconnectToSandbox(candidate.volumeId, isWarm);
+            if (sandbox) {
+              // Store in cache for future requests
+              sandboxes.set(sessionId, { sandbox, sandboxId: candidate.volumeId, createdAt: candidate.sandboxCreatedAt || new Date() });
+              console.log(`[Modal] Successfully reconnected to sandbox ${candidate.volumeId} for session ${sessionId}`);
+              resolveCreation(sandbox);
+              return;
+            }
+            // Sandbox failed to reconnect - clear stale ID and create new one
+            console.log(`[Modal] Sandbox ${candidate.volumeId} reconnect failed, clearing stale ID`);
+            await prisma.candidate.update({
+              where: { id: sessionId },
+              data: { volumeId: null, sandboxCreatedAt: null },
+            });
           }
-          // Sandbox failed to reconnect - will create new one with SAME volume below
-          console.log(`[Modal] Sandbox ${candidate.volumeId} reconnect failed, creating new sandbox with persistent volume`);
         } else {
           console.log(`[Modal] No existing sandbox found in DB for session ${sessionId}`);
         }
@@ -423,7 +465,10 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
           try {
             await prisma.candidate.update({
               where: { id: sessionId },
-              data: { volumeId: cached.sandboxId },
+              data: {
+                volumeId: cached.sandboxId,
+                sandboxCreatedAt: cached.createdAt,
+              },
             });
             console.log(`[Modal] Verified sandbox ${cached.sandboxId} persisted to DB for session ${sessionId}`);
           } catch (dbError) {
@@ -464,6 +509,8 @@ export async function runCommand(
   try {
     console.log(`[Modal] Running command for session ${sessionId}: ${command.substring(0, 100)}...`);
     const sandbox = await getOrCreateSandbox(sessionId);
+
+
     const fullCmd = `cd ${workingDir} 2>/dev/null || mkdir -p ${workingDir} && cd ${workingDir} && ${command}`;
     const proc = await runSandboxCommand(sandbox, ["bash", "-c", fullCmd]);
 
@@ -508,6 +555,8 @@ export async function* runCommandStreaming(
   try {
     console.log(`[Modal] Running streaming command for session ${sessionId}: ${command.substring(0, 100)}...`);
     const sandbox = await getOrCreateSandbox(sessionId);
+
+
     const fullCmd = `cd ${workingDir} 2>/dev/null || mkdir -p ${workingDir} && cd ${workingDir} && ${command}`;
     const proc = await runSandboxCommand(sandbox, ["bash", "-c", fullCmd]);
 
@@ -540,94 +589,44 @@ export async function* runCommandStreaming(
 }
 
 /**
- * Write a file to the sandbox
+ * Write a file to the sandbox using a single exec call
+ * Combines mkdir and write into one command for minimal round trips
  */
 export async function writeFile(
   sessionId: string,
   filePath: string,
   content: string
 ): Promise<{ success: boolean; error?: string }> {
-  // Note: 'exec' here is Modal sandbox exec wrapper (line 64), NOT Node.js child_process
   try {
+    const startTime = Date.now();
     console.log(`[Modal] Writing file ${filePath} for session ${sessionId}, contentLength=${content.length}`);
     const sandbox = await getOrCreateSandbox(sessionId);
+
+
     const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
     const parentDir = absPath.split("/").slice(0, -1).join("/");
 
-    console.log(`[Modal] Creating parent directory: ${parentDir}`);
-    // Modal sandbox exec - runs inside isolated container, not local shell
-    await sandbox["exec"](["mkdir", "-p", parentDir]);
+    // Base64 encode content for safe transmission
+    const base64Content = Buffer.from(content, "utf-8").toString("base64");
 
-    // Use base64 to handle special characters safely
-    const encoded = Buffer.from(content).toString("base64");
-    console.log(`[Modal] Writing ${encoded.length} bytes (base64) to ${absPath}`);
+    // Single exec call that:
+    // 1. Creates parent directory if needed
+    // 2. Decodes base64 and writes to file
+    const shellCmd = parentDir && parentDir !== "/workspace"
+      ? `mkdir -p ${parentDir} && echo '${base64Content}' | base64 -d > ${absPath}`
+      : `echo '${base64Content}' | base64 -d > ${absPath}`;
 
-    // Write base64 content to a temp file first, then decode
-    // This is more reliable than heredocs or echo with large content
-    const tempPath = `/tmp/file_${Date.now()}.b64`;
+    const proc = await sandbox["exec"](["sh", "-c", shellCmd]);
+    const exitCode = await proc.exitCode;
+    const stderr = await proc.stderr.readText();
 
-    // Write encoded content using printf (more portable than echo for special chars)
-    // Split into chunks to avoid argument length limits
-    const CHUNK_SIZE = 50000; // Safe chunk size for shell arguments
-    let success = true;
-
-    if (encoded.length <= CHUNK_SIZE) {
-      // Small file - write directly
-      const writeProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${encoded}' | base64 -d > '${absPath}'`]);
-      const exitCode = await writeProc.exitCode;
-      // Note: exitCode can be undefined on success in some Modal SDK versions
-      // Treat undefined or 0 as success, anything else (positive number) as failure
-      if (exitCode && exitCode !== 0) {
-        const stderr = await writeProc.stderr.readText();
-        console.error(`[Modal] Write failed: exitCode=${exitCode}, stderr=${stderr}`);
-        success = false;
-      }
-    } else {
-      // Large file - write to temp file in chunks, then decode
-      for (let i = 0; i < encoded.length; i += CHUNK_SIZE) {
-        const chunk = encoded.slice(i, i + CHUNK_SIZE);
-        const op = i === 0 ? '>' : '>>';
-        const chunkProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${chunk}' ${op} '${tempPath}'`]);
-        const chunkExit = await chunkProc.exitCode;
-        // Treat undefined or 0 as success
-        if (chunkExit && chunkExit !== 0) {
-          success = false;
-          break;
-        }
-      }
-
-      if (success) {
-        // Decode the temp file to the target path
-        const decodeProc = await sandbox["exec"](["bash", "-c", `base64 -d '${tempPath}' > '${absPath}' && rm -f '${tempPath}'`]);
-        const decodeExit = await decodeProc.exitCode;
-        // Treat undefined or 0 as success
-        if (decodeExit && decodeExit !== 0) {
-          const stderr = await decodeProc.stderr.readText();
-          console.error(`[Modal] Decode failed: ${stderr}`);
-          success = false;
-        }
-      }
+    if (exitCode !== undefined && exitCode !== 0) {
+      console.error(`[Modal] Write failed: exitCode=${exitCode}, stderr=${stderr}`);
+      return { success: false, error: stderr || `Exit code ${exitCode}` };
     }
 
-    if (!success) {
-      return { success: false, error: "Failed to write file content" };
-    }
-
-    // Verify the file was written with correct size
-    const verifyProc = await sandbox["exec"](["bash", "-c", `stat -c '%s' '${absPath}' 2>/dev/null || stat -f '%z' '${absPath}'`]);
-    const verifyOutput = await verifyProc.stdout.readText();
-    const actualSize = parseInt(verifyOutput.trim(), 10);
-    const expectedSize = content.length;
-
-    console.log(`[Modal] Write verification: file size ${actualSize} bytes (expected ~${expectedSize})`);
-
-    // Warn if size seems wrong (allow for encoding differences)
-    if (actualSize === 0 && expectedSize > 0) {
-      console.error(`[Modal] WARNING: File was written but appears empty!`);
-      return { success: false, error: "File was created but content is empty" };
-    }
-
-    console.log(`[Modal] Successfully wrote file ${filePath}`);
+    const elapsed = Date.now() - startTime;
+    console.log(`[Modal] Successfully wrote file ${filePath} (${content.length} bytes) in ${elapsed}ms`);
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
@@ -637,12 +636,8 @@ export async function writeFile(
 }
 
 /**
- * Write multiple files to the sandbox in batch
- * More efficient than sequential writeFile calls (reduces network round trips)
- *
- * Uses a tar archive approach for optimal performance:
- * 1. Creates base64-encoded tar content
- * 2. Extracts all files in a single exec call
+ * Write multiple files to the sandbox in batch using a single exec call
+ * Generates an inline shell script that creates all directories and writes all files
  */
 export async function writeFilesBatch(
   sessionId: string,
@@ -655,77 +650,55 @@ export async function writeFilesBatch(
     return { success: true, results: {} };
   }
 
-  // For small number of files, parallel writeFile is simpler and nearly as fast
-  if (fileCount <= 3) {
-    try {
-      const results: Record<string, string> = {};
-      const writePromises = Object.entries(files).map(async ([path, content]) => {
-        const result = await writeFile(sessionId, path, content);
-        results[path] = result.success
-          ? `Wrote ${content.length} bytes`
-          : result.error || "Failed";
-        return { path, success: result.success };
-      });
-
-      const writeResults = await Promise.all(writePromises);
-      const allSucceeded = writeResults.every(r => r.success);
-
-      return { success: allSucceeded, results };
-    } catch (error) {
-      return {
-        success: false,
-        results: {},
-        error: error instanceof Error ? error.message : "Unknown error",
-      };
-    }
-  }
-
-  // For larger batches, use tar archive approach (10-15x faster)
   try {
     const sandbox = await getOrCreateSandbox(sessionId);
+
+
     const results: Record<string, string> = {};
 
-    // Create a temporary directory for staging files
-    const tempDir = `/tmp/batch_${Date.now()}`;
-    await sandbox["exec"](["mkdir", "-p", tempDir]);
+    // Build a single shell script that writes all files
+    // Format: mkdir -p <dirs> && echo '<b64>' | base64 -d > <file> && echo '<b64>' | base64 -d > <file> ...
+    const commands: string[] = [];
+    const directories = new Set<string>();
 
-    // Write each file to the temp directory
     for (const [path, content] of Object.entries(files)) {
       const absPath = path.startsWith("/") ? path : `/workspace/${path}`;
-      const relativePath = absPath.replace(/^\/workspace\//, "");
-      const tempPath = `${tempDir}/${relativePath}`;
+      const parentDir = absPath.split("/").slice(0, -1).join("/");
 
-      // Create parent directories
-      const parentDir = tempPath.split("/").slice(0, -1).join("/");
-      await sandbox["exec"](["mkdir", "-p", parentDir]);
-
-      // Write file using base64
-      const encoded = Buffer.from(content).toString("base64");
-      const writeProc = await sandbox["exec"](["bash", "-c", `printf '%s' '${encoded}' | base64 -d > '${tempPath}'`]);
-      const exitCode = await writeProc.exitCode;
-
-      // Treat undefined or 0 as success
-      if (!exitCode || exitCode === 0) {
-        results[path] = `Wrote ${content.length} bytes`;
-      } else {
-        results[path] = "Failed to write";
+      // Collect unique directories
+      if (parentDir && parentDir !== "/workspace") {
+        directories.add(parentDir);
       }
+
+      // Add write command
+      const base64Content = Buffer.from(content, "utf-8").toString("base64");
+      commands.push(`echo '${base64Content}' | base64 -d > ${absPath}`);
+      results[path] = `Wrote ${content.length} bytes`;
     }
 
-    // Copy all files from temp to workspace in one operation
-    const copyProc = await sandbox["exec"](["bash", "-c", `cp -r ${tempDir}/* /workspace/ 2>/dev/null || true`]);
-    await copyProc.exitCode;
+    // Build the full shell command
+    let shellCmd = "";
+    if (directories.size > 0) {
+      shellCmd = `mkdir -p ${Array.from(directories).join(" ")} && `;
+    }
+    shellCmd += commands.join(" && ");
 
-    // Cleanup temp directory
-    await sandbox["exec"](["rm", "-rf", tempDir]);
+    // Execute single command
+    const proc = await sandbox["exec"](["sh", "-c", shellCmd]);
+    const exitCode = await proc.exitCode;
+    const stderr = await proc.stderr.readText();
 
-    const successCount = Object.values(results).filter(r => r.startsWith("Wrote")).length;
-    console.log(`[Modal] Batch write complete: ${successCount}/${fileCount} files succeeded`);
+    if (exitCode !== undefined && exitCode !== 0) {
+      console.error(`[Modal] Batch write failed: exitCode=${exitCode}, stderr=${stderr}`);
+      // Mark all as failed
+      for (const path of Object.keys(files)) {
+        results[path] = stderr || "Failed";
+      }
+      return { success: false, results, error: stderr };
+    }
 
-    return {
-      success: successCount === fileCount,
-      results,
-    };
+    console.log(`[Modal] Batch write complete: ${fileCount}/${fileCount} files succeeded`);
+    return { success: true, results };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
     console.error(`[Modal] Batch write failed:`, errorMsg);
@@ -743,6 +716,8 @@ export async function readFile(
   try {
     console.log(`[Modal] Reading file ${filePath} for session ${sessionId}`);
     const sandbox = await getOrCreateSandbox(sessionId);
+
+
     const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
 
     // Add timeout to prevent hanging on stale sandboxes
@@ -786,8 +761,8 @@ export async function listFiles(
   sessionId: string,
   directory = "/workspace"
 ): Promise<FileNode[]> {
-  // Add timeout to prevent hanging
-  const LIST_TIMEOUT_MS = 15000;
+  // Timeout includes potential sandbox creation time (~10s) + volume mount (~2s) + ls command (~1s)
+  const LIST_TIMEOUT_MS = 30000;
 
   const timeoutPromise = new Promise<FileNode[]>((_, reject) => {
     setTimeout(() => reject(new Error(`listFiles timed out after ${LIST_TIMEOUT_MS}ms`)), LIST_TIMEOUT_MS);
@@ -820,6 +795,7 @@ async function listFilesInternal(
   try {
     console.log(`[Modal] Listing files in ${normalizedDir} for session ${sessionId}`);
     const sandbox = await getOrCreateSandbox(sessionId);
+
 
     // Use ls -la with trailing slash to force following the symlink
     // Modal mounts volumes as symlinks (e.g., /workspace -> /__modal/volumes/...)
@@ -927,8 +903,8 @@ function isWithinWorkspace(path: string): boolean {
 }
 
 /**
- * Get file system tree recursively
- * Builds a nested tree structure with children for directories
+ * Get file system tree using a single find command
+ * OPTIMIZED: Uses one exec call instead of recursive calls per directory
  *
  * SECURITY: Only traverses within /workspace directory
  * - Blocks paths outside /workspace
@@ -945,67 +921,91 @@ export async function getFileSystem(
     return [];
   }
 
-  // Track total file count across recursion
-  const fileCount = { value: 0 };
+  try {
+    const sandbox = await getOrCreateSandbox(sessionId);
 
-  return getFileSystemRecursive(sessionId, rootPath, 0, fileCount);
+    // Single find command to get entire tree
+    // -L follows symlinks, -maxdepth limits depth, -printf gives us type/size/path
+    const findCmd = `find -L ${rootPath} -maxdepth ${MAX_DEPTH} \\( -type f -o -type d \\) -printf '%y %s %p\\n' 2>/dev/null | head -${MAX_FILES}`;
+    const proc = await sandbox["exec"](["sh", "-c", findCmd]);
+    const stdout = await proc.stdout.readText();
+
+    if (!stdout.trim()) {
+      return [];
+    }
+
+    // Parse find output and build tree
+    const lines = stdout.trim().split('\n');
+    const allFiles: Array<{ type: 'file' | 'directory'; size: number; path: string }> = [];
+
+    for (const line of lines) {
+      // Format: "d 4096 /workspace/src" or "f 1234 /workspace/file.ts"
+      const match = line.match(/^([df])\s+(\d+)\s+(.+)$/);
+      if (match) {
+        const [, typeChar, sizeStr, path] = match;
+        // Skip the root path itself and validate within workspace
+        if (path !== rootPath && isWithinWorkspace(path)) {
+          allFiles.push({
+            type: typeChar === 'd' ? 'directory' : 'file',
+            size: parseInt(sizeStr) || 0,
+            path,
+          });
+        }
+      }
+    }
+
+    // Build nested tree structure from flat list
+    return buildFileTree(allFiles, rootPath);
+  } catch (error) {
+    console.error(`[Modal] Failed to get file system:`, error);
+    return [];
+  }
 }
 
-async function getFileSystemRecursive(
-  sessionId: string,
-  currentPath: string,
-  currentDepth: number,
-  fileCount: { value: number }
-): Promise<FileNode[]> {
-  // Safety check 1: Depth limit
-  if (currentDepth >= MAX_DEPTH) {
-    console.log(`[Modal] Reached max depth ${MAX_DEPTH} at ${currentPath}, stopping recursion`);
-    return [];
-  }
+/**
+ * Build nested tree structure from flat file list
+ */
+function buildFileTree(
+  files: Array<{ type: 'file' | 'directory'; size: number; path: string }>,
+  rootPath: string
+): FileNode[] {
+  // Create a map of path -> node for quick lookup
+  const nodeMap = new Map<string, FileNode>();
 
-  // Safety check 2: File count limit
-  if (fileCount.value >= MAX_FILES) {
-    console.log(`[Modal] Reached max file count ${MAX_FILES}, stopping recursion`);
-    return [];
-  }
+  // Sort by path length to process parents before children
+  files.sort((a, b) => a.path.length - b.path.length);
 
-  // Safety check 3: Path must be within workspace (catches symlink escapes)
-  if (!isWithinWorkspace(currentPath)) {
-    console.warn(`[Modal] BLOCKED: Path escaped workspace: ${currentPath}`);
-    return [];
-  }
+  for (const file of files) {
+    const name = file.path.split('/').pop() || '';
+    const node: FileNode = {
+      name,
+      path: file.path,
+      type: file.type,
+      size: file.size,
+    };
 
-  const files = await listFiles(sessionId, currentPath);
-
-  // Filter out any files whose resolved paths escape workspace
-  const safeFiles = files.filter(file => {
-    if (!isWithinWorkspace(file.path)) {
-      console.warn(`[Modal] BLOCKED: File path escaped workspace: ${file.path}`);
-      return false;
+    if (file.type === 'directory') {
+      node.children = [];
     }
-    return true;
-  });
 
-  // Update file count
-  fileCount.value += safeFiles.length;
+    nodeMap.set(file.path, node);
 
-  // Recursively get children for directories
-  const filesWithChildren = await Promise.all(
-    safeFiles.map(async (file) => {
-      if (file.type === "directory" && fileCount.value < MAX_FILES) {
-        const children = await getFileSystemRecursive(
-          sessionId,
-          file.path,
-          currentDepth + 1,
-          fileCount
-        );
-        return { ...file, children };
-      }
-      return file;
+    // Find parent and add as child
+    const parentPath = file.path.split('/').slice(0, -1).join('/');
+    const parent = nodeMap.get(parentPath);
+    if (parent && parent.children) {
+      parent.children.push(node);
+    }
+  }
+
+  // Return only top-level items (direct children of rootPath)
+  return files
+    .filter(f => {
+      const parentPath = f.path.split('/').slice(0, -1).join('/');
+      return parentPath === rootPath;
     })
-  );
-
-  return filesWithChildren;
+    .map(f => nodeMap.get(f.path)!)
+    .filter(Boolean);
 }
 
 /**
@@ -1247,6 +1247,7 @@ export const modalService = {
   writeFilesBatch,
   readFile,
   deleteFile,
+  createDirectory,
   listFiles,
   getFileSystem,
   terminateSandbox,
@@ -1257,6 +1258,9 @@ export const modalService = {
   createVolume,
   listVolumes,
   listActiveSandboxes,
+  // Testing utilities
+  clearSandboxCache,
+  isSandboxCached,
 };
 
 export async function closeConnection(): Promise<void> {
