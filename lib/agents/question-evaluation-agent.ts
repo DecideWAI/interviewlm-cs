@@ -543,7 +543,7 @@ export class QuestionEvaluationAgent {
             type: 'tool_result' as const,
             tool_use_id: tool.id,
             content: JSON.stringify(result),
-            ...(isError && { is_error: true }),
+            ...(isError ? { is_error: true } : {}),
           };
         });
       })

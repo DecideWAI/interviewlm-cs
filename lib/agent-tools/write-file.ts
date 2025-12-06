@@ -62,7 +62,7 @@ export async function executeWriteFile(
     return {
       success: false,
       path: filePath,
-      error: "Missing required parameter: content",
+      error: "Missing required parameter: file_content. You MUST provide the complete file content.",
     };
   }
 

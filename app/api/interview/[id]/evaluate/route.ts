@@ -6,7 +6,7 @@ import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError }
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { strictRateLimit } from "@/lib/middleware/rate-limit";
-import { createQuestionEvaluationAgent } from "@/lib/agents/question-evaluation-agent";
+import { createQuestionEvaluationAgent, EvaluationResult as AgentEvaluationResult } from "@/lib/agents/question-evaluation-agent";
 
 // LangGraph API configuration (for separate testing)
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:8080";
@@ -127,20 +127,7 @@ async function evaluateWithTypeScriptAgent(params: {
   language: string;
   fileName?: string;
   passingThreshold: number;
-}): Promise<{
-  overallScore: number;
-  passed: boolean;
-  criteria: {
-    problemCompletion: { score: number; maxScore: number; feedback: string };
-    codeQuality: { score: number; maxScore: number; feedback: string };
-    bestPractices: { score: number; maxScore: number; feedback: string };
-    errorHandling: { score: number; maxScore: number; feedback: string };
-    efficiency: { score: number; maxScore: number; feedback: string };
-  };
-  feedback: string;
-  strengths: string[];
-  improvements: string[];
-}> {
+}): Promise<AgentEvaluationResult> {
   const agent = createQuestionEvaluationAgent({
     sessionId: params.sessionId,
     candidateId: params.candidateId,
@@ -272,13 +259,7 @@ export const POST = withErrorHandling(async (
   let aiResult: {
     overallScore: number;
     passed: boolean;
-    criteria: {
-      problemCompletion: { score: number; feedback: string };
-      codeQuality: { score: number; feedback: string };
-      bestPractices: { score: number; feedback: string };
-      errorHandling: { score: number; feedback: string };
-      efficiency: { score: number; feedback: string };
-    };
+    criteria: Record<string, { score: number; maxScore?: number; feedback: string }>;
     feedback: string;
     strengths: string[];
     improvements: string[];
@@ -359,31 +340,12 @@ export const POST = withErrorHandling(async (
         passingThreshold,
       });
 
+      // Use agent result directly - criteria structure matches assessment type
+      // Cast to generic Record since criteria keys vary by assessment type
       aiResult = {
         overallScore: tsAgentResult.overallScore,
         passed: tsAgentResult.passed,
-        criteria: {
-          problemCompletion: {
-            score: tsAgentResult.criteria.problemCompletion.score,
-            feedback: tsAgentResult.criteria.problemCompletion.feedback,
-          },
-          codeQuality: {
-            score: tsAgentResult.criteria.codeQuality.score,
-            feedback: tsAgentResult.criteria.codeQuality.feedback,
-          },
-          bestPractices: {
-            score: tsAgentResult.criteria.bestPractices.score,
-            feedback: tsAgentResult.criteria.bestPractices.feedback,
-          },
-          errorHandling: {
-            score: tsAgentResult.criteria.errorHandling.score,
-            feedback: tsAgentResult.criteria.errorHandling.feedback,
-          },
-          efficiency: {
-            score: tsAgentResult.criteria.efficiency.score,
-            feedback: tsAgentResult.criteria.efficiency.feedback,
-          },
-        },
+        criteria: tsAgentResult.criteria as unknown as Record<string, { score: number; maxScore?: number; feedback: string }>,
         feedback: tsAgentResult.feedback,
         strengths: tsAgentResult.strengths,
         improvements: tsAgentResult.improvements,
@@ -407,31 +369,12 @@ export const POST = withErrorHandling(async (
       passingThreshold,
     });
 
+    // Use agent result directly - criteria structure matches assessment type
+    // Cast to generic Record since criteria keys vary by assessment type
     aiResult = {
       overallScore: tsAgentResult.overallScore,
       passed: tsAgentResult.passed,
-      criteria: {
-        problemCompletion: {
-          score: tsAgentResult.criteria.problemCompletion.score,
-          feedback: tsAgentResult.criteria.problemCompletion.feedback,
-        },
-        codeQuality: {
-          score: tsAgentResult.criteria.codeQuality.score,
-          feedback: tsAgentResult.criteria.codeQuality.feedback,
-        },
-        bestPractices: {
-          score: tsAgentResult.criteria.bestPractices.score,
-          feedback: tsAgentResult.criteria.bestPractices.feedback,
-        },
-        errorHandling: {
-          score: tsAgentResult.criteria.errorHandling.score,
-          feedback: tsAgentResult.criteria.errorHandling.feedback,
-        },
-        efficiency: {
-          score: tsAgentResult.criteria.efficiency.score,
-          feedback: tsAgentResult.criteria.efficiency.feedback,
-        },
-      },
+      criteria: tsAgentResult.criteria as unknown as Record<string, { score: number; maxScore?: number; feedback: string }>,
       feedback: tsAgentResult.feedback,
       strengths: tsAgentResult.strengths,
       improvements: tsAgentResult.improvements,

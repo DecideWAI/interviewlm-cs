@@ -147,6 +147,11 @@ export function EvaluationPanel({
     );
   }
 
+  // Guard: evaluationResult should not be null at this point
+  if (!evaluationResult) {
+    return null;
+  }
+
   // Results state
   return (
     <div className={cn("h-full flex flex-col overflow-hidden", className)}>

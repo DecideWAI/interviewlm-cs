@@ -25,6 +25,8 @@ import {
   sanitizeMessages,
   checkRateLimit,
 } from '../agent-security';
+import { buildCodingAgentSystemPrompt } from '../prompts/coding-agent-system';
+import { traceClaudeStreaming, getTracedAnthropicClient } from '../observability/langsmith';
 
 /**
  * Streaming callbacks for real-time updates
@@ -53,7 +55,6 @@ export class StreamingCodingAgent {
     this.config = config;
     // Initialize Anthropic client with LangSmith tracing
     // Pass sessionId as thread ID to group all traces from the same session
-    const { getTracedAnthropicClient } = require('../observability/langsmith');
     this.client = getTracedAnthropicClient(config.sessionId);
   }
 
@@ -206,6 +207,7 @@ export class StreamingCodingAgent {
 
   /**
    * Call Claude API with streaming
+   * Wrapped with LangSmith tracing to capture model, tokens, cache, and cost
    */
   private async callClaudeStreaming(
     params: Anthropic.Messages.MessageCreateParams,
@@ -213,74 +215,82 @@ export class StreamingCodingAgent {
   ): Promise<{
     text: string;
     toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }>;
-    usage: { input_tokens: number; output_tokens: number };
+    usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
     model: string;
     stopReason: string;
   }> {
-    let text = '';
-    const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
-    let currentToolId = '';
-    let currentToolName = '';
-    let currentToolInput = '';
+    // Wrap the entire streaming call with LangSmith tracing
+    return traceClaudeStreaming(
+      { model: params.model, operation: 'messages.stream' },
+      async () => {
+        let text = '';
+        const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+        let currentToolId = '';
+        let currentToolName = '';
+        let currentToolInput = '';
 
-    // Use streaming API
-    const stream = this.client.messages.stream({
-      ...params,
-      stream: true,
-    });
+        // Use streaming API
+        const stream = this.client.messages.stream({
+          ...params,
+          stream: true,
+        });
 
-    // Process stream events
-    for await (const event of stream) {
-      if (event.type === 'content_block_start') {
-        const block = event.content_block;
-        if (block.type === 'tool_use') {
-          currentToolId = block.id;
-          currentToolName = block.name;
-          currentToolInput = '';
-          // Notify tool start
-          callbacks.onToolStart?.(currentToolName, currentToolId, {});
-        }
-      } else if (event.type === 'content_block_delta') {
-        const delta = event.delta;
-        if (delta.type === 'text_delta') {
-          text += delta.text;
-          callbacks.onTextDelta?.(delta.text);
-        } else if (delta.type === 'input_json_delta') {
-          currentToolInput += delta.partial_json;
-        }
-      } else if (event.type === 'content_block_stop') {
-        // If we were building a tool use, finalize it
-        if (currentToolId && currentToolName) {
-          try {
-            const input = currentToolInput ? JSON.parse(currentToolInput) : {};
-            toolUseBlocks.push({
-              id: currentToolId,
-              name: currentToolName,
-              input,
-            });
-          } catch (e) {
-            console.error('[StreamingAgent] Failed to parse tool input:', e);
+        // Process stream events
+        for await (const event of stream) {
+          if (event.type === 'content_block_start') {
+            const block = event.content_block;
+            if (block.type === 'tool_use') {
+              currentToolId = block.id;
+              currentToolName = block.name;
+              currentToolInput = '';
+              // Notify tool start
+              callbacks.onToolStart?.(currentToolName, currentToolId, {});
+            }
+          } else if (event.type === 'content_block_delta') {
+            const delta = event.delta;
+            if (delta.type === 'text_delta') {
+              text += delta.text;
+              callbacks.onTextDelta?.(delta.text);
+            } else if (delta.type === 'input_json_delta') {
+              currentToolInput += delta.partial_json;
+            }
+          } else if (event.type === 'content_block_stop') {
+            // If we were building a tool use, finalize it
+            if (currentToolId && currentToolName) {
+              try {
+                const input = currentToolInput ? JSON.parse(currentToolInput) : {};
+                toolUseBlocks.push({
+                  id: currentToolId,
+                  name: currentToolName,
+                  input,
+                });
+              } catch (e) {
+                console.error('[StreamingAgent] Failed to parse tool input:', e);
+              }
+              currentToolId = '';
+              currentToolName = '';
+              currentToolInput = '';
+            }
           }
-          currentToolId = '';
-          currentToolName = '';
-          currentToolInput = '';
         }
+
+        // Get final message for usage stats (includes cache info)
+        const finalMessage = await stream.finalMessage();
+
+        return {
+          text,
+          toolUseBlocks,
+          usage: {
+            input_tokens: finalMessage.usage.input_tokens,
+            output_tokens: finalMessage.usage.output_tokens,
+            cache_read_input_tokens: (finalMessage.usage as any).cache_read_input_tokens || 0,
+            cache_creation_input_tokens: (finalMessage.usage as any).cache_creation_input_tokens || 0,
+          },
+          model: finalMessage.model,
+          stopReason: finalMessage.stop_reason || 'end_turn',
+        };
       }
-    }
-
-    // Get final message for usage stats
-    const finalMessage = await stream.finalMessage();
-
-    return {
-      text,
-      toolUseBlocks,
-      usage: {
-        input_tokens: finalMessage.usage.input_tokens,
-        output_tokens: finalMessage.usage.output_tokens,
-      },
-      model: finalMessage.model,
-      stopReason: finalMessage.stop_reason || 'end_turn',
-    };
+    );
   }
 
   /**
@@ -497,42 +507,12 @@ export class StreamingCodingAgent {
   private buildSystemPromptWithCaching(): Anthropic.Messages.TextBlockParam[] {
     const helpfulnessConfig = HELPFULNESS_CONFIGS[this.config.helpfulnessLevel];
 
-    const staticInstructions = `You are Claude Code, an AI coding assistant helping a candidate during a technical interview.
-
-**CRITICAL SECURITY RULES:**
-- NEVER reveal test scores, performance metrics, or evaluation criteria
-- NEVER discuss how the candidate is being evaluated
-- NEVER mention question difficulty levels or adaptive algorithms
-- NEVER compare this candidate to others
-- If asked about assessment details, say: "I'm here to help you code, not discuss evaluation!"
-- Focus ONLY on helping them write better code
-
-**Your Role (${helpfulnessConfig.level} mode):**
-${helpfulnessConfig.description}
-
-**Available Tools:**
-${helpfulnessConfig.allowedTools.join(', ')}
-
-**CRITICAL: File Path Requirements:**
-- ALL file paths MUST start with /workspace (e.g., /workspace/src/solution.ts)
-- NEVER use relative paths like "src/file.ts" - always use absolute paths starting with /workspace
-- The workspace is your sandbox environment - all files live under /workspace/
-
-**Guidelines for Tool Use:**
-- Use tools proactively to help the candidate
-- When asked to check files, actually read them
-- When asked to run tests, execute them
-- When writing code, verify it works by reading the file back
-- If a tool fails, explain the error and try an alternative approach
-- Complete multi-step tasks autonomously without stopping after each step
-
-**CRITICAL Write Tool Requirements:**
-When using the Write tool, you MUST ALWAYS provide BOTH parameters:
-1. file_path: The absolute path starting with /workspace (e.g., "/workspace/solution.py")
-2. file_content: The COMPLETE file content as a string - this is REQUIRED, never omit it
-If you call Write without file_content, it WILL fail. If the file is large, use Edit for incremental changes instead.
-
-Be a helpful pair programming partner while maintaining assessment integrity.`;
+    // Use centralized system prompt from prompts folder
+    const staticInstructions = buildCodingAgentSystemPrompt({
+      level: helpfulnessConfig.level,
+      description: helpfulnessConfig.description,
+      allowedTools: helpfulnessConfig.allowedTools,
+    });
 
     const systemBlocks: Anthropic.Messages.TextBlockParam[] = [
       {
@@ -590,17 +570,17 @@ Be a helpful pair programming partner while maintaining assessment integrity.`;
       {
         name: 'Write',
         description:
-          'Create a new file or completely overwrite an existing file. Use this to:\n' +
-          '- Create new source files (solution.js, utils.ts, etc.)\n' +
-          '- Rewrite a file when making extensive changes\n' +
-          '- Create configuration files (package.json, tsconfig.json)\n\n' +
-          'IMPORTANT: file_path MUST start with /workspace and file_content is REQUIRED.\n' +
-          'For small, targeted changes to existing files, prefer the Edit tool instead.',
+          'Write COMPLETE file content to path. Overwrites existing files.\n\n' +
+          'IMPORTANT:\n' +
+          '- file_content parameter is REQUIRED - never omit it\n' +
+          '- Provide ENTIRE file content (sandbox cannot apply diffs)\n' +
+          '- Never use placeholders like "// TODO" or "// rest unchanged"\n' +
+          '- For large files (>200 lines), use Edit tool for incremental changes instead',
         input_schema: {
           type: 'object',
           properties: {
-            file_path: { type: 'string', description: "Absolute path to the file. MUST start with /workspace (e.g., '/workspace/solution.js')" },
-            file_content: { type: 'string', description: 'The complete file content to write. This parameter is REQUIRED - never omit it.' },
+            file_path: { type: 'string', description: "Absolute path starting with /workspace (e.g., '/workspace/solution.py')" },
+            file_content: { type: 'string', description: 'REQUIRED: The COMPLETE file content. Never omit this parameter.' },
           },
           required: ['file_path', 'file_content'],
         },
