@@ -13,6 +13,183 @@ import { acquireLock } from "@/lib/utils/redis-lock";
 // Sandbox session cache (in-memory for performance, but we also persist to DB)
 const sandboxes = new Map<string, { sandbox: any; sandboxId: string; createdAt: Date }>();
 
+// ============================================================================
+// SHELL SESSION MANAGEMENT (for PTY-based terminal access)
+// ============================================================================
+
+/**
+ * Shell session - maintains a persistent bash process with PTY for low-latency terminal
+ * Uses Modal's native PTY support via sandbox["exec"](['bash'], { pty: true })
+ */
+export interface ShellSession {
+  sessionId: string;
+  process: any;  // Modal sandbox process
+  stdin: any;    // ModalWriteStream - use writeText() to send input
+  stdout: any;   // ModalReadStream - use streaming reads for output
+  stderr: any;   // ModalReadStream
+  stdinWriter: WritableStreamDefaultWriter<Uint8Array> | null;  // Acquired writer for stdin
+  createdAt: Date;
+  lastActivity: Date;
+  writeQueue: Promise<void>;  // Queue for serializing writes to stdin
+}
+
+// Active shell sessions (one per interview session)
+const shellSessions = new Map<string, ShellSession>();
+
+/**
+ * Create or get an interactive shell session for a sandbox
+ * Uses Modal's pty: true option for proper terminal emulation
+ *
+ * @returns ShellSession with stdin/stdout streams for I/O
+ */
+export async function createShellSession(sessionId: string): Promise<ShellSession> {
+  // Check for existing session
+  const existing = shellSessions.get(sessionId);
+  if (existing) {
+    existing.lastActivity = new Date();
+    console.log(`[Modal] Reusing existing shell session for ${sessionId}`);
+    return existing;
+  }
+
+  console.log(`[Modal] Creating new shell session for ${sessionId}`);
+
+  // Get or create the sandbox first
+  const sandbox = await getOrCreateSandbox(sessionId);
+
+  // Start bash with PTY enabled
+  // Modal's pty: true option allocates a real PTY (/dev/pts/0)
+  // NOTE: Using sandbox["exec"] to call Modal SDK method, NOT child_process
+  const proc = await sandbox["exec"](['bash', '-i'], {
+    pty: true,
+    workdir: '/workspace',
+  });
+
+  // Acquire a writer for stdin upfront to avoid lock conflicts
+  let stdinWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  try {
+    // Check if stdin is a WritableStream and get a writer
+    if (proc.stdin && typeof proc.stdin.getWriter === 'function') {
+      stdinWriter = proc.stdin.getWriter();
+      console.log(`[Modal] Acquired stdin writer for ${sessionId}`);
+    }
+  } catch (err) {
+    console.log(`[Modal] Could not acquire stdin writer, will use writeText():`, err);
+  }
+
+  const session: ShellSession = {
+    sessionId,
+    process: proc,
+    stdin: proc.stdin,
+    stdout: proc.stdout,
+    stderr: proc.stderr,
+    stdinWriter,
+    createdAt: new Date(),
+    lastActivity: new Date(),
+    writeQueue: Promise.resolve(),  // Initialize empty queue
+  };
+
+  shellSessions.set(sessionId, session);
+  console.log(`[Modal] Shell session created for ${sessionId}`);
+
+  // Set a cleaner prompt - hide the long Modal volume path
+  // PS1 format: green "workspace" + cyan short path + reset "$"
+  const initCommands = [
+    // Set a cleaner prompt: just shows current directory name
+    `export PS1='\\[\\e[32m\\]workspace\\[\\e[0m\\]:\\[\\e[36m\\]\\W\\[\\e[0m\\]\\$ '`,
+    // Clear the screen to hide the initial long path prompt
+    'clear',
+  ].join(' && ');
+
+  // Send init commands after a brief delay to let shell start
+  setTimeout(async () => {
+    try {
+      await writeToShell(sessionId, initCommands + '\n');
+    } catch (err) {
+      console.log(`[Modal] Failed to send init commands:`, err);
+    }
+  }, 100);
+
+  return session;
+}
+
+/**
+ * Write input to a shell session
+ * Uses a pre-acquired writer to avoid WritableStream lock conflicts
+ * @param sessionId - The session ID
+ * @param data - The data to write (keystrokes, commands)
+ */
+export async function writeToShell(sessionId: string, data: string): Promise<void> {
+  const session = shellSessions.get(sessionId);
+  if (!session) {
+    throw new Error(`No shell session found for ${sessionId}`);
+  }
+
+  session.lastActivity = new Date();
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(data);
+
+  // Queue writes to serialize them
+  const writePromise = session.writeQueue.then(async () => {
+    try {
+      if (session.stdinWriter) {
+        // Use pre-acquired writer for better performance
+        await session.stdinWriter.write(bytes);
+      } else {
+        // Fallback to writeText() if no writer available
+        await session.stdin.writeText(data);
+      }
+    } catch (err) {
+      // Log but don't throw - the stream might be closed
+      console.error(`[Modal] Write error for ${sessionId}:`, err);
+    }
+  });
+
+  session.writeQueue = writePromise;
+  await writePromise;
+}
+
+/**
+ * Get the shell session for reading output
+ * The caller can use stdout.readText() or implement streaming reads
+ */
+export function getShellSession(sessionId: string): ShellSession | null {
+  return shellSessions.get(sessionId) || null;
+}
+
+/**
+ * Close a shell session
+ */
+export async function closeShellSession(sessionId: string): Promise<void> {
+  const session = shellSessions.get(sessionId);
+  if (session) {
+    try {
+      // Release the writer first if we have one
+      if (session.stdinWriter) {
+        try {
+          // Send exit command
+          const encoder = new TextEncoder();
+          await session.stdinWriter.write(encoder.encode('exit\n'));
+          session.stdinWriter.releaseLock();
+        } catch {
+          // Ignore errors
+        }
+      }
+      await session.stdin.close();
+    } catch {
+      // Ignore errors on close
+    }
+    shellSessions.delete(sessionId);
+    console.log(`[Modal] Shell session closed for ${sessionId}`);
+  }
+}
+
+/**
+ * Check if a shell session exists and is active
+ */
+export function hasShellSession(sessionId: string): boolean {
+  return shellSessions.has(sessionId);
+}
+
 /**
  * Clear sandbox from in-memory cache (for testing)
  * Does NOT terminate the sandbox - just removes from cache to simulate server restart
@@ -224,13 +401,19 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
   }
 
   // Start ttyd for WebSocket terminal access via tunnel
+  // IMPORTANT: ttyd needs a proper shell with TTY allocation
+  // Use 'bash -il' for interactive login shell to ensure proper initialization
+  // Use setsid to create a new session (prevents orphaning issues)
   console.log(`[Modal] Starting ttyd for WebSocket terminal...`);
   try {
     if (isUniversalImage) {
       // Universal image has ttyd pre-installed - just start it
+      // -W enables write mode (required for input)
+      // -p 7681 specifies the port
+      // bash starts a shell (simpler than bash -il which can have init issues)
       const ttydStart = await runSandboxCommand(sandbox, [
         "sh", "-c",
-        "cd /workspace && nohup ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 & sleep 1 && ps aux | grep ttyd | grep -v grep"
+        `cd /workspace && setsid ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 & sleep 2 && ps aux | grep ttyd | grep -v grep`
       ]);
       const startOutput = await ttydStart.stdout.readText();
       console.log(`[Modal] ttyd start: running=${startOutput.trim() ? 'yes' : 'no'}`);
@@ -262,7 +445,7 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
 
       const ttydStart = await runSandboxCommand(sandbox, [
         "sh", "-c",
-        "cd /workspace && nohup /usr/local/bin/ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 & sleep 1 && ps aux | grep ttyd | grep -v grep"
+        `cd /workspace && setsid /usr/local/bin/ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 & sleep 2 && ps aux | grep ttyd | grep -v grep`
       ]);
       const startOutput = await ttydStart.stdout.readText();
       console.log(`[Modal] ttyd start: running=${startOutput.trim() ? 'yes' : 'no'}`);
@@ -277,11 +460,57 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
   return { sandbox, sandboxId, volumeName };
 }
 
-// NOTE: We intentionally do NOT reconnect to existing sandboxes via Modal's fromId API.
-// Modal's fromId is unreliable for cold sandboxes - often times out after 5-10s even for
-// sandboxes just 30-60s old. Since volumes persist files, it's faster and more reliable
-// to just create a new sandbox with the same volume (~5-8s) rather than risk a timeout
-// (5s+) followed by sandbox creation anyway.
+// Timeout for fromId reconnection
+// Based on testing: fromId can take 2-4 seconds for alive sandboxes
+// Logs show successful reconnects at 2835ms, so 3s was too aggressive
+// Use 10s timeout to reliably reconnect to alive sandboxes
+const RECONNECT_TIMEOUT_MS = 10000;
+
+/**
+ * Try to reconnect to an existing sandbox by ID using fromId
+ * fromId typically takes 2-4s for alive sandboxes based on testing
+ * Timeout indicates sandbox is dead or Modal is having issues
+ *
+ * IMPORTANT: After fromId succeeds, we verify the sandbox is alive by calling tunnels()
+ * This catches cases where fromId returns a handle to a terminated sandbox
+ */
+async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
+  try {
+    const modal = getModalClient();
+    console.log(`[Modal] Attempting fromId reconnect to ${sandboxId}...`);
+
+    const startTime = Date.now();
+    const sandbox = await Promise.race([
+      modal.sandboxes.fromId(sandboxId),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`fromId timed out after ${RECONNECT_TIMEOUT_MS}ms`)), RECONNECT_TIMEOUT_MS)
+      )
+    ]);
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[Modal] fromId completed in ${elapsed}ms, verifying sandbox is alive...`);
+
+    // Verify the sandbox is actually alive by calling tunnels()
+    // This catches cases where fromId returns a reference to a terminated sandbox
+    try {
+      const tunnels = await sandbox.tunnels();
+      console.log(`[Modal] Sandbox verified alive, tunnels:`, Object.keys(tunnels));
+      return sandbox;
+    } catch (verifyError) {
+      const errorMsg = verifyError instanceof Error ? verifyError.message : String(verifyError);
+      if (errorMsg.includes('terminated') || errorMsg.includes('finished')) {
+        console.log(`[Modal] Sandbox ${sandboxId} is terminated, fromId returned stale reference`);
+        return null;
+      }
+      // Other errors (e.g., tunnels not configured) - sandbox is still alive
+      console.log(`[Modal] Sandbox alive but tunnel check failed: ${errorMsg}`);
+      return sandbox;
+    }
+  } catch (error) {
+    console.log(`[Modal] fromId reconnect failed:`, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
 
 /**
  * Create a sandbox for a session (public API)
@@ -391,15 +620,33 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
         storedLanguage = candidate?.sandboxLanguage || null;
 
         if (candidate?.volumeId) {
-          // OPTIMIZATION: Skip fromId reconnection entirely - it's unreliable and slow
-          // Modal's fromId can take 5-10s+ for cold sandboxes, often timing out
-          // even for sandboxes just 30-60s old. Since volumes persist files,
-          // we just create a new sandbox with the same volume - faster and more reliable.
           const sandboxAge = candidate.sandboxCreatedAt
             ? Date.now() - candidate.sandboxCreatedAt.getTime()
             : Infinity;
+          const isExpired = sandboxAge > SANDBOX_TIMEOUT_MS - 60000; // 59 min = expired
+
           console.log(`[Modal] Found sandbox ${candidate.volumeId} in DB (age: ${Math.round(sandboxAge / 1000)}s, language: ${storedLanguage})`);
-          console.log(`[Modal] Skipping fromId reconnect (unreliable) - creating new sandbox with same volume`);
+
+          if (isExpired) {
+            // Expired sandbox - don't try to reconnect (Modal terminates after 1 hour)
+            console.log(`[Modal] Sandbox expired (>59 min), skipping reconnect`);
+          } else {
+            // Try fromId reconnection - it's fast (<1s) for alive sandboxes
+            sandbox = await reconnectToSandbox(candidate.volumeId);
+            if (sandbox) {
+              // Success! Store in cache and return
+              sandboxes.set(sessionId, {
+                sandbox,
+                sandboxId: candidate.volumeId,
+                createdAt: candidate.sandboxCreatedAt || new Date()
+              });
+              console.log(`[Modal] Reconnected to sandbox ${candidate.volumeId}`);
+              resolveCreation(sandbox);
+              return;
+            }
+            console.log(`[Modal] Sandbox reconnect failed (sandbox may be dead), will create new`);
+          }
+
           // Clear stale sandbox ID - we'll create a new one
           await prisma.candidate.update({
             where: { id: sessionId },
@@ -456,6 +703,49 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
 }
 
 /**
+ * Ensure ttyd is running in the sandbox
+ * Checks if ttyd process is alive and restarts it if needed
+ */
+async function ensureTtydRunning(sandbox: any): Promise<boolean> {
+  try {
+    // Check if ttyd is running
+    const checkProc = await runSandboxCommand(sandbox, [
+      "sh", "-c",
+      "pgrep -x ttyd > /dev/null && echo 'running' || echo 'stopped'"
+    ]);
+    const status = (await checkProc.stdout.readText()).trim();
+
+    if (status === 'running') {
+      return true;
+    }
+
+    console.log(`[Modal] ttyd not running, restarting...`);
+
+    // Restart ttyd with proper session
+    // -W enables write mode, -p 7681 sets port, bash starts a shell
+    const restartProc = await runSandboxCommand(sandbox, [
+      "sh", "-c",
+      "cd /workspace && setsid ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 & sleep 2 && pgrep -x ttyd"
+    ]);
+    const pid = (await restartProc.stdout.readText()).trim();
+
+    if (pid) {
+      console.log(`[Modal] ttyd restarted with PID ${pid}`);
+      return true;
+    } else {
+      // Check log for errors
+      const logProc = await runSandboxCommand(sandbox, ["tail", "-20", "/tmp/ttyd.log"]);
+      const logContent = await logProc.stdout.readText();
+      console.warn(`[Modal] Failed to restart ttyd. Log: ${logContent}`);
+      return false;
+    }
+  } catch (error) {
+    console.error(`[Modal] Error ensuring ttyd is running:`, error);
+    return false;
+  }
+}
+
+/**
  * Get the tunnel URL for WebSocket terminal access
  * Returns the WSS URL for direct terminal connection via ttyd
  * Returns null if tunnel is not available or sandbox doesn't exist
@@ -469,6 +759,13 @@ export async function getTunnelUrl(sessionId: string): Promise<string | null> {
 
     if (!sandbox) {
       console.warn(`[Modal] No sandbox available for session ${sessionId}`);
+      return null;
+    }
+
+    // Ensure ttyd is running before returning tunnel URL
+    const ttydRunning = await ensureTtydRunning(sandbox);
+    if (!ttydRunning) {
+      console.warn(`[Modal] ttyd is not running and could not be restarted for session ${sessionId}`);
       return null;
     }
 
@@ -1259,6 +1556,12 @@ export const modalService = {
   createVolume,
   listVolumes,
   listActiveSandboxes,
+  // Shell session management (PTY-based terminal)
+  createShellSession,
+  writeToShell,
+  getShellSession,
+  closeShellSession,
+  hasShellSession,
   // Testing utilities
   clearSandboxCache,
   isSandboxCached,

@@ -278,14 +278,12 @@ export async function recordCodeSnapshot(
       .update(snapshot.content)
       .digest("hex");
 
-    // Calculate diff if previous content exists
-    let diffFromPrevious = null;
+    // Calculate line change metrics (but don't store full diff - content is in Modal volume)
     let linesAdded = 0;
     let linesDeleted = 0;
 
     if (previousContent) {
       const changes = diff.diffLines(previousContent, snapshot.content);
-      diffFromPrevious = changes;
 
       // Count added/deleted lines
       changes.forEach((change) => {
@@ -304,8 +302,7 @@ export async function recordCodeSnapshot(
         fileName: snapshot.fileName,
         language: snapshot.language,
         contentHash,
-        fullContent: snapshot.content,
-        diffFromPrevious: diffFromPrevious as any,
+        // Note: fullContent and diffFromPrevious not stored - content available in Modal volume
         linesAdded,
         linesDeleted,
         timestamp: new Date(),
