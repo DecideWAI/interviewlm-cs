@@ -130,6 +130,8 @@ export default function InterviewPage() {
   const [code, setCode] = useState("");
   const [isFileLoading, setIsFileLoading] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [fileCache, setFileCache] = useState<Map<string, string>>(new Map());
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAIChatOpen, setIsAIChatOpen] = useState(true);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
@@ -255,6 +257,22 @@ export default function InterviewPage() {
   };
 
 
+  // Prefetch all file contents for instant navigation
+  const prefetchAllFiles = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/interview/${candidateId}/files?bulk=true`);
+      if (response.ok) {
+        const { contents } = await response.json();
+        if (contents && typeof contents === 'object') {
+          setFileCache(new Map(Object.entries(contents)));
+          console.log(`[FileCache] Pre-fetched ${Object.keys(contents).length} files`);
+        }
+      }
+    } catch (error) {
+      console.error('[FileCache] Failed to prefetch files:', error);
+    }
+  }, [candidateId]);
+
   // Initialize session on mount
   useEffect(() => {
     // Prevent duplicate initialization in React 18 strict mode
@@ -282,6 +300,9 @@ export default function InterviewPage() {
         const data: SessionData = responseJson.data || responseJson;
         setSessionData(data);
         setTimeRemaining(data.timeRemaining);
+
+        // Pre-fetch all file contents for instant navigation (non-blocking)
+        prefetchAllFiles();
 
         // Update total questions from API response
         if (data.totalQuestions) {
@@ -351,7 +372,7 @@ export default function InterviewPage() {
     };
 
     initializeSession();
-  }, [candidateId]);
+  }, [candidateId, prefetchAllFiles]);
 
   // Timer countdown
   useEffect(() => {
@@ -988,52 +1009,82 @@ export default function InterviewPage() {
         // Switch to existing tab, use cached content
         setCode(existingTab.content);
       } else {
-        // Create tab IMMEDIATELY with loading state, then load content async
-        const newTabId = `tab-${Date.now()}`;
-        const newTab: OpenTab = {
-          id: newTabId,
-          name: file.name,
-          path: file.path,
-          content: "", // Will be populated after fetch
-          language: getLanguageFromFileName(file.name),
-          isDirty: false,
-        };
+        // Check if file content is in the pre-fetched cache
+        const cachedContent = fileCache.get(file.path);
 
-        // Add tab immediately (with duplicate check)
-        setOpenTabs(prev => {
-          if (prev.some(tab => tab.path === file.path)) {
-            return prev;
+        if (cachedContent !== undefined) {
+          // Use cached content - instant navigation!
+          console.log(`[FileCache] Using cached content for ${file.name}`);
+          setCode(cachedContent);
+
+          // Create tab with cached content
+          const newTab: OpenTab = {
+            id: `tab-${Date.now()}`,
+            name: file.name,
+            path: file.path,
+            content: cachedContent,
+            language: getLanguageFromFileName(file.name),
+            isDirty: false,
+          };
+
+          setOpenTabs(prev => {
+            if (prev.some(tab => tab.path === file.path)) {
+              return prev;
+            }
+            return [...prev, newTab];
+          });
+        } else {
+          // Fallback: Create tab IMMEDIATELY with loading state, then load content async
+          console.log(`[FileCache] Cache miss for ${file.name}, fetching from server`);
+          const newTabId = `tab-${Date.now()}`;
+          const newTab: OpenTab = {
+            id: newTabId,
+            name: file.name,
+            path: file.path,
+            content: "", // Will be populated after fetch
+            language: getLanguageFromFileName(file.name),
+            isDirty: false,
+          };
+
+          // Add tab immediately (with duplicate check)
+          setOpenTabs(prev => {
+            if (prev.some(tab => tab.path === file.path)) {
+              return prev;
+            }
+            return [...prev, newTab];
+          });
+
+          // Set empty code and show loading state
+          setCode("");
+          setIsFileLoading(true);
+
+          // Load file content from Modal volume asynchronously
+          try {
+            const response = await fetch(
+              `/api/interview/${candidateId}/files?path=${encodeURIComponent(file.path)}`
+            );
+
+            if (response.ok) {
+              const responseJson = await response.json();
+              const data = responseJson.data || responseJson;
+              const fileContent = typeof data.content === 'string' ? data.content : '';
+
+              // Update code and tab content
+              setCode(fileContent);
+              setOpenTabs(prev => prev.map(tab =>
+                tab.path === file.path ? { ...tab, content: fileContent } : tab
+              ));
+
+              // Also update the cache for future access
+              setFileCache(prev => new Map(prev).set(file.path, fileContent));
+            } else {
+              console.error("Failed to load file content:", response.status);
+            }
+          } catch (err) {
+            console.error("Error loading file:", err);
+          } finally {
+            setIsFileLoading(false);
           }
-          return [...prev, newTab];
-        });
-
-        // Set empty code and show loading state
-        setCode("");
-        setIsFileLoading(true);
-
-        // Load file content from Modal volume asynchronously
-        try {
-          const response = await fetch(
-            `/api/interview/${candidateId}/files?path=${encodeURIComponent(file.path)}`
-          );
-
-          if (response.ok) {
-            const responseJson = await response.json();
-            const data = responseJson.data || responseJson;
-            const fileContent = typeof data.content === 'string' ? data.content : '';
-
-            // Update code and tab content
-            setCode(fileContent);
-            setOpenTabs(prev => prev.map(tab =>
-              tab.path === file.path ? { ...tab, content: fileContent } : tab
-            ));
-          } else {
-            console.error("Failed to load file content:", response.status);
-          }
-        } catch (err) {
-          console.error("Error loading file:", err);
-        } finally {
-          setIsFileLoading(false);
         }
       }
     }
@@ -1155,6 +1206,49 @@ export default function InterviewPage() {
         }
         return file;
       });
+  };
+
+  // Handle manual refresh of all files from server
+  const handleRefreshFiles = async () => {
+    setIsRefreshing(true);
+    try {
+      // Refresh file tree structure
+      await refreshFiles();
+
+      // Re-fetch all file contents
+      await prefetchAllFiles();
+
+      // If a file is currently selected, update its content from the new cache
+      if (selectedFile) {
+        // Need to wait for state update, so fetch directly
+        const response = await fetch(
+          `/api/interview/${candidateId}/files?path=${encodeURIComponent(selectedFile.path)}`
+        );
+        if (response.ok) {
+          const responseJson = await response.json();
+          const data = responseJson.data || responseJson;
+          const fileContent = typeof data.content === 'string' ? data.content : '';
+
+          // Only update if content is different
+          if (fileContent !== code) {
+            setCode(fileContent);
+            // Update tab content too
+            setOpenTabs(prev => prev.map(tab =>
+              tab.path === selectedFile.path ? { ...tab, content: fileContent } : tab
+            ));
+          }
+        }
+      }
+
+      toast.success("Files refreshed", {
+        duration: 2000,
+      });
+    } catch (error) {
+      console.error("Failed to refresh files:", error);
+      toast.error("Failed to refresh files");
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   // Handle file creation from FileTree (optimistic update)
@@ -1478,7 +1572,7 @@ export default function InterviewPage() {
               </div>
 
               {/* Tab Content */}
-              <div className="flex-1 overflow-hidden">
+              <div className="flex-1 overflow-hidden min-h-0">
                 {leftSidebarTab === "problem" ? (
                   <ProblemPanel
                     title={sessionData.question.title}
@@ -1494,7 +1588,9 @@ export default function InterviewPage() {
                     onFileSelect={handleFileSelect}
                     onFileCreate={handleFileCreate}
                     onFileDelete={handleFileDelete}
-                    className="flex-1"
+                    onRefresh={handleRefreshFiles}
+                    isRefreshing={isRefreshing}
+                    className="h-full"
                   />
                 )}
               </div>
@@ -1684,45 +1780,32 @@ export default function InterviewPage() {
                           // Always refresh file tree when AI modifies files
                           await refreshFiles();
 
-                          // Reload file content if the modified file is currently selected
-                          if (selectedFile && selectedFile.path === path) {
-                            try {
-                              const response = await fetch(
-                                `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
-                              );
-                              if (response.ok) {
-                                const responseJson = await response.json();
-                                const data = responseJson.data || responseJson;
-                                const fileContent = typeof data.content === 'string' ? data.content : '';
+                          // Fetch the modified file content (smart refresh - only this file)
+                          try {
+                            const response = await fetch(
+                              `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
+                            );
+                            if (response.ok) {
+                              const responseJson = await response.json();
+                              const data = responseJson.data || responseJson;
+                              const fileContent = typeof data.content === 'string' ? data.content : '';
+
+                              // Update the file cache with new content
+                              setFileCache(prev => new Map(prev).set(path, fileContent));
+                              console.log(`[FileCache] Updated cache for AI-modified file: ${path}`);
+
+                              // Update code editor if this file is currently selected
+                              if (selectedFile && selectedFile.path === path) {
                                 setCode(fileContent);
-                                // Update tab content too
-                                setOpenTabs(prev => prev.map(tab =>
-                                  tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
-                                ));
                               }
-                            } catch (err) {
-                              console.error("Failed to reload file:", err);
+
+                              // Update tab content if file is open
+                              setOpenTabs(prev => prev.map(tab =>
+                                tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
+                              ));
                             }
-                          } else {
-                            // File is not open - update tab if it exists
-                            const existingTab = openTabs.find(tab => tab.path === path);
-                            if (existingTab) {
-                              try {
-                                const response = await fetch(
-                                  `/api/interview/${candidateId}/files?path=${encodeURIComponent(path)}`
-                                );
-                                if (response.ok) {
-                                  const responseJson = await response.json();
-                                  const data = responseJson.data || responseJson;
-                                  const fileContent = typeof data.content === 'string' ? data.content : '';
-                                  setOpenTabs(prev => prev.map(tab =>
-                                    tab.path === path ? { ...tab, content: fileContent, isDirty: false } : tab
-                                  ));
-                                }
-                              } catch (err) {
-                                console.error("Failed to update tab content:", err);
-                              }
-                            }
+                          } catch (err) {
+                            console.error("Failed to reload file:", err);
                           }
                         }}
                         onTestResultsUpdated={(results) => {

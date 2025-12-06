@@ -236,6 +236,7 @@ model Candidate {
   deadlineAt          DateTime?           @map("deadline_at")
   volumeId            String?             @map("volume_id")
   sandboxCreatedAt    DateTime?           @map("sandbox_created_at")
+  sandboxLanguage     String?             @map("sandbox_language")
   overallScore        Float?              @map("overall_score")
   codingScore         Float?              @map("coding_score")
   communicationScore  Float?              @map("communication_score")
@@ -265,6 +266,7 @@ model SessionRecording {
   eventCount         Int                 @default(0) @map("event_count")
   storagePath        String?             @map("storage_path")
   storageSize        Int?                @map("storage_size")
+  trackedFiles       Json                @default("[]") @map("tracked_files") // Array of file paths created during session
   createdAt          DateTime            @default(now()) @map("created_at")
   updatedAt          DateTime            @updatedAt @map("updated_at")
   claudeInteractions ClaudeInteraction[]

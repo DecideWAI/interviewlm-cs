@@ -129,30 +129,42 @@ async function getOrCreateVolume(sessionId: string): Promise<any> {
 }
 
 /**
- * Get the appropriate Docker image for a language
- * Uses language-specific images to avoid runtime installations
+ * Universal image ID - set after deploying modal_image.py
+ * Run: modal deploy modal_image.py
+ * Then set MODAL_UNIVERSAL_IMAGE_ID env var to the deployed image ID
+ *
+ * Example: MODAL_UNIVERSAL_IMAGE_ID=im-xxxxx
  */
-function getImageForLanguage(language?: string): string {
+const UNIVERSAL_IMAGE_ID = process.env.MODAL_UNIVERSAL_IMAGE_ID;
+
+/**
+ * Get the appropriate Docker image for a language
+ * If MODAL_UNIVERSAL_IMAGE_ID is set, uses the pre-built universal image
+ * Otherwise falls back to language-specific public images
+ */
+function getImageForLanguage(language?: string): { type: 'universal' | 'registry'; value: string } {
+  // Universal image has Node.js, Python, Go, Rust, Java, and ttyd pre-installed
+  if (UNIVERSAL_IMAGE_ID) {
+    return { type: 'universal', value: UNIVERSAL_IMAGE_ID };
+  }
+
   const lang = language?.toLowerCase() || 'javascript';
 
-  // Language-specific base images with tools pre-installed
+  // Fallback: Language-specific base images from public registries
   const imageMap: Record<string, string> = {
-    // Python: Use official Python image (has Python + pip pre-installed)
     'python': 'python:3.11-slim-bookworm',
     'py': 'python:3.11-slim-bookworm',
-
-    // JavaScript/TypeScript: Use Node.js image
     'javascript': 'node:20-bookworm-slim',
     'typescript': 'node:20-bookworm-slim',
     'js': 'node:20-bookworm-slim',
     'ts': 'node:20-bookworm-slim',
-
-    // Go: Use official Go image
     'go': 'golang:1.21-bookworm',
     'golang': 'golang:1.21-bookworm',
+    'java': 'eclipse-temurin:21-jdk-jammy',
+    'rust': 'rust:1.75-slim-bookworm',
   };
 
-  return imageMap[lang] || 'node:20-bookworm-slim';
+  return { type: 'registry', value: imageMap[lang] || 'node:20-bookworm-slim' };
 }
 
 /**
@@ -172,13 +184,20 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
     getOrCreateVolume(sessionId),
   ]);
 
-  // OPTIMIZATION: Use language-specific images to avoid runtime installations
-  const imageName = getImageForLanguage(language);
-  console.log(`[Modal] Using image ${imageName} for language: ${language || 'default'}`);
-  const image = modal.images.fromRegistry(imageName);
+  // Get image - use universal image (by ID) or language-specific registry image
+  const imageConfig = getImageForLanguage(language);
+  const isUniversalImage = imageConfig.type === 'universal';
+  console.log(`[Modal] Using ${isUniversalImage ? 'universal' : imageConfig.value} image for language: ${language || 'default'}`);
+
+  // For universal image, use fromId with the deployed image ID (async)
+  // For language-specific, use public registry images (sync)
+  const image = isUniversalImage
+    ? await modal.images.fromId(imageConfig.value)
+    : modal.images.fromRegistry(imageConfig.value);
 
   // Create sandbox with the image AND mounted volume
   // Modal handles volume attachment - no need to verify manually
+  // encryptedPorts exposes ttyd via Modal tunnel for low-latency WebSocket terminal
   const sandbox = await modal.sandboxes.create(app, image, {
     timeoutMs: SANDBOX_TIMEOUT_MS,
     cpu: 0.5,
@@ -188,19 +207,69 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
     volumes: {
       "/workspace": volume,
     },
+    encryptedPorts: [7681], // ttyd WebSocket port for tunnel
   });
 
   const sandboxId = sandbox.sandboxId;
 
-  // OPTIMIZATION: Skip Node version check - we know it's pre-installed in the image
-  // Only install pytest for Python (async, non-blocking for sandbox ready state)
-  const isPython = ['python', 'py'].includes(language?.toLowerCase() || '');
-  if (isPython) {
-    // Install pytest in background - don't block sandbox creation
-    console.log(`[Modal] Installing pytest in background...`);
-    runSandboxCommand(sandbox, ["pip", "install", "pytest", "-q"])
-      .then((proc: any) => proc.exitCode)
-      .catch((err: Error) => console.warn(`[Modal] pytest install warning:`, err.message));
+  // For non-universal images, install pytest for Python
+  if (!isUniversalImage) {
+    const isPython = ['python', 'py'].includes(language?.toLowerCase() || '');
+    if (isPython) {
+      console.log(`[Modal] Installing pytest in background...`);
+      runSandboxCommand(sandbox, ["pip", "install", "pytest", "-q"])
+        .then((proc: any) => proc.exitCode)
+        .catch((err: Error) => console.warn(`[Modal] pytest install warning:`, err.message));
+    }
+  }
+
+  // Start ttyd for WebSocket terminal access via tunnel
+  console.log(`[Modal] Starting ttyd for WebSocket terminal...`);
+  try {
+    if (isUniversalImage) {
+      // Universal image has ttyd pre-installed - just start it
+      const ttydStart = await runSandboxCommand(sandbox, [
+        "sh", "-c",
+        "cd /workspace && nohup ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 & sleep 1 && ps aux | grep ttyd | grep -v grep"
+      ]);
+      const startOutput = await ttydStart.stdout.readText();
+      console.log(`[Modal] ttyd start: running=${startOutput.trim() ? 'yes' : 'no'}`);
+
+      if (!startOutput.trim()) {
+        const logCheck = await runSandboxCommand(sandbox, ["cat", "/tmp/ttyd.log"]);
+        const logContent = await logCheck.stdout.readText();
+        console.warn(`[Modal] ttyd may have failed to start. Log: ${logContent.trim()}`);
+      } else {
+        console.log(`[Modal] ttyd started on port 7681`);
+      }
+    } else {
+      // Non-universal image - need to download ttyd first
+      const ttydInstall = await runSandboxCommand(sandbox, [
+        "sh", "-c",
+        `if ! which ttyd > /dev/null 2>&1; then
+          if which curl > /dev/null 2>&1; then
+            curl -sL https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -o /usr/local/bin/ttyd;
+          elif which wget > /dev/null 2>&1; then
+            wget -q https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -O /usr/local/bin/ttyd;
+          else
+            apt-get update -qq && apt-get install -qq -y wget > /dev/null 2>&1;
+            wget -q https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64 -O /usr/local/bin/ttyd;
+          fi;
+          chmod +x /usr/local/bin/ttyd;
+        fi`
+      ]);
+      await ttydInstall.exitCode;
+
+      const ttydStart = await runSandboxCommand(sandbox, [
+        "sh", "-c",
+        "cd /workspace && nohup /usr/local/bin/ttyd -W -p 7681 bash > /tmp/ttyd.log 2>&1 & sleep 1 && ps aux | grep ttyd | grep -v grep"
+      ]);
+      const startOutput = await ttydStart.stdout.readText();
+      console.log(`[Modal] ttyd start: running=${startOutput.trim() ? 'yes' : 'no'}`);
+    }
+  } catch (ttydError) {
+    // Non-fatal: ttyd failure doesn't block sandbox creation, fallback to HTTP mode
+    console.warn(`[Modal] ttyd setup failed (will use HTTP fallback):`, ttydError);
   }
 
   console.log(`[Modal] Created new sandbox ${sandboxId} with volume ${volumeName} for session ${sessionId}`);
@@ -208,106 +277,11 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
   return { sandbox, sandboxId, volumeName };
 }
 
-// Timeout for getting sandbox reference (cold sandboxes can be slow to wake)
-// OPTIMIZED: Reduced from 10s/15s to 2s/2s for faster failure detection
-// If sandbox doesn't respond in 2s, it's likely dead - create new one faster
-const RECONNECT_TIMEOUT_MS = 2000; // 2s to get sandbox reference
-const HEALTH_CHECK_TIMEOUT_MS = 2000; // 2s for health check
-
-// Warm sandbox threshold - skip health check if created within this time
-const WARM_SANDBOX_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-
-/**
- * Try to reconnect to an existing sandbox by ID
- * If reconnection fails, terminates the old sandbox and returns null
- *
- * @param sandboxId - The sandbox ID to reconnect to
- * @param skipHealthCheck - Skip health check for warm sandboxes (created recently)
- */
-async function reconnectToSandbox(sandboxId: string, skipHealthCheck = false): Promise<any | null> {
-  let sandbox: any = null;
-  try {
-    const modal = getModalClient();
-    console.log(`[Modal] Attempting to reconnect to sandbox ${sandboxId}...`);
-
-    // Add timeout to fromId - cold sandboxes can take a long time to resolve
-    const startTime = Date.now();
-    try {
-      sandbox = await Promise.race([
-        modal.sandboxes.fromId(sandboxId),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`fromId timed out after ${RECONNECT_TIMEOUT_MS}ms`)), RECONNECT_TIMEOUT_MS)
-        )
-      ]);
-    } catch (fromIdError) {
-      const elapsed = Date.now() - startTime;
-      console.log(`[Modal] Failed to get sandbox reference for ${sandboxId} after ${elapsed}ms:`,
-        fromIdError instanceof Error ? fromIdError.message : fromIdError);
-      return null;
-    }
-
-    const elapsed = Date.now() - startTime;
-    console.log(`[Modal] Got sandbox reference for ${sandboxId} in ${elapsed}ms`);
-
-    // Skip health check for warm sandboxes (recently created) - they're likely still alive
-    if (skipHealthCheck) {
-      console.log(`[Modal] Skipping health check for warm sandbox ${sandboxId}`);
-      return sandbox;
-    }
-
-    // Run quick health check with timeout - simple echo is fastest
-    console.log(`[Modal] Running health check...`);
-    const healthCheckStart = Date.now();
-    let timeoutId: NodeJS.Timeout | null = null;
-
-    const healthCheck = Promise.race([
-      (async () => {
-        try {
-          // OPTIMIZED: Simple echo is faster than readlink + ls
-          // Just verify sandbox can execute commands
-          const proc = await sandbox["exec"](["echo", "ok"]);
-          const output = await proc.stdout.readText();
-          const exitCode = await proc.exitCode;
-          const healthElapsed = Date.now() - healthCheckStart;
-          console.log(`[Modal] Health check response in ${healthElapsed}ms: exitCode=${exitCode}`);
-          if (timeoutId) clearTimeout(timeoutId);
-          // Success if command ran and returned "ok"
-          return (exitCode === undefined || exitCode === 0) && output.trim() === "ok";
-        } catch (execError) {
-          console.log(`[Modal] Health check exec error:`, execError instanceof Error ? execError.message : execError);
-          if (timeoutId) clearTimeout(timeoutId);
-          return false;
-        }
-      })(),
-      new Promise<boolean>((resolve) => {
-        timeoutId = setTimeout(() => {
-          console.log(`[Modal] Health check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms for ${sandboxId}`);
-          resolve(false);
-        }, HEALTH_CHECK_TIMEOUT_MS);
-      })
-    ]);
-
-    const isHealthy = await healthCheck;
-    if (!isHealthy) {
-      console.log(`[Modal] Sandbox ${sandboxId} failed health check, terminating it`);
-      // Terminate the unhealthy sandbox to free resources - don't await, do it in background
-      sandbox.terminate().catch((termError: Error) => {
-        console.warn(`[Modal] Failed to terminate unhealthy sandbox ${sandboxId}:`, termError);
-      });
-      return null;
-    }
-
-    console.log(`[Modal] Reconnected to healthy sandbox ${sandboxId}`);
-    return sandbox;
-  } catch (error) {
-    console.log(`[Modal] Failed to reconnect to sandbox ${sandboxId}:`, error instanceof Error ? error.message : 'Unknown error');
-    // Try to terminate the sandbox even if reconnection failed - don't await
-    if (sandbox) {
-      sandbox.terminate().catch(() => { /* Ignore */ });
-    }
-    return null;
-  }
-}
+// NOTE: We intentionally do NOT reconnect to existing sandboxes via Modal's fromId API.
+// Modal's fromId is unreliable for cold sandboxes - often times out after 5-10s even for
+// sandboxes just 30-60s old. Since volumes persist files, it's faster and more reliable
+// to just create a new sandbox with the same volume (~5-8s) rather than risk a timeout
+// (5s+) followed by sandbox creation anyway.
 
 /**
  * Create a sandbox for a session (public API)
@@ -320,7 +294,7 @@ export async function createSandbox(sessionId: string, language?: string): Promi
   // Store in memory cache
   sandboxes.set(sessionId, { sandbox, sandboxId, createdAt });
 
-  // Persist sandbox ID to database for reconnection after server restart
+  // Persist sandbox ID and language to database for reconnection after server restart
   // Note: Volume is deterministic (based on sessionId), but we store sandboxId for quick reconnect
   try {
     await prisma.candidate.update({
@@ -328,9 +302,10 @@ export async function createSandbox(sessionId: string, language?: string): Promi
       data: {
         volumeId: sandboxId,
         sandboxCreatedAt: createdAt, // Track when sandbox was created for expiry checks
+        sandboxLanguage: language || 'javascript', // Store language for reconnection
       },
     });
-    console.log(`[Modal] Persisted sandbox ID ${sandboxId} (volume: ${volumeName}) for session ${sessionId}`);
+    console.log(`[Modal] Persisted sandbox ID ${sandboxId} (volume: ${volumeName}, language: ${language || 'javascript'}) for session ${sessionId}`);
   } catch (dbError) {
     // Non-critical - sandbox still works, volume is deterministic
     console.warn(`[Modal] Failed to persist sandbox ID to database:`, dbError);
@@ -405,46 +380,31 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
       // IMPORTANT: Check database for existing sandbox (cross-instance check)
       // This is critical for multi-server deployments
       let sandbox: any = null;
+      let storedLanguage: string | null = null;
       try {
         const candidate = await prisma.candidate.findUnique({
           where: { id: sessionId },
-          select: { volumeId: true, sandboxCreatedAt: true },
+          select: { volumeId: true, sandboxCreatedAt: true, sandboxLanguage: true },
         });
 
+        // Store the language from DB for later use if we need to create a new sandbox
+        storedLanguage = candidate?.sandboxLanguage || null;
+
         if (candidate?.volumeId) {
-          // Check if sandbox is likely expired (1-hour timeout with 1-min buffer)
-          // If sandboxCreatedAt is missing (old record), assume expired to avoid reconnect timeout
+          // OPTIMIZATION: Skip fromId reconnection entirely - it's unreliable and slow
+          // Modal's fromId can take 5-10s+ for cold sandboxes, often timing out
+          // even for sandboxes just 30-60s old. Since volumes persist files,
+          // we just create a new sandbox with the same volume - faster and more reliable.
           const sandboxAge = candidate.sandboxCreatedAt
             ? Date.now() - candidate.sandboxCreatedAt.getTime()
             : Infinity;
-          const isExpired = sandboxAge > SANDBOX_TIMEOUT_MS - 60000;
-          const isWarm = sandboxAge < WARM_SANDBOX_THRESHOLD_MS;
-
-          if (isExpired) {
-            console.log(`[Modal] Sandbox ${candidate.volumeId} expired (age: ${Math.round(sandboxAge / 1000)}s), skipping reconnect`);
-            // Clear stale sandbox ID - don't waste time trying to reconnect
-            await prisma.candidate.update({
-              where: { id: sessionId },
-              data: { volumeId: null, sandboxCreatedAt: null },
-            });
-          } else {
-            console.log(`[Modal] Found volumeId ${candidate.volumeId} in DB (age: ${Math.round(sandboxAge / 1000)}s, warm: ${isWarm})`);
-            // Skip health check for warm sandboxes (created within last 5 minutes)
-            sandbox = await reconnectToSandbox(candidate.volumeId, isWarm);
-            if (sandbox) {
-              // Store in cache for future requests
-              sandboxes.set(sessionId, { sandbox, sandboxId: candidate.volumeId, createdAt: candidate.sandboxCreatedAt || new Date() });
-              console.log(`[Modal] Successfully reconnected to sandbox ${candidate.volumeId} for session ${sessionId}`);
-              resolveCreation(sandbox);
-              return;
-            }
-            // Sandbox failed to reconnect - clear stale ID and create new one
-            console.log(`[Modal] Sandbox ${candidate.volumeId} reconnect failed, clearing stale ID`);
-            await prisma.candidate.update({
-              where: { id: sessionId },
-              data: { volumeId: null, sandboxCreatedAt: null },
-            });
-          }
+          console.log(`[Modal] Found sandbox ${candidate.volumeId} in DB (age: ${Math.round(sandboxAge / 1000)}s, language: ${storedLanguage})`);
+          console.log(`[Modal] Skipping fromId reconnect (unreliable) - creating new sandbox with same volume`);
+          // Clear stale sandbox ID - we'll create a new one
+          await prisma.candidate.update({
+            where: { id: sessionId },
+            data: { volumeId: null, sandboxCreatedAt: null },
+          });
         } else {
           console.log(`[Modal] No existing sandbox found in DB for session ${sessionId}`);
         }
@@ -452,10 +412,13 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
         console.log(`[Modal] Could not lookup sandbox from database:`, dbError);
       }
 
+      // Use language from: 1) parameter, 2) stored in DB, 3) default to javascript
+      const effectiveLanguage = language || storedLanguage || 'javascript';
+
       // Create new sandbox with persistent volume
       // Even if old sandbox expired, files persist in the volume
-      console.log(`[Modal] Creating NEW sandbox for session ${sessionId} (volume: ${getVolumeName(sessionId)})`);
-      await createSandbox(sessionId, language);
+      console.log(`[Modal] Creating NEW sandbox for session ${sessionId} (volume: ${getVolumeName(sessionId)}, language: ${effectiveLanguage})`);
+      await createSandbox(sessionId, effectiveLanguage);
       const newSandbox = sandboxes.get(sessionId)?.sandbox;
 
       if (newSandbox) {
@@ -490,6 +453,44 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
   })();
 
   return creationPromise;
+}
+
+/**
+ * Get the tunnel URL for WebSocket terminal access
+ * Returns the WSS URL for direct terminal connection via ttyd
+ * Returns null if tunnel is not available or sandbox doesn't exist
+ */
+export async function getTunnelUrl(sessionId: string): Promise<string | null> {
+  try {
+    console.log(`[Modal] Getting tunnel URL for session ${sessionId}...`);
+
+    // Get or reconnect to sandbox (handles cache misses and cross-worker scenarios)
+    const sandbox = await getOrCreateSandbox(sessionId);
+
+    if (!sandbox) {
+      console.warn(`[Modal] No sandbox available for session ${sessionId}`);
+      return null;
+    }
+
+    // Get tunnel metadata from Modal
+    const tunnels = await sandbox.tunnels();
+
+    // Look for tunnel on port 7681 (ttyd)
+    const terminalTunnel = tunnels[7681];
+
+    if (!terminalTunnel || !terminalTunnel.url) {
+      console.warn(`[Modal] No tunnel found on port 7681 for session ${sessionId} - ttyd may not be running or encryptedPorts not configured`);
+      return null;
+    }
+
+    // Modal tunnel URL is HTTPS, convert to WSS for WebSocket
+    const wsUrl = terminalTunnel.url.replace('https://', 'wss://');
+    console.log(`[Modal] Tunnel URL for session ${sessionId}: ${wsUrl}`);
+    return wsUrl;
+  } catch (error) {
+    console.error(`[Modal] Failed to get tunnel URL for session ${sessionId}:`, error);
+    return null;
+  }
 }
 
 /**

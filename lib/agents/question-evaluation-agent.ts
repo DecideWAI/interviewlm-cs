@@ -178,26 +178,24 @@ ${SHARED_TOOL_INSTRUCTIONS}
 2. Read test files to assess test coverage and quality
 3. Read additional files for context (configs, related modules) if needed
 4. List files to understand project structure if needed
-5. After gathering context, provide your evaluation
+5. After gathering context, call SubmitEvaluation to submit your final evaluation
 
-## IMPORTANT: Final Evaluation Format
-When ready to submit your evaluation, respond with EXACTLY this format:
+## CRITICAL: Submitting Your Evaluation
+You MUST use the **SubmitEvaluation** tool to submit your final evaluation.
+This is the ONLY way to complete the evaluation - the evaluation will NOT be recorded unless you call this tool.
 
-FINAL_EVALUATION:
-{
-  "assessmentType": "REAL_WORLD",
-  "overallScore": <0-100>,
-  "criteria": {
-    "problemCompletion": { "score": <0-30>, "maxScore": 30, "feedback": "<specific feedback>" },
-    "codeQuality": { "score": <0-25>, "maxScore": 25, "feedback": "<specific feedback>" },
-    "testing": { "score": <0-20>, "maxScore": 20, "feedback": "<specific feedback>" },
-    "errorHandling": { "score": <0-15>, "maxScore": 15, "feedback": "<specific feedback>" },
-    "efficiency": { "score": <0-10>, "maxScore": 10, "feedback": "<specific feedback>" }
-  },
-  "feedback": "<overall feedback paragraph>",
-  "strengths": ["<strength 1>", "<strength 2>"],
-  "improvements": ["<improvement 1>", "<improvement 2>"]
-}`;
+When you have gathered enough information, call SubmitEvaluation with:
+- assessmentType: "REAL_WORLD"
+- overallScore: 0-100 (sum of all criteria scores)
+- criteria: Object with scores for each criterion:
+  - problemCompletion: { score: 0-30, maxScore: 30, feedback: "..." }
+  - codeQuality: { score: 0-25, maxScore: 25, feedback: "..." }
+  - testing: { score: 0-20, maxScore: 20, feedback: "..." }
+  - errorHandling: { score: 0-15, maxScore: 15, feedback: "..." }
+  - efficiency: { score: 0-10, maxScore: 10, feedback: "..." }
+- feedback: Overall feedback paragraph
+- strengths: Array of strengths observed
+- improvements: Array of areas for improvement`;
 
 /**
  * System Design evaluation system prompt
@@ -231,26 +229,24 @@ ${SHARED_TOOL_INSTRUCTIONS}
 2. Run tests using RunTests to verify the implementation works
 3. Read implementation files to assess how well code matches the design
 4. Read API contracts or interface definitions
-5. After gathering context, provide your evaluation
+5. After gathering context, call SubmitEvaluation to submit your final evaluation
 
-## IMPORTANT: Final Evaluation Format
-When ready to submit your evaluation, respond with EXACTLY this format:
+## CRITICAL: Submitting Your Evaluation
+You MUST use the **SubmitEvaluation** tool to submit your final evaluation.
+This is the ONLY way to complete the evaluation - the evaluation will NOT be recorded unless you call this tool.
 
-FINAL_EVALUATION:
-{
-  "assessmentType": "SYSTEM_DESIGN",
-  "overallScore": <0-100>,
-  "criteria": {
-    "designClarity": { "score": <0-30>, "maxScore": 30, "feedback": "<specific feedback>" },
-    "tradeoffAnalysis": { "score": <0-25>, "maxScore": 25, "feedback": "<specific feedback>" },
-    "apiDesign": { "score": <0-20>, "maxScore": 20, "feedback": "<specific feedback>" },
-    "implementation": { "score": <0-15>, "maxScore": 15, "feedback": "<specific feedback>" },
-    "communication": { "score": <0-10>, "maxScore": 10, "feedback": "<specific feedback>" }
-  },
-  "feedback": "<overall feedback paragraph>",
-  "strengths": ["<strength 1>", "<strength 2>"],
-  "improvements": ["<improvement 1>", "<improvement 2>"]
-}`;
+When you have gathered enough information, call SubmitEvaluation with:
+- assessmentType: "SYSTEM_DESIGN"
+- overallScore: 0-100 (sum of all criteria scores)
+- criteria: Object with scores for each criterion:
+  - designClarity: { score: 0-30, maxScore: 30, feedback: "..." }
+  - tradeoffAnalysis: { score: 0-25, maxScore: 25, feedback: "..." }
+  - apiDesign: { score: 0-20, maxScore: 20, feedback: "..." }
+  - implementation: { score: 0-15, maxScore: 15, feedback: "..." }
+  - communication: { score: 0-10, maxScore: 10, feedback: "..." }
+- feedback: Overall feedback paragraph
+- strengths: Array of strengths observed
+- improvements: Array of areas for improvement`;
 
 /**
  * Legacy system prompt for backwards compatibility
@@ -259,9 +255,65 @@ FINAL_EVALUATION:
 const SYSTEM_PROMPT = REAL_WORLD_SYSTEM_PROMPT;
 
 // =============================================================================
-// Tool Definitions (READ-ONLY only)
+// Tool Definitions
 // =============================================================================
 
+/**
+ * SubmitEvaluation tool - the ONLY way to submit the final evaluation.
+ * This ensures structured output instead of parsing JSON from text.
+ */
+const SUBMIT_EVALUATION_TOOL: Anthropic.Messages.Tool = {
+  name: 'SubmitEvaluation',
+  description: `Submit the final evaluation for the candidate's code. This is the ONLY way to complete the evaluation. You MUST call this tool after gathering context from other tools. The evaluation will not be recorded unless you call this tool.`,
+  input_schema: {
+    type: 'object' as const,
+    properties: {
+      assessmentType: {
+        type: 'string',
+        enum: ['REAL_WORLD', 'SYSTEM_DESIGN'],
+        description: 'The type of assessment being evaluated',
+      },
+      overallScore: {
+        type: 'number',
+        minimum: 0,
+        maximum: 100,
+        description: 'Overall score from 0-100',
+      },
+      criteria: {
+        type: 'object',
+        description: 'Scores and feedback for each criterion. Keys depend on assessmentType.',
+        additionalProperties: {
+          type: 'object',
+          properties: {
+            score: { type: 'number', description: 'Score for this criterion' },
+            maxScore: { type: 'number', description: 'Maximum possible score' },
+            feedback: { type: 'string', description: 'Specific feedback for this criterion' },
+          },
+          required: ['score', 'maxScore', 'feedback'],
+        },
+      },
+      feedback: {
+        type: 'string',
+        description: 'Overall feedback paragraph summarizing the evaluation',
+      },
+      strengths: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'List of strengths observed in the solution',
+      },
+      improvements: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'List of areas for improvement',
+      },
+    },
+    required: ['assessmentType', 'overallScore', 'criteria', 'feedback', 'strengths', 'improvements'],
+  },
+};
+
+/**
+ * Read-only tools for gathering context before evaluation
+ */
 const EVALUATION_TOOLS: Anthropic.Messages.Tool[] = [
   {
     name: 'Read',
@@ -358,6 +410,14 @@ const EVALUATION_TOOLS: Anthropic.Messages.Tool[] = [
   },
 ];
 
+/**
+ * All tools available to the evaluation agent, including SubmitEvaluation
+ */
+const ALL_EVALUATION_TOOLS: Anthropic.Messages.Tool[] = [
+  ...EVALUATION_TOOLS,
+  SUBMIT_EVALUATION_TOOL,
+];
+
 // =============================================================================
 // QuestionEvaluationAgent Class
 // =============================================================================
@@ -427,7 +487,7 @@ export class QuestionEvaluationAgent {
         temperature: 0.3,
         system: this.getSystemPrompt(),
         messages: conversation,
-        tools: EVALUATION_TOOLS,
+        tools: ALL_EVALUATION_TOOLS,
       });
 
       totalUsage.input_tokens += response.usage.input_tokens;
@@ -437,23 +497,49 @@ export class QuestionEvaluationAgent {
       // Collect text and tool uses
       const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
       let responseText = '';
+      let submitEvaluationInput: Record<string, unknown> | null = null;
 
       for (const content of response.content) {
         if (content.type === 'text') {
           responseText += content.text;
         } else if (content.type === 'tool_use') {
-          toolUseBlocks.push({
-            id: content.id,
-            name: content.name,
-            input: content.input as Record<string, unknown>,
-          });
+          // Check if this is the SubmitEvaluation tool
+          if (content.name === 'SubmitEvaluation') {
+            submitEvaluationInput = content.input as Record<string, unknown>;
+          } else {
+            toolUseBlocks.push({
+              id: content.id,
+              name: content.name,
+              input: content.input as Record<string, unknown>,
+            });
+          }
         }
       }
 
-      // Check if we have a final evaluation
+      // Check if SubmitEvaluation was called - this is the preferred way to submit
+      if (submitEvaluationInput) {
+        const evaluationTime = Date.now() - startTime;
+        console.log('[Evaluation] SubmitEvaluation tool called with structured data');
+
+        const result = this.extractEvaluationFromToolInput(submitEvaluationInput);
+
+        return {
+          ...result,
+          passed: result.overallScore >= (this.config.passingThreshold ?? DEFAULT_THRESHOLD),
+          metadata: {
+            model: lastModel,
+            usage: totalUsage,
+            toolCallCount: this.toolCallCount,
+            evaluationTime,
+          },
+        };
+      }
+
+      // Fallback: Check if we have a final evaluation in text (backwards compatibility)
       if (responseText.includes('FINAL_EVALUATION:') ||
           (responseText.includes('"overallScore"') && responseText.includes('"criteria"'))) {
         const evaluationTime = Date.now() - startTime;
+        console.log('[Evaluation] Falling back to JSON text parsing');
         const result = this.parseEvaluationResult(responseText);
 
         return {
@@ -487,10 +573,13 @@ export class QuestionEvaluationAgent {
       });
     }
 
-    // If we get here without a final evaluation, request one
+    // If we get here without a final evaluation, request one explicitly
+    // Include ONLY the SubmitEvaluation tool to force structured submission
     conversation.push({
       role: 'user',
-      content: 'Please provide your FINAL_EVALUATION now based on everything you\'ve observed.',
+      content: `You have gathered enough information. Now you MUST call the SubmitEvaluation tool to submit your final evaluation.
+
+Call SubmitEvaluation with your assessment now. This is required to complete the evaluation.`,
     });
 
     const finalResponse = await this.client.messages.create({
@@ -499,19 +588,52 @@ export class QuestionEvaluationAgent {
       temperature: 0.3,
       system: this.getSystemPrompt(),
       messages: conversation,
+      // Only include SubmitEvaluation tool to force structured submission
+      tools: [SUBMIT_EVALUATION_TOOL],
     });
 
     totalUsage.input_tokens += finalResponse.usage.input_tokens;
     totalUsage.output_tokens += finalResponse.usage.output_tokens;
 
     const evaluationTime = Date.now() - startTime;
-    const content = finalResponse.content[0];
 
-    if (content.type !== 'text') {
-      throw new Error('Unexpected response type from Claude');
+    // First, check if SubmitEvaluation was called
+    let submitEvaluationInput: Record<string, unknown> | null = null;
+    let responseText = '';
+
+    for (const content of finalResponse.content) {
+      if (content.type === 'text') {
+        responseText += content.text;
+      } else if (content.type === 'tool_use' && content.name === 'SubmitEvaluation') {
+        submitEvaluationInput = content.input as Record<string, unknown>;
+      }
     }
 
-    const result = this.parseEvaluationResult(content.text);
+    // Prefer SubmitEvaluation tool input
+    if (submitEvaluationInput) {
+      console.log('[Evaluation] Final response used SubmitEvaluation tool');
+      const result = this.extractEvaluationFromToolInput(submitEvaluationInput);
+
+      return {
+        ...result,
+        passed: result.overallScore >= (this.config.passingThreshold ?? DEFAULT_THRESHOLD),
+        metadata: {
+          model: finalResponse.model,
+          usage: totalUsage,
+          toolCallCount: this.toolCallCount,
+          evaluationTime,
+        },
+      };
+    }
+
+    // Fallback to text parsing
+    if (!responseText.trim()) {
+      console.warn('[Evaluation] Final response contained no text content, using fallback');
+      responseText = 'Model did not provide a text evaluation response.';
+    }
+
+    console.log('[Evaluation] Final response falling back to text parsing');
+    const result = this.parseEvaluationResult(responseText);
 
     return {
       ...result,
@@ -888,6 +1010,68 @@ After gathering information, provide your FINAL_EVALUATION with JSON.
 `;
   }
 
+  /**
+   * Extract evaluation result from SubmitEvaluation tool input
+   * This is the preferred and most reliable way to get the evaluation
+   */
+  private extractEvaluationFromToolInput(input: Record<string, unknown>): Omit<EvaluationResult, 'metadata'> {
+    const assessmentType = (input.assessmentType as AssessmentType) || this.config.assessmentType || 'REAL_WORLD';
+    const overallScore = typeof input.overallScore === 'number' ? input.overallScore : 0;
+    const feedback = typeof input.feedback === 'string' ? input.feedback : '';
+    const strengths = Array.isArray(input.strengths) ? input.strengths.filter((s): s is string => typeof s === 'string') : [];
+    const improvements = Array.isArray(input.improvements) ? input.improvements.filter((s): s is string => typeof s === 'string') : [];
+
+    // Extract criteria - the tool schema ensures structure, but we still validate
+    const rawCriteria = input.criteria as Record<string, Record<string, unknown>> | undefined;
+    const criteria = this.buildCriteriaFromToolInput(rawCriteria, assessmentType);
+
+    return {
+      overallScore,
+      passed: false, // Will be set by caller
+      assessmentType,
+      criteria,
+      feedback,
+      strengths,
+      improvements,
+    };
+  }
+
+  /**
+   * Build typed criteria from SubmitEvaluation tool input
+   */
+  private buildCriteriaFromToolInput(
+    rawCriteria: Record<string, Record<string, unknown>> | undefined,
+    type: AssessmentType
+  ): TypedEvaluationCriteria {
+    const getCriterion = (key: string, maxScore: number): EvaluationCriterion => {
+      const raw = rawCriteria?.[key];
+      return {
+        score: typeof raw?.score === 'number' ? raw.score : 0,
+        maxScore: typeof raw?.maxScore === 'number' ? raw.maxScore : maxScore,
+        feedback: typeof raw?.feedback === 'string' ? raw.feedback : '',
+      };
+    };
+
+    if (type === 'SYSTEM_DESIGN') {
+      return {
+        designClarity: getCriterion('designClarity', 30),
+        tradeoffAnalysis: getCriterion('tradeoffAnalysis', 25),
+        apiDesign: getCriterion('apiDesign', 20),
+        implementation: getCriterion('implementation', 15),
+        communication: getCriterion('communication', 10),
+      } as SystemDesignEvaluationCriteria;
+    }
+
+    // REAL_WORLD (default)
+    return {
+      problemCompletion: getCriterion('problemCompletion', 30),
+      codeQuality: getCriterion('codeQuality', 25),
+      testing: getCriterion('testing', 20),
+      errorHandling: getCriterion('errorHandling', 15),
+      efficiency: getCriterion('efficiency', 10),
+    } as RealWorldEvaluationCriteria;
+  }
+
   private parseEvaluationResult(text: string): Omit<EvaluationResult, 'metadata'> {
     // Extract JSON from text
     let jsonText = text;
@@ -912,7 +1096,9 @@ After gathering information, provide your FINAL_EVALUATION with JSON.
     // Find JSON object using brace matching
     const startIdx = jsonText.indexOf('{');
     if (startIdx === -1) {
-      throw new Error('Could not parse evaluation result: No JSON object found');
+      // No JSON found - return fallback result based on text analysis
+      console.warn('[Evaluation] No JSON object found in response, using fallback. Response preview:', text.substring(0, 500));
+      return this.buildTextFallbackResult(text);
     }
 
     // Find matching closing brace
@@ -1155,6 +1341,84 @@ After gathering information, provide your FINAL_EVALUATION with JSON.
       feedback: feedbackMatch ? feedbackMatch[1] : 'Evaluation completed but feedback parsing failed.',
       strengths: [],
       improvements: [],
+    };
+  }
+
+  /**
+   * Build a fallback result from text when no JSON is found
+   * Attempts to extract any meaningful information from the text response
+   */
+  private buildTextFallbackResult(text: string): Omit<EvaluationResult, 'metadata'> {
+    const assessmentType = this.config.assessmentType || 'REAL_WORLD';
+
+    // Try to extract a score from text like "score: 75" or "75/100" or "75 points"
+    const scorePatterns = [
+      /(?:overall|total|final)?\s*score[:\s]+(\d+)/i,
+      /(\d+)\s*(?:\/\s*100|out\s+of\s+100|points|%)/i,
+      /(\d+)\s*(?:\/\s*100)/,
+    ];
+
+    let overallScore = 0;
+    for (const pattern of scorePatterns) {
+      const match = text.match(pattern);
+      if (match) {
+        overallScore = parseInt(match[1], 10);
+        break;
+      }
+    }
+
+    // Extract feedback - first few sentences or the main content
+    let feedback = 'Evaluation completed but structured response could not be parsed.';
+
+    // Try to find evaluation-like text
+    const evaluationIndicators = ['pass', 'fail', 'good', 'poor', 'excellent', 'needs improvement', 'well done', 'missing'];
+    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 20);
+    const relevantSentences = sentences.filter(s =>
+      evaluationIndicators.some(indicator => s.toLowerCase().includes(indicator))
+    );
+
+    if (relevantSentences.length > 0) {
+      feedback = relevantSentences.slice(0, 3).join('. ').trim() + '.';
+    } else if (sentences.length > 0) {
+      feedback = sentences.slice(0, 2).join('. ').trim() + '.';
+    }
+
+    // Build criteria with zero scores but meaningful feedback
+    const noJsonFeedback = 'Unable to parse detailed evaluation. Review the overall feedback.';
+
+    if (assessmentType === 'SYSTEM_DESIGN') {
+      return {
+        overallScore,
+        passed: false,
+        assessmentType: 'SYSTEM_DESIGN',
+        criteria: {
+          designClarity: { score: 0, maxScore: 30, feedback: noJsonFeedback },
+          tradeoffAnalysis: { score: 0, maxScore: 25, feedback: noJsonFeedback },
+          apiDesign: { score: 0, maxScore: 20, feedback: noJsonFeedback },
+          implementation: { score: 0, maxScore: 15, feedback: noJsonFeedback },
+          communication: { score: 0, maxScore: 10, feedback: noJsonFeedback },
+        } as SystemDesignEvaluationCriteria,
+        feedback,
+        strengths: [],
+        improvements: ['Detailed evaluation criteria could not be extracted from the response.'],
+      };
+    }
+
+    // REAL_WORLD (default)
+    return {
+      overallScore,
+      passed: false,
+      assessmentType: 'REAL_WORLD',
+      criteria: {
+        problemCompletion: { score: 0, maxScore: 30, feedback: noJsonFeedback },
+        codeQuality: { score: 0, maxScore: 25, feedback: noJsonFeedback },
+        testing: { score: 0, maxScore: 20, feedback: noJsonFeedback },
+        errorHandling: { score: 0, maxScore: 15, feedback: noJsonFeedback },
+        efficiency: { score: 0, maxScore: 10, feedback: noJsonFeedback },
+      } as RealWorldEvaluationCriteria,
+      feedback,
+      strengths: [],
+      improvements: ['Detailed evaluation criteria could not be extracted from the response.'],
     };
   }
 }

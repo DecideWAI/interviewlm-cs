@@ -55,6 +55,29 @@ export async function POST(
 
     const stream = new ReadableStream({
       async start(controller) {
+        let isClosed = false;
+
+        const safeEnqueue = (data: Uint8Array) => {
+          if (!isClosed) {
+            try {
+              controller.enqueue(data);
+            } catch {
+              isClosed = true;
+            }
+          }
+        };
+
+        const safeClose = () => {
+          if (!isClosed) {
+            isClosed = true;
+            try {
+              controller.close();
+            } catch {
+              // Already closed
+            }
+          }
+        };
+
         try {
           // Use streaming command execution
           for await (const chunk of modal.runCommandStreaming(id, command, "/workspace")) {
@@ -75,19 +98,19 @@ export async function POST(
 
             if (output) {
               const msg = `data: ${JSON.stringify({ output })}\n\n`;
-              controller.enqueue(encoder.encode(msg));
+              safeEnqueue(encoder.encode(msg));
             }
           }
 
           // Signal completion
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
-          controller.close();
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
+          safeClose();
         } catch (error) {
           console.error("Streaming command error:", error);
           const errorMsg = `\x1b[31mError: ${error instanceof Error ? error.message : "Command failed"}\x1b[0m\r\n\x1b[1;32m$\x1b[0m `;
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ output: errorMsg })}\n\n`));
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
-          controller.close();
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ output: errorMsg })}\n\n`));
+          safeEnqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));
+          safeClose();
         }
       },
     });
