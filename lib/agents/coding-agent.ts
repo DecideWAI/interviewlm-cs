@@ -1120,7 +1120,18 @@ export class CodingAgent {
       return { success: false, error: 'Missing required parameter: file_path' };
     }
     if (content === undefined || content === null) {
-      return { success: false, error: 'Missing required parameter: file_content. You MUST provide the complete file content.' };
+      console.error('[CodingAgent] Write called without file_content');
+      return {
+        success: false,
+        error:
+          'ERROR: Write tool called without file_content parameter.\n\n' +
+          'The Write tool REQUIRES both parameters:\n' +
+          '1. file_path: The destination file path\n' +
+          '2. file_content: The COMPLETE file content to write\n\n' +
+          'CORRECT USAGE:\n' +
+          'Write({ file_path: "/workspace/solution.py", file_content: "complete source code here" })\n\n' +
+          'Please try again with the complete file_content included.',
+      };
     }
 
     // Normalize relative paths to absolute

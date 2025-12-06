@@ -203,6 +203,10 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
   return { sandbox, sandboxId, volumeName };
 }
 
+// Timeout for getting sandbox reference (cold sandboxes can be slow to wake)
+const RECONNECT_TIMEOUT_MS = 10000; // 10s to get sandbox reference
+const HEALTH_CHECK_TIMEOUT_MS = 15000; // 15s for health check
+
 /**
  * Try to reconnect to an existing sandbox by ID
  * If reconnection fails, terminates the old sandbox and returns null
@@ -212,12 +216,27 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
   try {
     const modal = getModalClient();
     console.log(`[Modal] Attempting to reconnect to sandbox ${sandboxId}...`);
-    sandbox = await modal.sandboxes.fromId(sandboxId);
-    console.log(`[Modal] Got sandbox reference for ${sandboxId}, running health check...`);
+
+    // Add timeout to fromId - cold sandboxes can take a long time to resolve
+    const startTime = Date.now();
+    try {
+      sandbox = await Promise.race([
+        modal.sandboxes.fromId(sandboxId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`fromId timed out after ${RECONNECT_TIMEOUT_MS}ms`)), RECONNECT_TIMEOUT_MS)
+        )
+      ]);
+    } catch (fromIdError) {
+      const elapsed = Date.now() - startTime;
+      console.log(`[Modal] Failed to get sandbox reference for ${sandboxId} after ${elapsed}ms:`,
+        fromIdError instanceof Error ? fromIdError.message : fromIdError);
+      return null;
+    }
+
+    console.log(`[Modal] Got sandbox reference for ${sandboxId} in ${Date.now() - startTime}ms, running health check...`);
 
     // Verify sandbox is healthy by running a simple command with timeout
-    // Use 15 second timeout - Modal sandboxes can be slow to wake up
-    const startTime = Date.now();
+    const healthCheckStart = Date.now();
     let timeoutId: NodeJS.Timeout | null = null;
 
     const healthCheck = Promise.race([
@@ -225,7 +244,7 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
         try {
           const proc = await sandbox["exec"](["echo", "ok"]);
           const output = await proc.stdout.readText();
-          const elapsed = Date.now() - startTime;
+          const elapsed = Date.now() - healthCheckStart;
           console.log(`[Modal] Health check response in ${elapsed}ms: "${output.trim()}"`);
           if (timeoutId) clearTimeout(timeoutId);
           return output.trim() === "ok";
@@ -237,9 +256,9 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
       })(),
       new Promise<boolean>((resolve) => {
         timeoutId = setTimeout(() => {
-          console.log(`[Modal] Health check timed out after 15s for ${sandboxId}`);
+          console.log(`[Modal] Health check timed out after ${HEALTH_CHECK_TIMEOUT_MS}ms for ${sandboxId}`);
           resolve(false);
-        }, 15000);
+        }, HEALTH_CHECK_TIMEOUT_MS);
       })
     ]);
 

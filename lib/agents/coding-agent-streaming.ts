@@ -227,7 +227,6 @@ export class StreamingCodingAgent {
         const toolUseBlocks: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
         let currentToolId = '';
         let currentToolName = '';
-        let currentToolInput = '';
 
         // Use streaming API
         const stream = this.client.messages.stream({
@@ -235,15 +234,15 @@ export class StreamingCodingAgent {
           stream: true,
         });
 
-        // Process stream events
+        // Process stream events for real-time callbacks only
+        // We'll get the actual tool inputs from finalMessage (more reliable)
         for await (const event of stream) {
           if (event.type === 'content_block_start') {
             const block = event.content_block;
             if (block.type === 'tool_use') {
               currentToolId = block.id;
               currentToolName = block.name;
-              currentToolInput = '';
-              // Notify tool start
+              // Notify tool start (input will come from finalMessage)
               callbacks.onToolStart?.(currentToolName, currentToolId, {});
             }
           } else if (event.type === 'content_block_delta') {
@@ -251,31 +250,28 @@ export class StreamingCodingAgent {
             if (delta.type === 'text_delta') {
               text += delta.text;
               callbacks.onTextDelta?.(delta.text);
-            } else if (delta.type === 'input_json_delta') {
-              currentToolInput += delta.partial_json;
             }
+            // Note: We skip input_json_delta parsing here - using finalMessage instead
           } else if (event.type === 'content_block_stop') {
-            // If we were building a tool use, finalize it
-            if (currentToolId && currentToolName) {
-              try {
-                const input = currentToolInput ? JSON.parse(currentToolInput) : {};
-                toolUseBlocks.push({
-                  id: currentToolId,
-                  name: currentToolName,
-                  input,
-                });
-              } catch (e) {
-                console.error('[StreamingAgent] Failed to parse tool input:', e);
-              }
-              currentToolId = '';
-              currentToolName = '';
-              currentToolInput = '';
-            }
+            // Reset tool tracking
+            currentToolId = '';
+            currentToolName = '';
           }
         }
 
-        // Get final message for usage stats (includes cache info)
+        // Get final message - this has properly parsed tool_use blocks
         const finalMessage = await stream.finalMessage();
+
+        // Extract tool use blocks from finalMessage (more reliable than streaming JSON parsing)
+        for (const block of finalMessage.content) {
+          if (block.type === 'tool_use') {
+            toolUseBlocks.push({
+              id: block.id,
+              name: block.name,
+              input: block.input as Record<string, unknown>,
+            });
+          }
+        }
 
         return {
           text,
@@ -311,7 +307,26 @@ export class StreamingCodingAgent {
 
       // Validate Write tool has file_content (most common failure mode)
       if (toolBlock.name === 'Write' && (toolBlock.input.file_content === undefined || toolBlock.input.file_content === null)) {
-        const error = 'Missing required parameter: file_content. You MUST provide the complete file content. If the file is large, use Edit tool for incremental changes instead.';
+        // Log the problematic input for debugging
+        console.error('[StreamingAgent] Write called without file_content:', {
+          toolId: toolBlock.id,
+          inputKeys: Object.keys(toolBlock.input),
+          filePath: toolBlock.input.file_path,
+        });
+
+        const error =
+          'ERROR: Write tool called without file_content parameter.\n\n' +
+          'The Write tool REQUIRES both parameters:\n' +
+          '1. file_path: The destination file path\n' +
+          '2. file_content: The COMPLETE file content to write\n\n' +
+          'You provided file_path but OMITTED file_content.\n\n' +
+          'CORRECT USAGE:\n' +
+          'Write({\n' +
+          '  file_path: "/workspace/solution.py",\n' +
+          '  file_content: "def main():\\n    print(\'hello\')\\n\\nmain()"\n' +
+          '})\n\n' +
+          'Please try again with the complete file_content included.';
+
         callbacks.onToolResult?.(toolBlock.name, toolBlock.id, { success: false, error }, true);
         return {
           type: 'tool_result' as const,
