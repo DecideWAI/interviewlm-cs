@@ -156,11 +156,12 @@ export class AgentRouter {
 
     try {
       // Dynamic import to avoid circular dependencies
-      const { createCodingAgent } = await import('../agents/coding-agent');
+      const { createStreamingCodingAgent } = await import('../agents/coding-agent');
 
-      const agent = await createCodingAgent({
+      const agent = await createStreamingCodingAgent({
         sessionId: request.sessionId,
         candidateId: request.candidateId,
+        sessionRecordingId: request.sessionId, // Use sessionId as recording ID for routing
         helpfulnessLevel: (request.context?.helpfulnessLevel as any) || 'pair-programming',
         problemStatement: request.context?.problemStatement,
       });

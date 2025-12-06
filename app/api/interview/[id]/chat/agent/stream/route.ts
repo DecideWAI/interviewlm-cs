@@ -20,7 +20,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { publishAIInteraction } from "@/lib/queues";
-import { createStreamingCodingAgent } from "@/lib/agents/coding-agent-streaming";
+import { createStreamingCodingAgent } from "@/lib/agents/coding-agent";
 import { traceAgentSession } from "@/lib/observability/langsmith";
 import type { HelpfulnessLevel } from "@/lib/types/agent";
 
