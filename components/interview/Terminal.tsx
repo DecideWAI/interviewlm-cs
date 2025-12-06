@@ -4,8 +4,15 @@ import React, { useEffect, useRef, useImperativeHandle, forwardRef, useState, us
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { AttachAddon } from "@xterm/addon-attach";
+// Note: We don't use AttachAddon because ttyd uses a custom protocol
 import "@xterm/xterm/css/xterm.css";
+
+// ttyd protocol message types (ASCII character codes, NOT binary bytes!)
+// Client -> Server: '0' = input, '1' = resize, '2' = pause, '3' = resume
+// Server -> Client: '0' = output, '1' = set title, '2' = set preferences
+const TTYD_INPUT = 0x30;   // '0' - Client -> Server: keyboard input
+const TTYD_OUTPUT = 0x30;  // '0' - Server -> Client: terminal output
+const TTYD_RESIZE = 0x31;  // '1' - Client -> Server: window size (JSON format)
 
 interface TerminalProps {
   sessionId: string;
@@ -17,7 +24,7 @@ export interface TerminalHandle {
   write: (data: string) => void;
   writeln: (data: string) => void;
   connectionStatus: "connected" | "disconnected" | "connecting";
-  connectionMode: "tunnel" | "fallback";
+  connectionMode: "pty" | "tunnel" | "fallback";
 }
 
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
@@ -25,12 +32,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const terminalRef = useRef<HTMLDivElement>(null);
     const xtermRef = useRef<XTerm | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
-    const attachAddonRef = useRef<AttachAddon | null>(null);
     const wsRef = useRef<WebSocket | null>(null);
     const eventSourceRef = useRef<EventSource | null>(null);
     const connectionStatusRef = useRef<"connected" | "disconnected" | "connecting">("connecting");
     const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting">("connecting");
-    const [connectionMode, setConnectionMode] = useState<"tunnel" | "fallback">("tunnel");
+    const [connectionMode, setConnectionMode] = useState<"pty" | "tunnel" | "fallback">("pty");
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef<number>(0);
     const onCommandRef = useRef(onCommand);
@@ -47,6 +53,101 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       connectionStatusRef.current = status;
       setConnectionStatus(status);
     }, []);
+
+    // Connect via PTY mode - persistent shell session with true PTY
+    const connectPTY = useCallback(async (terminal: XTerm) => {
+      try {
+        updateConnectionStatus("connecting");
+        terminal.writeln("\x1b[90mConnecting via PTY bridge...\x1b[0m");
+
+        // Start SSE stream for PTY output
+        const sseUrl = `/api/interview/${sessionId}/terminal/pty`;
+        const eventSource = new EventSource(sseUrl);
+        eventSourceRef.current = eventSource;
+
+        let isConnected = false;
+
+        eventSource.onopen = () => {
+          console.log("[PTY] SSE connection opened");
+        };
+
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+
+            if (data.connected && !isConnected) {
+              isConnected = true;
+              updateConnectionStatus("connected");
+              setConnectionMode("pty");
+              reconnectAttemptsRef.current = 0;
+              terminal.writeln("\x1b[32m✓ Connected via PTY bridge\x1b[0m");
+              terminal.writeln("\x1b[32m✓ Low-latency shell active\x1b[0m");
+              terminal.writeln("");
+            }
+
+            if (data.output) {
+              terminal.write(data.output);
+            }
+
+            if (data.done) {
+              terminal.writeln("\x1b[33m[Shell session ended]\x1b[0m");
+              updateConnectionStatus("disconnected");
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        };
+
+        eventSource.onerror = () => {
+          console.error("[PTY] SSE connection error");
+          updateConnectionStatus("disconnected");
+          eventSource.close();
+
+          // Fall back to HTTP/SSE mode
+          terminal.writeln("\x1b[33m[PTY connection failed, falling back to HTTP mode]\x1b[0m");
+          fallbackToSSE(terminal);
+        };
+
+        // Handle terminal input - send to PTY via POST
+        // Use batching and fire-and-forget for lower perceived latency
+        let inputBuffer = "";
+        let inputTimeout: ReturnType<typeof setTimeout> | null = null;
+        const BATCH_DELAY_MS = 16; // ~1 frame, batches fast typing without noticeable delay
+
+        const flushInput = () => {
+          if (inputBuffer && connectionStatusRef.current === "connected") {
+            const data = inputBuffer;
+            inputBuffer = "";
+
+            // Fire-and-forget: don't await response
+            fetch(`/api/interview/${sessionId}/terminal/pty`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ data }),
+            }).catch((err) => {
+              console.error("[PTY] Failed to send input:", err);
+            });
+          }
+          inputTimeout = null;
+        };
+
+        terminal.onData((data) => {
+          if (connectionStatusRef.current === "connected") {
+            inputBuffer += data;
+
+            // Batch keystrokes within BATCH_DELAY_MS window
+            if (!inputTimeout) {
+              inputTimeout = setTimeout(flushInput, BATCH_DELAY_MS);
+            }
+          }
+        });
+
+      } catch (error) {
+        console.error("[PTY] Connection failed:", error);
+        terminal.writeln(`\x1b[31m[Error] ${error instanceof Error ? error.message : "Connection failed"}\x1b[0m`);
+        fallbackToSSE(terminal);
+      }
+    }, [sessionId, updateConnectionStatus]);
 
     // Fallback to SSE/HTTP mode (existing implementation)
     const fallbackToSSE = useCallback((terminal: XTerm) => {
@@ -247,11 +348,17 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         const tunnelUrl = data.tunnelUrl;
 
         // ttyd WebSocket endpoint is at /ws
+        // IMPORTANT: Must specify 'tty' subprotocol for ttyd to work!
         const wsUrl = `${tunnelUrl}/ws`;
         terminal.writeln(`\x1b[90mConnecting to ${wsUrl.substring(0, 50)}...\x1b[0m`);
 
-        const ws = new WebSocket(wsUrl);
+        // Connect with 'tty' subprotocol - required by ttyd
+        const ws = new WebSocket(wsUrl, ['tty']);
         wsRef.current = ws;
+
+        // IMPORTANT: ttyd expects TEXT frames for input, but can send binary for output
+        // Set binaryType for receiving, but we'll send as text strings
+        ws.binaryType = "arraybuffer";
 
         ws.onopen = () => {
           updateConnectionStatus("connected");
@@ -261,20 +368,92 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           terminal.writeln("\x1b[32m✓ Low-latency mode active\x1b[0m");
           terminal.writeln("");
 
-          // Attach WebSocket to terminal for bidirectional communication
-          const attachAddon = new AttachAddon(ws);
-          attachAddonRef.current = attachAddon;
-          terminal.loadAddon(attachAddon);
+          // Send initial resize to ttyd as TEXT frame
+          const sendResize = () => {
+            const cols = terminal.cols;
+            const rows = terminal.rows;
+            // ttyd resize format: '1' + JSON string {"columns": N, "rows": M}
+            // MUST be sent as a text frame (string), not binary!
+            const resizeMsg = '1' + JSON.stringify({ columns: cols, rows: rows });
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(resizeMsg);  // Send as string = text frame
+              console.log("[ttyd] Sent resize:", resizeMsg);
+            }
+          };
+          sendResize();
+
+          // Handle terminal resize
+          terminal.onResize(() => sendResize());
+
+          // Handle terminal input - send to ttyd as TEXT frame
+          terminal.onData((data) => {
+            console.log("[ttyd] Sending input:", JSON.stringify(data), "ws.readyState:", ws.readyState);
+            if (ws.readyState === WebSocket.OPEN) {
+              // ttyd input format: '0' + data
+              // MUST be sent as a text frame (string), not binary!
+              const inputMsg = '0' + data;
+              console.log("[ttyd] Sending text message:", JSON.stringify(inputMsg));
+              ws.send(inputMsg);  // Send as string = text frame
+            }
+          });
+        };
+
+        // Handle messages from ttyd
+        ws.onmessage = (event) => {
+          console.log("[ttyd] Message received, type:", typeof event.data,
+            "isArrayBuffer:", event.data instanceof ArrayBuffer,
+            "isBlob:", event.data instanceof Blob);
+
+          if (event.data instanceof ArrayBuffer) {
+            const data = new Uint8Array(event.data);
+            console.log("[ttyd] ArrayBuffer length:", data.length, "first byte:", data[0], "char:", String.fromCharCode(data[0]));
+            if (data.length > 0) {
+              const messageType = data[0];
+              if (messageType === TTYD_OUTPUT) {
+                // Output message: '0' (ASCII) + terminal data
+                const decoder = new TextDecoder();
+                const output = decoder.decode(data.slice(1));
+                console.log("[ttyd] OUTPUT:", output.substring(0, 50));
+                terminal.write(output);
+              } else {
+                // Other ttyd message types - log but don't fail
+                console.log("[ttyd] Other message type:", messageType, "char:", String.fromCharCode(messageType));
+                // Try writing all non-'0' messages as output too (in case we have wrong message type)
+                const decoder = new TextDecoder();
+                const output = decoder.decode(data.slice(1));
+                if (output.length > 0) {
+                  console.log("[ttyd] Trying to write anyway:", output.substring(0, 50));
+                  terminal.write(output);
+                }
+              }
+            }
+          } else if (typeof event.data === "string") {
+            console.log("[ttyd] String message:", event.data.substring(0, 100));
+            // ttyd can also send string messages (e.g., JSON for preferences)
+            if (event.data.startsWith("0")) {
+              // Output as string: '0' prefix + data
+              terminal.write(event.data.slice(1));
+            } else if (event.data.length > 0) {
+              // Try writing anyway
+              terminal.write(event.data);
+            }
+          } else if (event.data instanceof Blob) {
+            // Handle Blob data
+            console.log("[ttyd] Blob received, size:", event.data.size);
+            event.data.arrayBuffer().then(buffer => {
+              const data = new Uint8Array(buffer);
+              console.log("[ttyd] Blob->ArrayBuffer, first byte:", data[0]);
+              if (data.length > 1) {
+                const decoder = new TextDecoder();
+                const output = decoder.decode(data.slice(1));
+                terminal.write(output);
+              }
+            });
+          }
         };
 
         ws.onclose = (event) => {
           updateConnectionStatus("disconnected");
-
-          // Clean up attach addon
-          if (attachAddonRef.current) {
-            attachAddonRef.current.dispose();
-            attachAddonRef.current = null;
-          }
 
           if (reconnectAttemptsRef.current < MAX_TUNNEL_RECONNECT_ATTEMPTS) {
             reconnectAttemptsRef.current++;
@@ -373,11 +552,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         terminal.writeln("");
         terminal.write("\x1b[1;32m$\x1b[0m ");
       } else {
-        // Real session: try WebSocket tunnel first, fallback to SSE
+        // Real session: use PTY bridge for low-latency terminal
         terminal.writeln("\x1b[32m✓ Connected to Modal AI Sandbox\x1b[0m");
         terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
         terminal.writeln("");
-        connectTunnel(terminal);
+        connectPTY(terminal);
       }
 
       // Handle window resize
@@ -404,12 +583,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current);
         }
-        if (attachAddonRef.current) {
-          attachAddonRef.current.dispose();
-        }
         terminal.dispose();
       };
-    }, [sessionId, connectTunnel, updateConnectionStatus]);
+    }, [sessionId, connectPTY, updateConnectionStatus]);
 
     // Expose methods via ref using useImperativeHandle
     useImperativeHandle(ref, () => ({
