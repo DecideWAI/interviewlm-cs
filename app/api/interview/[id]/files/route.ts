@@ -15,7 +15,9 @@ const writeFileSchema = z.object({
 /**
  * GET /api/interview/[id]/files
  * Get file tree from Modal sandbox volume, or specific file content
- * Query params: path (optional) - if provided, returns file content instead of tree
+ * Query params:
+ *   - path (optional) - if provided, returns file content instead of tree
+ *   - bulk (optional) - if true, returns all file contents in a single response
  */
 export async function GET(
   request: NextRequest,
@@ -25,24 +27,37 @@ export async function GET(
     const { id: candidateId } = await params;
     const { searchParams } = new URL(request.url);
     const filePath = searchParams.get("path");
+    const bulk = searchParams.get("bulk") === "true";
 
     // Demo mode
     if (candidateId === "demo") {
-      // If requesting specific file content
-      if (filePath) {
-        const demoContent: Record<string, string> = {
-          "/workspace/solution.js": `function longestPalindrome(s) {
+      const demoContent: Record<string, string> = {
+        "/workspace/solution.js": `function longestPalindrome(s) {
   // Implement your solution here
   return "";
 }
 
 module.exports = longestPalindrome;`,
-          "/workspace/README.md": `# Longest Palindromic Substring
+        "/workspace/solution.test.js": `const longestPalindrome = require('./solution');
+
+describe('longestPalindrome', () => {
+  test('should find longest palindrome', () => {
+    expect(longestPalindrome('babad')).toBe('bab');
+  });
+});`,
+        "/workspace/README.md": `# Longest Palindromic Substring
 
 ## Problem
 Given a string s, return the longest palindromic substring in s.`,
-        };
+      };
 
+      // Bulk mode - return all file contents
+      if (bulk) {
+        return NextResponse.json({ contents: demoContent });
+      }
+
+      // If requesting specific file content
+      if (filePath) {
         return NextResponse.json({
           content: demoContent[filePath] || "",
           path: filePath,
@@ -87,7 +102,7 @@ Given a string s, return the longest palindromic substring in s.`,
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Get candidate
+    // Get candidate with session recording for tracked files
     const candidate = await prisma.candidate.findUnique({
       where: { id: candidateId },
       include: {
@@ -96,6 +111,12 @@ Given a string s, return the longest palindromic substring in s.`,
             members: {
               where: { userId: session.user.id },
             },
+          },
+        },
+        sessionRecording: {
+          select: {
+            id: true,
+            trackedFiles: true,
           },
         },
       },
@@ -125,6 +146,39 @@ Given a string s, return the longest palindromic substring in s.`,
       );
     }
 
+    // Bulk mode - fetch all tracked file contents at once
+    if (bulk) {
+      // Get tracked files from session recording
+      let trackedFiles: string[] = [];
+      if (candidate.sessionRecording) {
+        trackedFiles = (candidate.sessionRecording.trackedFiles as string[]) || [];
+      }
+
+      // If no tracked files, return empty
+      if (trackedFiles.length === 0) {
+        return NextResponse.json({ contents: {} });
+      }
+
+      // Read all tracked files in parallel
+      const contents: Record<string, string> = {};
+      const results = await Promise.all(
+        trackedFiles.map(async (path) => {
+          try {
+            const result = await modal.readFile(candidateId, path);
+            return { path, content: result.success ? (result.content || "") : "" };
+          } catch {
+            return { path, content: "" };
+          }
+        })
+      );
+
+      results.forEach(({ path, content }) => {
+        contents[path] = content;
+      });
+
+      return NextResponse.json({ contents });
+    }
+
     // If requesting specific file content
     if (filePath) {
       // Use candidateId (not volumeId) for sandbox lookup - Modal caches by candidateId
@@ -141,9 +195,14 @@ Given a string s, return the longest palindromic substring in s.`,
       });
     }
 
-    // Get files from Modal volume (file list)
-    // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
-    const files = await modal.getFileSystem(candidateId, "/workspace");
+    // Get tracked files from session recording and build file tree
+    let trackedFiles: string[] = [];
+    if (candidate.sessionRecording) {
+      trackedFiles = (candidate.sessionRecording.trackedFiles as string[]) || [];
+    }
+
+    // Build file tree from tracked files
+    const files = buildFileTreeFromPaths(trackedFiles);
 
     fileIdCounter = 0; // Reset counter for each request
     return NextResponse.json({
@@ -263,7 +322,7 @@ export async function POST(
         );
       }
 
-      // Record folder creation event
+      // Record folder creation event and track the folder
       if (candidate.sessionRecording) {
         await sessions.recordEvent(candidate.sessionRecording.id, {
           type: "folder_create",
@@ -273,6 +332,10 @@ export async function POST(
             timestamp: new Date().toISOString(),
           },
         });
+
+        // Track new folder
+        const fullPath = path.startsWith('/workspace') ? path : `/workspace/${path}`;
+        await sessions.addTrackedFile(candidate.sessionRecording.id, fullPath);
       }
 
       return NextResponse.json({
@@ -315,6 +378,13 @@ export async function POST(
         },
         previousContent // Pass previous content for diff calculation
       );
+
+      // Track new files in session's trackedFiles list
+      if (!previousContent) {
+        // Ensure path starts with /workspace
+        const fullPath = path.startsWith('/workspace') ? path : `/workspace/${path}`;
+        await sessions.addTrackedFile(candidate.sessionRecording.id, fullPath);
+      }
     }
 
     return NextResponse.json({
@@ -415,7 +485,7 @@ export async function DELETE(
       );
     }
 
-    // Record file deletion event
+    // Record file deletion event and remove from tracked files
     if (candidate.sessionRecording) {
       await sessions.recordEvent(candidate.sessionRecording.id, {
         type: "file_delete",
@@ -425,6 +495,10 @@ export async function DELETE(
           timestamp: new Date().toISOString(),
         },
       });
+
+      // Remove from tracked files
+      const fullPath = path.startsWith('/workspace') ? path : `/workspace/${path}`;
+      await sessions.removeTrackedFile(candidate.sessionRecording.id, fullPath);
     }
 
     return NextResponse.json({
@@ -441,6 +515,171 @@ export async function DELETE(
       { status: 500 }
     );
   }
+}
+
+/**
+ * Directories and files to exclude from file listing and bulk fetch
+ * These are system/dependency directories that shouldn't be shown to users
+ */
+const EXCLUDED_PATHS = new Set([
+  'node_modules',
+  '.git',
+  '__pycache__',
+  '.pytest_cache',
+  '.venv',
+  'venv',
+  '.env',
+  'env',
+  'dist',
+  'build',
+  '.next',
+  '.cache',
+  '.npm',
+  '.yarn',
+  'coverage',
+  '.nyc_output',
+  '.tox',
+  '.mypy_cache',
+  '.ruff_cache',
+  'target',           // Rust/Java build output
+  'vendor',           // Go dependencies
+  '.gradle',
+  '.idea',
+  '.vscode',
+  '.DS_Store',
+]);
+
+/**
+ * File extensions to exclude from listing
+ */
+const EXCLUDED_EXTENSIONS = new Set([
+  '.pyc',
+  '.pyo',
+  '.pyd',
+  '.so',
+  '.dll',
+  '.dylib',
+  '.class',
+  '.o',
+  '.obj',
+]);
+
+/**
+ * Check if a file/directory should be excluded from listing
+ */
+function shouldExcludePath(name: string): boolean {
+  // Check if the name itself is excluded
+  if (EXCLUDED_PATHS.has(name)) {
+    return true;
+  }
+
+  // Check file extension
+  const ext = name.includes('.') ? '.' + name.split('.').pop()?.toLowerCase() : '';
+  if (EXCLUDED_EXTENSIONS.has(ext)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Filter out excluded paths from file tree
+ * Returns a new array with excluded directories/files removed
+ */
+function filterFileTree(files: { name: string; path: string; type: string; children?: any[] }[]): { name: string; path: string; type: string; children?: any[] }[] {
+  return files
+    .filter(file => !shouldExcludePath(file.name))
+    .map(file => {
+      if (file.children && file.children.length > 0) {
+        return { ...file, children: filterFileTree(file.children) };
+      }
+      return file;
+    });
+}
+
+/**
+ * Build a file tree structure from a flat list of file paths
+ * Converts ["/workspace/src/index.js", "/workspace/README.md"] into a nested structure
+ */
+function buildFileTreeFromPaths(paths: string[]): { name: string; path: string; type: string; children?: any[] }[] {
+  if (paths.length === 0) return [];
+
+  // Build a nested structure
+  const root: Record<string, any> = {};
+
+  for (const filePath of paths) {
+    // Remove /workspace prefix for processing
+    const normalizedPath = filePath.startsWith('/workspace/')
+      ? filePath.slice('/workspace/'.length)
+      : filePath.startsWith('/workspace')
+        ? filePath.slice('/workspace'.length)
+        : filePath;
+
+    const parts = normalizedPath.split('/').filter(Boolean);
+    let current = root;
+
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      const isFile = i === parts.length - 1 && !filePath.endsWith('/');
+      const currentPath = '/workspace/' + parts.slice(0, i + 1).join('/');
+
+      if (!current[part]) {
+        current[part] = {
+          name: part,
+          path: currentPath,
+          type: isFile ? 'file' : 'directory',
+          children: isFile ? undefined : {},
+        };
+      }
+
+      if (!isFile) {
+        current = current[part].children;
+      }
+    }
+  }
+
+  // Convert the nested object to array format
+  function objectToArray(obj: Record<string, any>): any[] {
+    return Object.values(obj).map((item: any) => {
+      if (item.children && typeof item.children === 'object') {
+        const childArray = objectToArray(item.children);
+        return {
+          ...item,
+          children: childArray.length > 0 ? childArray : undefined,
+        };
+      }
+      return item;
+    });
+  }
+
+  return objectToArray(root);
+}
+
+/**
+ * Helper to extract all file paths from the file tree (for bulk fetch)
+ * Recursively traverses directories to collect all file paths
+ * Excludes system directories like node_modules, .git, etc.
+ */
+function extractFilePaths(files: { name: string; path: string; type: string; children?: any[] }[]): string[] {
+  const paths: string[] = [];
+
+  function traverse(nodes: { name: string; path: string; type: string; children?: any[] }[]) {
+    for (const node of nodes) {
+      // Skip excluded directories/files
+      if (shouldExcludePath(node.name)) {
+        continue;
+      }
+
+      if (node.type === "file") {
+        paths.push(node.path);
+      } else if (node.type === "directory" && node.children) {
+        traverse(node.children);
+      }
+    }
+  }
+
+  traverse(files);
+  return paths;
 }
 
 /**

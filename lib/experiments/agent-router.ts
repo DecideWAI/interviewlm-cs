@@ -163,6 +163,7 @@ export class AgentRouter {
         candidateId: request.candidateId,
         sessionRecordingId: request.sessionId, // Use sessionId as recording ID for routing
         helpfulnessLevel: (request.context?.helpfulnessLevel as any) || 'pair-programming',
+        workspaceRoot: '/workspace', // Modal sandbox workspace root
         problemStatement: request.context?.problemStatement,
       });
 

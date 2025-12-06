@@ -433,12 +433,28 @@ module.exports = longestPalindrome;`,
       content: `# ${question.title}\n\n${question.description}\n\n## Instructions\n\n1. Implement your solution in the starter file\n2. Run tests with \`npm test\` (or \`pytest\` for Python)\n3. Use Claude AI for help if needed\n\nGood luck!`,
     });
 
+    // Track which files were created
+    const createdFilePaths: string[] = [];
+
     for (const file of starterFiles) {
+      // Ensure path starts with /workspace
+      const fullPath = file.path.startsWith('/workspace') ? file.path : `/workspace/${file.path}`;
       const writeResult = await modal.writeFile(candidateId, file.path, file.content);
       if (!writeResult.success) {
         console.error(`[Initialize] Failed to write ${file.path}: ${writeResult.error}`);
       } else {
         console.log(`[Initialize] Wrote starter file: ${file.path}`);
+        createdFilePaths.push(fullPath);
+      }
+    }
+
+    // Track all created files in session recording
+    if (createdFilePaths.length > 0) {
+      try {
+        await sessions.addTrackedFiles(sessionRecording.id, createdFilePaths);
+        console.log(`[Initialize] Tracked ${createdFilePaths.length} starter files`);
+      } catch (err) {
+        console.error('[Initialize] Failed to track files:', err);
       }
     }
   }

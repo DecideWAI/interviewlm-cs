@@ -857,3 +857,128 @@ function stopPeriodicFlush(sessionId: string): void {
     delete (global as any)[`flush_${sessionId}`];
   }
 }
+
+/**
+ * Add a file path to the tracked files list for a session
+ * Used to track files created by user, LLM, or during initialization
+ *
+ * @param sessionId - Session recording ID
+ * @param filePath - Path of the file to track
+ * @returns Updated tracked files list
+ */
+export async function addTrackedFile(
+  sessionId: string,
+  filePath: string
+): Promise<string[]> {
+  const session = await prisma.sessionRecording.findUnique({
+    where: { id: sessionId },
+    select: { trackedFiles: true },
+  });
+
+  if (!session) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+
+  const currentFiles = (session.trackedFiles as string[]) || [];
+
+  // Avoid duplicates
+  if (currentFiles.includes(filePath)) {
+    return currentFiles;
+  }
+
+  const updatedFiles = [...currentFiles, filePath];
+
+  await prisma.sessionRecording.update({
+    where: { id: sessionId },
+    data: { trackedFiles: updatedFiles },
+  });
+
+  return updatedFiles;
+}
+
+/**
+ * Add multiple file paths to the tracked files list for a session
+ *
+ * @param sessionId - Session recording ID
+ * @param filePaths - Array of file paths to track
+ * @returns Updated tracked files list
+ */
+export async function addTrackedFiles(
+  sessionId: string,
+  filePaths: string[]
+): Promise<string[]> {
+  const session = await prisma.sessionRecording.findUnique({
+    where: { id: sessionId },
+    select: { trackedFiles: true },
+  });
+
+  if (!session) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+
+  const currentFiles = (session.trackedFiles as string[]) || [];
+  const newFiles = filePaths.filter((path) => !currentFiles.includes(path));
+
+  if (newFiles.length === 0) {
+    return currentFiles;
+  }
+
+  const updatedFiles = [...currentFiles, ...newFiles];
+
+  await prisma.sessionRecording.update({
+    where: { id: sessionId },
+    data: { trackedFiles: updatedFiles },
+  });
+
+  return updatedFiles;
+}
+
+/**
+ * Get the list of tracked files for a session
+ *
+ * @param sessionId - Session recording ID
+ * @returns Array of tracked file paths
+ */
+export async function getTrackedFiles(sessionId: string): Promise<string[]> {
+  const session = await prisma.sessionRecording.findUnique({
+    where: { id: sessionId },
+    select: { trackedFiles: true },
+  });
+
+  if (!session) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+
+  return (session.trackedFiles as string[]) || [];
+}
+
+/**
+ * Remove a file path from the tracked files list
+ *
+ * @param sessionId - Session recording ID
+ * @param filePath - Path of the file to remove
+ * @returns Updated tracked files list
+ */
+export async function removeTrackedFile(
+  sessionId: string,
+  filePath: string
+): Promise<string[]> {
+  const session = await prisma.sessionRecording.findUnique({
+    where: { id: sessionId },
+    select: { trackedFiles: true },
+  });
+
+  if (!session) {
+    throw new Error(`Session ${sessionId} not found`);
+  }
+
+  const currentFiles = (session.trackedFiles as string[]) || [];
+  const updatedFiles = currentFiles.filter((path) => path !== filePath);
+
+  await prisma.sessionRecording.update({
+    where: { id: sessionId },
+    data: { trackedFiles: updatedFiles },
+  });
+
+  return updatedFiles;
+}

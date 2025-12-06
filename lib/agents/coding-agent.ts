@@ -206,6 +206,15 @@ export class StreamingCodingAgent {
   }
 
   /**
+   * Send a message without streaming (collects all output)
+   * Convenience wrapper for non-streaming use cases
+   */
+  async sendMessage(message: string): Promise<AgentResponse> {
+    // Use streaming with empty callbacks to collect the full response
+    return this.sendMessageStreaming(message, {});
+  }
+
+  /**
    * Call Claude API with streaming
    * Wrapped with LangSmith tracing to capture model, tokens, cache, and cost
    */

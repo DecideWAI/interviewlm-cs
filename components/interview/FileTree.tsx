@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from "react";
-import { ChevronRight, ChevronDown, File, Folder, FolderOpen, Plus, FolderPlus, Trash2 } from "lucide-react";
+import { ChevronRight, ChevronDown, File, Folder, FolderOpen, Plus, FolderPlus, Trash2, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 
@@ -20,6 +20,8 @@ interface FileTreeProps {
   onFileSelect: (file: FileNode) => void;
   onFileCreate?: (path: string, type: "file" | "folder") => void;
   onFileDelete?: (path: string) => void;
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
   className?: string;
 }
 
@@ -285,6 +287,8 @@ export function FileTree({
   onFileSelect,
   onFileCreate,
   onFileDelete,
+  onRefresh,
+  isRefreshing,
   className
 }: FileTreeProps) {
   const [isCreating, setIsCreating] = useState<"file" | "folder" | null>(null);
@@ -351,36 +355,49 @@ export function FileTree({
   };
 
   return (
-    <div className={cn("bg-background overflow-y-auto", className)}>
-      {/* Header with action buttons */}
-      <div className="border-b border-border p-2 flex items-center justify-between">
+    <div className={cn("bg-background flex flex-col h-full", className)}>
+      {/* Header with action buttons - fixed at top */}
+      <div className="border-b border-border p-2 flex items-center justify-between flex-shrink-0">
         <span className="text-xs font-semibold text-text-primary">Files</span>
-        {onFileCreate && (
-          <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-0.5">
+          {onRefresh && (
             <button
-              onClick={() => setIsCreating("file")}
-              className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
-              title="New File (root)"
-              aria-label="New File"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1 disabled:opacity-50"
+              title="Refresh files from server"
+              aria-label="Refresh files"
             >
-              <Plus className="h-4 w-4" />
+              <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} />
             </button>
-            <button
-              onClick={() => setIsCreating("folder")}
-              className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
-              title="New Folder (root)"
-              aria-label="New Folder"
-            >
-              <FolderPlus className="h-4 w-4" />
-            </button>
-          </div>
-        )}
+          )}
+          {onFileCreate && (
+            <>
+              <button
+                onClick={() => setIsCreating("file")}
+                className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
+                title="New File (root)"
+                aria-label="New File"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setIsCreating("folder")}
+                className="text-text-tertiary hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded p-1"
+                title="New Folder (root)"
+                aria-label="New Folder"
+              >
+                <FolderPlus className="h-4 w-4" />
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Inline creation input for root level */}
       {isCreating && (
         <div
-          className="flex items-center gap-1.5 px-2 py-1 bg-background-tertiary/50 border-b border-border"
+          className="flex items-center gap-1.5 px-2 py-1 bg-background-tertiary/50 border-b border-border flex-shrink-0"
           style={{ paddingLeft: "20px" }}
         >
           {isCreating === "folder" ? (
@@ -400,8 +417,8 @@ export function FileTree({
         </div>
       )}
 
-      {/* File tree */}
-      <div role="tree" aria-label="Project files" className="py-2">
+      {/* File tree - scrollable area */}
+      <div role="tree" aria-label="Project files" className="py-2 flex-1 overflow-y-auto min-h-0">
         {files.map((node) => (
           <FileTreeNode
             key={node.id}
