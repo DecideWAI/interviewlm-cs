@@ -472,7 +472,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                       )}
                     </div>
                     <div className="flex-1 text-sm bg-background-tertiary border border-border rounded p-2">
-                      <pre className="whitespace-pre-wrap font-mono text-xs text-text-secondary">
+                      <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-secondary">
                         {message.content}
                       </pre>
                     </div>
@@ -496,12 +496,12 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                       className={cn(
                         "max-w-[80%] rounded-lg p-3",
                         message.role === "user"
-                          ? "bg-primary text-white"
+                          ? "bg-primary text-white selection:bg-white/30 selection:text-white"
                           : "bg-background-tertiary border border-border"
                       )}
                     >
                       <div className="prose prose-invert prose-sm max-w-none">
-                        <pre className="whitespace-pre-wrap font-sans text-sm">
+                        <pre className="whitespace-pre-wrap break-words font-sans text-sm">
                           {message.content}
                         </pre>
                       </div>
@@ -569,7 +569,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                 </div>
                 <div className="bg-background-tertiary border border-border rounded-lg p-3 max-w-[80%]">
                   <div className="prose prose-invert prose-sm max-w-none">
-                    <pre className="whitespace-pre-wrap font-sans text-sm">
+                    <pre className="whitespace-pre-wrap break-words font-sans text-sm">
                       {currentStreamingMessage}
                       <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse" />
                     </pre>
