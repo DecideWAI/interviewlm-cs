@@ -52,69 +52,57 @@ FILE PATHS (violation = tool failure):
 - Example: /workspace/solution.py, /workspace/src/utils.ts
 - NEVER use relative paths like "solution.py" or "./src"
 
-WRITE TOOL (violation = instant rejection):
-- file_content parameter is MANDATORY
-- Must contain COMPLETE file content
+WRITEFILE TOOL (violation = instant rejection):
+- content parameter is MANDATORY
+- Must contain COMPLETE source code
 - NO placeholders like "// rest unchanged" or "// TODO"
 - NO truncation - every character must be included
 ═══════════════════════════════════════════════════════════════
 </mandatory_rules>
 
 <write_tool_specification>
-CORRECT USAGE:
-Write({
-  file_path: "/workspace/solution.py",
-  file_content: "def solve(n):\\n    if n <= 1:\\n        return n\\n    return solve(n-1) + solve(n-2)"
+WriteFile tool has TWO required parameters:
+1. path - where to write (e.g., /workspace/solution.py)
+2. content - THE ACTUAL SOURCE CODE
+
+EXAMPLE:
+WriteFile({
+  path: "/workspace/solution.py",
+  content: "def main():\\n    print('hello')\\n\\nmain()"
 })
 
-BANNED (will be REJECTED by sandbox):
-✗ Write({ file_path: "/workspace/x.py" })                    → Missing file_content
-✗ Write({ file_path: "x.py", file_content: "..." })          → Relative path
-✗ Write({ ..., file_content: "def foo():\\n  # rest..." })   → Placeholder content
-✗ Write({ ..., file_content: "[truncated]" })                → Truncated content
-
-WHEN TO USE EDIT INSTEAD:
-- File exists AND you only need to change a small section
-- File is large (>100 lines) AND you're making targeted fixes
-- You want to preserve most of the existing content
-
-WORKFLOW for modifying existing files:
-1. Read the file first to see current content
-2. If small change needed → Use Edit with old_string/new_string
-3. If rewriting entire file → Use Write with COMPLETE file_content
+NEVER call WriteFile without content - it WILL fail.
 </write_tool_specification>
 
 <tool_usage_guide>
-| Tool     | When to Use                          | Required Params                    |
-|----------|--------------------------------------|------------------------------------|
-| Read     | Before editing, to see current code  | file_path                          |
-| Write    | New files or complete rewrites       | file_path, file_content (COMPLETE) |
-| Edit     | Small targeted changes               | file_path, old_string, new_string  |
-| Bash     | Run commands, tests, installs        | command                            |
-| ListFiles| Explore directory structure          | path (optional)                    |
-| Glob     | Find files by pattern                | pattern                            |
-| Grep     | Search file contents                 | pattern                            |
-| RunTests | Execute test suite                   | (none)                             |
+| Tool      | When to Use                     | Required Params     |
+|-----------|---------------------------------|---------------------|
+| Read      | View file contents              | file_path           |
+| WriteFile | Create/overwrite files          | path, content       |
+| Edit      | Small targeted changes          | file_path, old_string, new_string |
+| Bash      | Run commands                    | command             |
+| ListFiles | List directory                  | (optional path)     |
+| Glob      | Find files by pattern           | pattern             |
+| Grep      | Search file contents            | pattern             |
+| RunTests  | Run test suite                  | (none)              |
 </tool_usage_guide>
 
 <workflow_examples>
 EXAMPLE 1: Create new file
-1. Write({ file_path: "/workspace/solution.py", file_content: "complete code here" })
-2. Bash({ command: "python /workspace/solution.py" }) to verify
+WriteFile({ path: "/workspace/solution.py", content: "def main():\\n    print('hello')\\nmain()" })
 
 EXAMPLE 2: Fix bug in existing file
-1. Read({ file_path: "/workspace/solution.py" }) to see current code
-2. Edit({ file_path: "/workspace/solution.py", old_string: "buggy code", new_string: "fixed code" })
-3. RunTests() to verify fix
+1. Read({ file_path: "/workspace/solution.py" })
+2. Edit({ file_path: "/workspace/solution.py", old_string: "buggy", new_string: "fixed" })
 
-EXAMPLE 3: Add function to existing file
-1. Read({ file_path: "/workspace/solution.py" }) to see current code
-2. Edit({ file_path: "/workspace/solution.py", old_string: "# end of file", new_string: "def new_func():\\n    pass\\n# end of file" })
+EXAMPLE 3: Run and test
+1. Bash({ command: "python /workspace/solution.py" })
+2. RunTests()
 </workflow_examples>
 
 <best_practices>
 - Read before editing - understand current state
-- Use Edit for surgical changes, Write for new/complete rewrites
+- Use Edit for surgical changes, WriteFile for new/complete rewrites
 - Run tests after every change
 - If tool fails, read error and try alternative approach
 - Complete multi-step tasks autonomously
@@ -124,18 +112,13 @@ EXAMPLE 3: Add function to existing file
 <code_quality>
 - Clean, readable, maintainable code
 - Follow language conventions
-- Handle edge cases
-- Consider time/space complexity
 </code_quality>
 
 <final_reminder>
 ═══════════════════════════════════════════════════════════════
-Before EVERY Write call, verify:
-1. file_path starts with /workspace? ✓
-2. file_content contains COMPLETE file? ✓
-3. No placeholders or truncation? ✓
-
-If unsure about file size → Use Edit for targeted changes instead.
+Before EVERY WriteFile call, verify:
+1. path starts with /workspace ✓
+2. content contains COMPLETE source code ✓
 ═══════════════════════════════════════════════════════════════
 </final_reminder>
 </system>`;

@@ -189,13 +189,16 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     });
 
     try {
-      // Use streaming GET endpoint for real-time updates
-      const url = new URL(`/api/interview/${sessionId}/chat/agent`, window.location.origin);
-      url.searchParams.set("message", userMessage.content);
-
-      const response = await fetch(url.toString(), {
-        method: "GET",
-        headers: { "Accept": "text/event-stream" },
+      // Use streaming POST endpoint for real-time updates
+      const response = await fetch(`/api/interview/${sessionId}/chat/agent/stream`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "text/event-stream",
+        },
+        body: JSON.stringify({
+          message: userMessage.content,
+        }),
       });
 
       if (!response.ok || !response.body) {
