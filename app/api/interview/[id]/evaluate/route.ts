@@ -30,16 +30,14 @@ interface EvaluationCriterion {
   feedback: string;
 }
 
+// Criteria structure varies by assessment type
+type EvaluationCriteria = Record<string, EvaluationCriterion>;
+
 interface EvaluationResult {
   overallScore: number;
   passed: boolean;
-  criteria: {
-    problemCompletion: EvaluationCriterion;
-    codeQuality: EvaluationCriterion;
-    bestPractices: EvaluationCriterion;
-    errorHandling: EvaluationCriterion;
-    efficiency: EvaluationCriterion;
-  };
+  assessmentType?: string;
+  criteria: EvaluationCriteria;
   feedback: string;
   strengths: string[];
   improvements: string[];
@@ -426,37 +424,27 @@ export const POST = withErrorHandling(async (
     },
   });
 
-  // Format response
+  // Format response - map criteria with proper maxScore values
+  // Criteria keys vary by assessment type, so we iterate dynamically
+  const formattedCriteria: EvaluationCriteria = {};
+
+  if (aiResult.criteria) {
+    for (const [key, value] of Object.entries(aiResult.criteria)) {
+      if (value && typeof value === 'object') {
+        formattedCriteria[key] = {
+          score: value.score ?? 0,
+          maxScore: value.maxScore ?? 20,
+          feedback: value.feedback ?? '',
+        };
+      }
+    }
+  }
+
   const result: EvaluationResult = {
     overallScore: aiResult.overallScore,
     passed,
-    criteria: {
-      problemCompletion: {
-        score: aiResult.criteria.problemCompletion.score,
-        maxScore: 20,
-        feedback: aiResult.criteria.problemCompletion.feedback,
-      },
-      codeQuality: {
-        score: aiResult.criteria.codeQuality.score,
-        maxScore: 20,
-        feedback: aiResult.criteria.codeQuality.feedback,
-      },
-      bestPractices: {
-        score: aiResult.criteria.bestPractices.score,
-        maxScore: 20,
-        feedback: aiResult.criteria.bestPractices.feedback,
-      },
-      errorHandling: {
-        score: aiResult.criteria.errorHandling.score,
-        maxScore: 20,
-        feedback: aiResult.criteria.errorHandling.feedback,
-      },
-      efficiency: {
-        score: aiResult.criteria.efficiency.score,
-        maxScore: 20,
-        feedback: aiResult.criteria.efficiency.feedback,
-      },
-    },
+    assessmentType: (aiResult as { assessmentType?: string }).assessmentType,
+    criteria: formattedCriteria,
     feedback: aiResult.feedback,
     strengths: aiResult.strengths || [],
     improvements: aiResult.improvements || [],

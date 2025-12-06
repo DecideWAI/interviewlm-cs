@@ -607,18 +607,19 @@ export class StreamingCodingAgent {
       {
         name: 'WriteFile',
         description:
-          'Create or overwrite a file with source code.\n' +
-          'Usage: WriteFile({ path: "/workspace/solution.py", content: "..." })',
+          'Create or overwrite a file with source code. THIS IS THE PREFERRED METHOD for all file creation.\n' +
+          'Use this instead of Bash with cat/heredocs - WriteFile is faster and more reliable.\n\n' +
+          'Usage: WriteFile({ path: "/workspace/solution.py", content: "def main():\\n    print(\'hello\')\\nmain()" })',
         input_schema: {
           type: 'object',
           properties: {
             path: {
               type: 'string',
-              description: 'File path starting with /workspace',
+              description: 'File path starting with /workspace (e.g., /workspace/src/utils.py)',
             },
             content: {
               type: 'string',
-              description: 'Complete source code',
+              description: 'Complete file content - must include ALL code, no placeholders',
             },
           },
           required: ['path', 'content'],
@@ -648,12 +649,14 @@ export class StreamingCodingAgent {
           'Execute a shell command in the sandbox environment. Use this to:\n' +
           "- Run tests: `npm test`, `pytest`, `node test.js`\n" +
           "- Install packages: `npm install lodash`, `pip install requests`\n" +
-          "- Run code: `node solution.js`, `python solution.py`\n\n" +
-          'Commands run in /workspace directory. Avoid destructive commands.',
+          "- Run code: `node solution.js`, `python solution.py`\n" +
+          "- Create directories: `mkdir -p src/components`\n\n" +
+          'Commands run in /workspace directory.\n\n' +
+          'IMPORTANT: Do NOT use Bash for file writing (no cat/echo/heredocs). Use WriteFile tool instead.',
         input_schema: {
           type: 'object',
           properties: {
-            command: { type: 'string', description: "Shell command to execute (e.g., 'npm test', 'node solution.js')" },
+            command: { type: 'string', description: "Shell command to execute (e.g., 'npm test', 'node solution.js'). Do NOT use for file writing." },
           },
           required: ['command'],
         },

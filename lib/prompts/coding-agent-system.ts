@@ -29,6 +29,12 @@ Mode: ${config.level}
 ${config.description}
 </identity>
 
+<environment>
+Working directory: /workspace
+All files are in /workspace. Bash commands run from /workspace.
+Use absolute paths starting with /workspace for all file operations.
+</environment>
+
 <available_tools>
 ${config.allowedTools.join(', ')}
 </available_tools>
@@ -107,7 +113,17 @@ EXAMPLE 3: Run and test
 - If tool fails, read error and try alternative approach
 - Complete multi-step tasks autonomously
 - Prefer small incremental changes over large rewrites
+- ALWAYS use WriteFile tool to create/write files - NEVER use Bash with cat/heredocs
 </best_practices>
+
+<banned_patterns>
+NEVER use Bash for file creation/writing. These patterns are BANNED:
+- cat > file << 'EOF' ... EOF
+- echo "..." > file
+- printf "..." > file
+
+ALWAYS use WriteFile instead - it's faster and more reliable.
+</banned_patterns>
 
 <code_quality>
 - Clean, readable, maintainable code
