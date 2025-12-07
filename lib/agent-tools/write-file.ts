@@ -4,6 +4,7 @@
  */
 
 import { modalService as modal } from "@/lib/services";
+import { fileStreamManager } from "@/lib/services/file-streaming";
 import type { Anthropic } from "@anthropic-ai/sdk";
 
 export interface WriteFileToolOutput {
@@ -70,7 +71,26 @@ export async function executeWriteFile(
   const absPath = filePath.startsWith("/") ? filePath : `/workspace/${filePath}`;
 
   try {
+    // Check if file exists (to determine if this is create or update)
+    let isNewFile = true;
+    try {
+      const existing = await modal.readFile(sessionId, absPath);
+      isNewFile = !existing.success;
+    } catch {
+      isNewFile = true;
+    }
+
     await modal.writeFile(sessionId, absPath, content);
+
+    // Broadcast file change event for real-time file tree updates
+    fileStreamManager.broadcastFileChange({
+      sessionId,
+      type: isNewFile ? 'create' : 'update',
+      path: absPath,
+      fileType: 'file',
+      name: absPath.split('/').pop() || absPath,
+      timestamp: new Date().toISOString(),
+    });
 
     return {
       success: true,
