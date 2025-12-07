@@ -219,6 +219,10 @@ export function EvaluationPanel({
                 evaluationResult.criteria[
                   key as keyof typeof evaluationResult.criteria
                 ];
+
+              // Skip if criterion doesn't exist in the result
+              if (!criterion) return null;
+
               const isPassing =
                 (criterion.score / criterion.maxScore) * 100 >= 60;
 

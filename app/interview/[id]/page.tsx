@@ -374,6 +374,68 @@ export default function InterviewPage() {
     initializeSession();
   }, [candidateId, prefetchAllFiles]);
 
+  // Subscribe to file updates via SSE for real-time file tree updates
+  useEffect(() => {
+    // Skip for demo mode or if not initialized
+    if (candidateId === 'demo' || !sessionData) return;
+
+    const eventSource = new EventSource(`/api/interview/${candidateId}/file-updates`);
+
+    eventSource.addEventListener('file-change', (event) => {
+      try {
+        const change = JSON.parse(event.data);
+        console.log('[FileUpdates] Received:', change);
+
+        setSessionData(prev => {
+          if (!prev) return prev;
+
+          if (change.type === 'create') {
+            // Create new file node
+            const newNode: FileNode = {
+              id: `file-${Date.now()}`,
+              name: change.name,
+              type: change.fileType === 'folder' ? 'folder' : 'file',
+              path: change.path,
+              language: getLanguageFromPath(change.path),
+            };
+
+            // Determine parent path
+            const pathParts = change.path.split('/');
+            pathParts.pop(); // Remove the file/folder name
+            const parentPath = pathParts.join('/') || '/workspace';
+
+            return {
+              ...prev,
+              files: addToFileTree(prev.files, newNode, parentPath),
+            };
+          } else if (change.type === 'delete') {
+            return {
+              ...prev,
+              files: removeFromFileTree(prev.files, change.path),
+            };
+          }
+          // 'update' type doesn't need tree changes
+          return prev;
+        });
+      } catch (err) {
+        console.error('[FileUpdates] Parse error:', err);
+      }
+    });
+
+    eventSource.addEventListener('connected', () => {
+      console.log('[FileUpdates] SSE connected');
+    });
+
+    eventSource.onerror = () => {
+      console.error('[FileUpdates] SSE error');
+    };
+
+    return () => {
+      eventSource.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidateId, !!sessionData]); // Only re-run when candidateId changes or sessionData existence changes
+
   // Timer countdown
   useEffect(() => {
     if (!sessionData || timeRemaining <= 0) return;
@@ -1165,6 +1227,31 @@ export default function InterviewPage() {
     } catch (err) {
       console.error("Failed to refresh files:", err);
     }
+  };
+
+  // Helper to get language from file path
+  const getLanguageFromPath = (path: string): string => {
+    const ext = path.split('.').pop()?.toLowerCase() || '';
+    const languageMap: Record<string, string> = {
+      js: 'javascript',
+      ts: 'typescript',
+      tsx: 'typescript',
+      jsx: 'javascript',
+      py: 'python',
+      go: 'go',
+      rs: 'rust',
+      java: 'java',
+      md: 'markdown',
+      json: 'json',
+      html: 'html',
+      css: 'css',
+      sql: 'sql',
+      sh: 'bash',
+      yaml: 'yaml',
+      yml: 'yaml',
+      txt: 'text',
+    };
+    return languageMap[ext] || 'text';
   };
 
   // Helper to add a file/folder to the nested file tree

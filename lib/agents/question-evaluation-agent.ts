@@ -805,7 +805,7 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
 
     try {
       const { getFileSystem, readFile } = await import('../services/modal');
-      const files = await getFileSystem(this.config.sessionId, path || '/');
+      const files = await getFileSystem(this.config.sessionId, path || '/workspace');
       const matches: Array<{ file: string; line: number; text: string }> = [];
       const regex = new RegExp(pattern);
 
@@ -848,7 +848,7 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
 
     try {
       const { getFileSystem } = await import('../services/modal');
-      const allFiles = await getFileSystem(this.config.sessionId, '/');
+      const allFiles = await getFileSystem(this.config.sessionId, '/workspace');
 
       const regex = new RegExp(
         '^' + pattern
