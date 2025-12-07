@@ -40,6 +40,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef<number>(0);
     const onCommandRef = useRef(onCommand);
+    const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
     const MAX_TUNNEL_RECONNECT_ATTEMPTS = 3;
     const MAX_SSE_RECONNECT_ATTEMPTS = 5;
 
@@ -56,6 +57,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
     // Connect via PTY mode - persistent shell session with true PTY
     const connectPTY = useCallback(async (terminal: XTerm) => {
+      // IMPORTANT: Dispose previous onData handler to prevent duplicate keystroke handlers
+      if (onDataDisposableRef.current) {
+        onDataDisposableRef.current.dispose();
+        onDataDisposableRef.current = null;
+      }
+
       try {
         updateConnectionStatus("connecting");
         terminal.writeln("\x1b[90mConnecting via PTY bridge...\x1b[0m");
@@ -175,7 +182,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           batchTimeout = null;
         };
 
-        terminal.onData((data) => {
+        // Store the disposable to prevent duplicate handlers on reconnection
+        onDataDisposableRef.current = terminal.onData((data) => {
           if (connectionStatusRef.current !== "connected") return;
 
           // NOTE: No local echo needed - PTY already echoes characters back
@@ -604,14 +612,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         // Demo mode uses simulated terminal (fallback mode with no real backend)
         setConnectionMode("fallback");
         updateConnectionStatus("connected");
-        terminal.writeln("\x1b[32m✓ Connected to Modal AI Sandbox\x1b[0m");
+        terminal.writeln("\x1b[32m✓ Connected to AI Sandbox\x1b[0m");
         terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
         terminal.writeln("\x1b[90m[Demo Mode] Using simulated terminal\x1b[0m");
         terminal.writeln("");
         terminal.write("\x1b[1;32m$\x1b[0m ");
       } else {
         // Real session: use PTY bridge for low-latency terminal
-        terminal.writeln("\x1b[32m✓ Connected to Modal AI Sandbox\x1b[0m");
+        terminal.writeln("\x1b[32m✓ Connected to AI Sandbox\x1b[0m");
         terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
         terminal.writeln("");
         connectPTY(terminal);
@@ -632,6 +640,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       // Cleanup
       return () => {
         window.removeEventListener("resize", handleResize);
+        if (onDataDisposableRef.current) {
+          onDataDisposableRef.current.dispose();
+          onDataDisposableRef.current = null;
+        }
         if (wsRef.current) {
           wsRef.current.close();
         }

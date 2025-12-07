@@ -66,8 +66,10 @@ class FileStreamManager extends EventEmitter {
    */
   broadcastFileChange(event: FileChangeEvent): void {
     const clients = this.activeClients.get(event.sessionId);
+    console.log(`[FileStreaming] Broadcast request: ${event.type} for ${event.path}, session=${event.sessionId}, activeClients=${clients?.size || 0}`);
+
     if (!clients || clients.size === 0) {
-      // No active clients - silently skip
+      console.log(`[FileStreaming] No active clients for session ${event.sessionId}, skipping broadcast`);
       return;
     }
 
@@ -109,8 +111,10 @@ export function createFileStreamResponse(
   // Event listener for file changes
   const eventListener = (event: FileChangeEvent) => {
     try {
+      console.log(`[FileStreaming] Client ${clientId} sending event:`, event.type, event.path);
       const data = JSON.stringify(event);
       controller.enqueue(encoder.encode(`event: file-change\ndata: ${data}\n\n`));
+      console.log(`[FileStreaming] Client ${clientId} event sent successfully`);
     } catch (error) {
       console.error('[FileStreaming] Error sending event:', error);
     }

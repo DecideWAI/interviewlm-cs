@@ -5,6 +5,7 @@
  */
 
 import { modalService as modal } from "@/lib/services";
+import { fileStreamManager } from "@/lib/services/file-streaming";
 import type { Anthropic } from "@anthropic-ai/sdk";
 
 export interface EditFileToolOutput {
@@ -91,6 +92,16 @@ export async function executeEditFile(
 
     // Write the modified content back
     await modal.writeFile(sessionId, filePath, newContent);
+
+    // Broadcast file change event for real-time file tree updates
+    fileStreamManager.broadcastFileChange({
+      sessionId,
+      type: 'update',
+      path: filePath,
+      fileType: 'file',
+      name: filePath.split('/').pop() || filePath,
+      timestamp: new Date().toISOString(),
+    });
 
     return {
       success: true,
