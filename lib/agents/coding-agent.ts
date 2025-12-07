@@ -335,25 +335,37 @@ export class StreamingCodingAgent {
         };
       }
 
-      // Also handle legacy 'Write' tool name with old parameter names
-      if (toolBlock.name === 'Write' && (toolBlock.input.file_content === undefined || toolBlock.input.file_content === null)) {
-        console.error('[StreamingAgent] Write called without file_content:', {
-          toolId: toolBlock.id,
-          inputKeys: Object.keys(toolBlock.input),
-          filePath: toolBlock.input.file_path,
-        });
+      // Block Bash commands that write files (use WriteFile instead)
+      // This is a defense-in-depth measure since prompts alone are unreliable
+      if (toolBlock.name === 'Bash') {
+        const command = (toolBlock.input.command as string) || '';
+        const fileWritePatterns = [
+          /cat\s*>/, /cat\s*>>/, /cat\s*<</, // cat with redirection or heredoc
+          /echo\s+(['"]|[^|])*>/, // echo with redirection (but not pipes)
+          /printf\s+(['"]|[^|])*>/, // printf with redirection
+          /tee\s+(-a\s+)?\/workspace/, // tee writing to workspace
+          />\s*\/workspace/, // any redirect to /workspace
+          /<<\s*['"]?EOF/, // heredoc pattern
+        ];
 
-        const error =
-          'ERROR: Write requires "file_path" and "file_content" parameters.\n' +
-          'Usage: Write({ file_path: "/workspace/solution.py", file_content: "your code here" })';
+        const isFileWrite = fileWritePatterns.some(p => p.test(command));
+        if (isFileWrite) {
+          console.warn('[StreamingAgent] Blocked Bash file-writing command:', command.substring(0, 100));
 
-        callbacks.onToolResult?.(toolBlock.name, toolBlock.id, { success: false, error }, true);
-        return {
-          type: 'tool_result' as const,
-          tool_use_id: toolBlock.id,
-          content: JSON.stringify({ success: false, error }),
-          is_error: true,
-        };
+          const error =
+            'ERROR: Do not use Bash for file writing. Use the WriteFile tool instead.\n' +
+            'WriteFile is faster, more reliable, and handles encoding correctly.\n\n' +
+            'Example: WriteFile({ path: "/workspace/file.py", content: "your code here" })\n\n' +
+            'Blocked command: ' + command.substring(0, 80) + (command.length > 80 ? '...' : '');
+
+          callbacks.onToolResult?.(toolBlock.name, toolBlock.id, { success: false, error }, true);
+          return {
+            type: 'tool_result' as const,
+            tool_use_id: toolBlock.id,
+            content: JSON.stringify({ success: false, error }),
+            is_error: true,
+          };
+        }
       }
 
       const timeoutMs = toolBlock.name === 'Bash' ? BASH_TIMEOUT_MS : TOOL_TIMEOUT_MS;
@@ -379,7 +391,7 @@ export class StreamingCodingAgent {
       toolsUsed.push(toolBlock.name as AgentTool);
 
       // Track file modifications
-      if (toolBlock.name === 'WriteFile' || toolBlock.name === 'Write' || toolBlock.name === 'Edit') {
+      if (toolBlock.name === 'WriteFile' || toolBlock.name === 'Edit') {
         const filePath = toolBlock.name === 'WriteFile'
           ? (toolBlock.input as { path?: string }).path
           : (toolBlock.input as { file_path?: string }).file_path;
@@ -432,15 +444,6 @@ export class StreamingCodingAgent {
           this.config.sessionId,
           input.path as string,
           input.content as string
-        );
-      }
-      case 'Write': {
-        // Legacy support
-        const { executeWriteFile } = await import('../agent-tools/write-file');
-        return executeWriteFile(
-          this.config.sessionId,
-          input.file_path as string,
-          input.file_content as string
         );
       }
       case 'Edit': {

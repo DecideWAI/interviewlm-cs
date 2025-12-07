@@ -3,6 +3,7 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { modalService as modal, sessionService as sessions } from "@/lib/services";
 import { getSession } from "@/lib/auth-helpers";
+import { fileStreamManager } from "@/lib/services/file-streaming";
 
 // Request validation for file write
 const writeFileSchema = z.object({
@@ -338,6 +339,16 @@ export async function POST(
         await sessions.addTrackedFile(candidate.sessionRecording.id, fullPath);
       }
 
+      // Broadcast folder creation event
+      fileStreamManager.broadcastFileChange({
+        sessionId: candidateId,
+        type: 'create',
+        path,
+        fileType: 'folder',
+        name: path.split('/').pop() || path,
+        timestamp: new Date().toISOString(),
+      });
+
       return NextResponse.json({
         success: true,
         path,
@@ -386,6 +397,16 @@ export async function POST(
         await sessions.addTrackedFile(candidate.sessionRecording.id, fullPath);
       }
     }
+
+    // Broadcast file change event
+    fileStreamManager.broadcastFileChange({
+      sessionId: candidateId,
+      type: previousContent ? 'update' : 'create',
+      path,
+      fileType: 'file',
+      name: path.split('/').pop() || path,
+      timestamp: new Date().toISOString(),
+    });
 
     return NextResponse.json({
       success: true,
@@ -500,6 +521,16 @@ export async function DELETE(
       const fullPath = path.startsWith('/workspace') ? path : `/workspace/${path}`;
       await sessions.removeTrackedFile(candidate.sessionRecording.id, fullPath);
     }
+
+    // Broadcast file deletion event
+    fileStreamManager.broadcastFileChange({
+      sessionId: candidateId,
+      type: 'delete',
+      path,
+      fileType: 'file',
+      name: path.split('/').pop() || path,
+      timestamp: new Date().toISOString(),
+    });
 
     return NextResponse.json({
       success: true,

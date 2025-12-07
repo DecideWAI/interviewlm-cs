@@ -41,6 +41,33 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
   const [error, setError] = useState<string | null>(null);
   const [assessment, setAssessment] = useState<any>(null);
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+
+  const handlePublish = async () => {
+    if (!confirm("Are you sure you want to publish this assessment? It will become active and available to candidates.")) {
+      return;
+    }
+
+    setIsPublishing(true);
+    try {
+      const response = await fetch(`/api/assessments/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "PUBLISHED" }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to publish assessment");
+      }
+
+      fetchAssessmentDetail();
+    } catch (error) {
+      console.error("Error publishing assessment:", error);
+      alert("Failed to publish assessment. Please try again.");
+    } finally {
+      setIsPublishing(false);
+    }
+  };
 
   useEffect(() => {
     fetchAssessmentDetail();
@@ -251,7 +278,7 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
                   />
                 )}
                 {activeTab === "analytics" && <AnalyticsTab performance={perf} />}
-                {activeTab === "settings" && <SettingsTab assessment={assessment} />}
+                {activeTab === "settings" && <SettingsTab assessment={assessment} onStatusChange={fetchAssessmentDetail} isPublishing={isPublishing} onPublish={handlePublish} />}
               </div>
             </Card>
           </div>
@@ -262,6 +289,18 @@ export default function AssessmentDetailPage({ params }: AssessmentDetailPagePro
             <Card className="bg-background-secondary border-border p-6">
               <h3 className="text-sm font-semibold text-text-primary mb-4">Quick Actions</h3>
               <div className="space-y-2">
+                {assessment.status === "DRAFT" && (
+                  <Button
+                    variant="success"
+                    className="w-full justify-start"
+                    size="sm"
+                    onClick={handlePublish}
+                    loading={isPublishing}
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    Publish Assessment
+                  </Button>
+                )}
                 <Button
                   variant="primary"
                   className="w-full justify-start"
@@ -566,20 +605,80 @@ function AnalyticsTab({ performance }: any) {
   );
 }
 
-function SettingsTab({ assessment }: any) {
+function SettingsTab({
+  assessment,
+  onStatusChange,
+  isPublishing,
+  onPublish,
+}: {
+  assessment: any;
+  onStatusChange: () => void;
+  isPublishing: boolean;
+  onPublish: () => void;
+}) {
+  const [isArchiving, setIsArchiving] = useState(false);
+
+  const handleArchive = async () => {
+    if (!confirm("Are you sure you want to archive this assessment? It will no longer accept new candidates.")) {
+      return;
+    }
+
+    setIsArchiving(true);
+    try {
+      const response = await fetch(`/api/assessments/${assessment.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ARCHIVED" }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to archive assessment");
+      }
+
+      onStatusChange();
+    } catch (error) {
+      console.error("Error archiving assessment:", error);
+      alert("Failed to archive assessment. Please try again.");
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h3 className="text-sm font-semibold text-text-primary mb-4">Status Management</h3>
         <div className="space-y-3">
-          <Button variant="outline" className="w-full justify-start" size="sm">
-            <Settings className="h-4 w-4 mr-2" />
-            Edit Assessment Configuration
-          </Button>
-          <Button variant="outline" className="w-full justify-start" size="sm">
-            <Archive className="h-4 w-4 mr-2" />
-            Archive Assessment
-          </Button>
+          {assessment.status === "DRAFT" && (
+            <Button
+              variant="success"
+              className="w-full justify-start"
+              size="sm"
+              onClick={onPublish}
+              loading={isPublishing}
+            >
+              <CheckCircle2 className="h-4 w-4 mr-2" />
+              Publish Assessment
+            </Button>
+          )}
+          <Link href={`/assessments/${assessment.id}/edit`}>
+            <Button variant="outline" className="w-full justify-start" size="sm">
+              <Settings className="h-4 w-4 mr-2" />
+              Edit Assessment Configuration
+            </Button>
+          </Link>
+          {assessment.status !== "ARCHIVED" && (
+            <Button
+              variant="outline"
+              className="w-full justify-start"
+              size="sm"
+              onClick={handleArchive}
+              loading={isArchiving}
+            >
+              <Archive className="h-4 w-4 mr-2" />
+              Archive Assessment
+            </Button>
+          )}
         </div>
       </div>
 

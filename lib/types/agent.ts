@@ -22,7 +22,7 @@ export type ClaudeModel =
 export type AgentTool =
   // File operations (Coding Agent)
   | 'Read'
-  | 'Write'
+  | 'WriteFile'  // Create/overwrite files with content
   | 'Edit'
   | 'Grep'
   | 'Glob'
@@ -73,14 +73,14 @@ export const HELPFULNESS_CONFIGS: Record<HelpfulnessLevel, HelpfulnessConfig> = 
 
   'pair-programming': {
     level: 'pair-programming',
-    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'ListFiles', 'RunTests'],
+    allowedTools: ['Read', 'WriteFile', 'Edit', 'Grep', 'Glob', 'Bash', 'ListFiles', 'RunTests'],
     description: 'Full coding assistance with limited bash',
     useCase: 'Default - realistic AI collaboration',
   },
 
   'full-copilot': {
     level: 'full-copilot',
-    allowedTools: ['Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash', 'ListFiles', 'RunTests'],
+    allowedTools: ['Read', 'WriteFile', 'Edit', 'Grep', 'Glob', 'Bash', 'ListFiles', 'RunTests'],
     description: 'Maximum autonomy',
     useCase: 'Junior roles - evaluate delegation skills',
   },

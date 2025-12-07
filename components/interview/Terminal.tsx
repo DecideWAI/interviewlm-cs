@@ -108,37 +108,94 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           fallbackToSSE(terminal);
         };
 
-        // Handle terminal input - send to PTY via POST
-        // Use batching and fire-and-forget for lower perceived latency
+        // Handle terminal input - optimized for low latency
+        // Strategy: Immediate send for first keystroke, smart batching for rapid typing
         let inputBuffer = "";
-        let inputTimeout: ReturnType<typeof setTimeout> | null = null;
-        const BATCH_DELAY_MS = 16; // ~1 frame, batches fast typing without noticeable delay
+        let batchTimeout: ReturnType<typeof setTimeout> | null = null;
+        let lastSendTime = 0;
+        const CONTINUATION_BATCH_MS = 8; // Batch rapid typing within 8ms
+
+        // Track if we're currently reconnecting to avoid multiple reconnect attempts
+        let isReconnecting = false;
+
+        // Reconnect function - closes current connection and reconnects
+        const reconnectPTY = () => {
+          if (isReconnecting) return;
+          isReconnecting = true;
+
+          terminal.writeln("\r\n\x1b[33m[Reconnecting terminal...]\x1b[0m");
+          updateConnectionStatus("connecting");
+
+          // Close existing SSE connection
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+          }
+
+          // Wait a moment then reconnect
+          setTimeout(() => {
+            isReconnecting = false;
+            connectPTY(terminal);
+          }, 500);
+        };
+
+        // Send input with retry logic and reconnect on 410
+        const sendInput = (data: string, retries = 2) => {
+          fetch(`/api/interview/${sessionId}/terminal/pty`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ data }),
+          })
+            .then(async (res) => {
+              if (res.status === 410) {
+                // Session lost - need to reconnect
+                console.log("[PTY] Session lost (410), reconnecting...");
+                reconnectPTY();
+                return;
+              }
+              if (!res.ok && retries > 0) {
+                setTimeout(() => sendInput(data, retries - 1), 50);
+              }
+            })
+            .catch((err) => {
+              console.error("[PTY] Failed to send input:", err);
+              if (retries > 0) {
+                setTimeout(() => sendInput(data, retries - 1), 100);
+              }
+            });
+        };
 
         const flushInput = () => {
           if (inputBuffer && connectionStatusRef.current === "connected") {
             const data = inputBuffer;
             inputBuffer = "";
-
-            // Fire-and-forget: don't await response
-            fetch(`/api/interview/${sessionId}/terminal/pty`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ data }),
-            }).catch((err) => {
-              console.error("[PTY] Failed to send input:", err);
-            });
+            lastSendTime = Date.now();
+            sendInput(data);
           }
-          inputTimeout = null;
+          batchTimeout = null;
         };
 
         terminal.onData((data) => {
-          if (connectionStatusRef.current === "connected") {
-            inputBuffer += data;
+          if (connectionStatusRef.current !== "connected") return;
 
-            // Batch keystrokes within BATCH_DELAY_MS window
-            if (!inputTimeout) {
-              inputTimeout = setTimeout(flushInput, BATCH_DELAY_MS);
-            }
+          // NOTE: No local echo needed - PTY already echoes characters back
+          // Local echo would cause double characters since the shell echoes input
+
+          inputBuffer += data;
+
+          // Smart batching: send immediately if no recent send, otherwise batch
+          const timeSinceLastSend = Date.now() - lastSendTime;
+
+          if (batchTimeout) {
+            // Already in a batch window - extend it
+            clearTimeout(batchTimeout);
+            batchTimeout = setTimeout(flushInput, CONTINUATION_BATCH_MS);
+          } else if (timeSinceLastSend > CONTINUATION_BATCH_MS) {
+            // No recent activity - send immediately
+            flushInput();
+          } else {
+            // Recent send - start a short batch window
+            batchTimeout = setTimeout(flushInput, CONTINUATION_BATCH_MS);
           }
         });
 
@@ -147,6 +204,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         terminal.writeln(`\x1b[31m[Error] ${error instanceof Error ? error.message : "Connection failed"}\x1b[0m`);
         fallbackToSSE(terminal);
       }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sessionId, updateConnectionStatus]);
 
     // Fallback to SSE/HTTP mode (existing implementation)

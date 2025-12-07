@@ -62,6 +62,7 @@ export async function GET(
     const stream = new ReadableStream({
       async start(controller) {
         let isClosed = false;
+        let keepAliveInterval: NodeJS.Timeout | null = null;
 
         const safeEnqueue = (data: Uint8Array) => {
           if (!isClosed) {
@@ -69,6 +70,7 @@ export async function GET(
               controller.enqueue(data);
             } catch {
               isClosed = true;
+              if (keepAliveInterval) clearInterval(keepAliveInterval);
             }
           }
         };
@@ -76,6 +78,7 @@ export async function GET(
         const safeClose = () => {
           if (!isClosed) {
             isClosed = true;
+            if (keepAliveInterval) clearInterval(keepAliveInterval);
             try {
               controller.close();
             } catch {
@@ -83,6 +86,13 @@ export async function GET(
             }
           }
         };
+
+        // Start keepalive ping every 15 seconds to prevent connection timeout
+        keepAliveInterval = setInterval(() => {
+          if (!isClosed) {
+            safeEnqueue(encoder.encode(`: ping\n\n`));
+          }
+        }, 15000);
 
         try {
           // Send connection established event
@@ -217,9 +227,12 @@ export async function POST(
     // Check if shell session exists
     const shellSession = getShellSession(id);
     if (!shellSession) {
+      // Session doesn't exist - client needs to reconnect SSE stream
+      // Don't auto-recreate here because there's no one reading the output
+      console.log(`[PTY] Shell session not found for ${id}, client needs to reconnect`);
       return NextResponse.json(
-        { error: "No shell session. Connect to GET endpoint first." },
-        { status: 400 }
+        { error: "reconnect", message: "Shell session not found. Reconnecting..." },
+        { status: 410 } // 410 Gone - indicates resource no longer available
       );
     }
 

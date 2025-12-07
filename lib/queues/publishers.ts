@@ -48,7 +48,7 @@ export async function publishAIInteraction(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}:${Date.now()}`,
+    jobId: `${data.sessionId}_${eventType}_${Date.now()}`,
   });
 }
 
@@ -66,7 +66,7 @@ export async function publishCodeChanged(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}:${Date.now()}`,
+    jobId: `${data.sessionId}_${eventType}_${Date.now()}`,
   });
 }
 
@@ -84,7 +84,7 @@ export async function publishTestRun(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}:${Date.now()}`,
+    jobId: `${data.sessionId}_${eventType}_${Date.now()}`,
   });
 }
 
@@ -102,7 +102,7 @@ export async function publishQuestionAnswered(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}:${Date.now()}`,
+    jobId: `${data.sessionId}_${eventType}_${Date.now()}`,
   });
 }
 
@@ -120,7 +120,7 @@ export async function publishSessionStarted(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}`,
+    jobId: `${data.sessionId}_${eventType}`,
   });
 }
 
@@ -139,7 +139,7 @@ export async function publishSessionComplete(
     ...DEFAULT_JOB_OPTIONS,
     ...options,
     priority: 2, // Higher priority for completion
-    jobId: `${data.sessionId}:${eventType}`,
+    jobId: `${data.sessionId}_${eventType}`,
   });
 }
 
@@ -157,7 +157,7 @@ export async function publishAdjustDifficulty(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}:${Date.now()}`,
+    jobId: `${data.sessionId}_${eventType}_${Date.now()}`,
   });
 }
 
@@ -176,7 +176,7 @@ export async function publishEvaluationAnalyze(
     ...DEFAULT_JOB_OPTIONS,
     ...options,
     priority: data.priority || 5, // Use priority from data, default to 5
-    jobId: `${data.sessionId}:${eventType}`,
+    jobId: `${data.sessionId}_${eventType}`,
   });
 }
 
@@ -194,7 +194,7 @@ export async function publishGenerateReport(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}:${data.format}`,
+    jobId: `${data.sessionId}_${eventType}_${data.format}`,
   });
 }
 
@@ -212,7 +212,7 @@ export async function publishEvaluationComplete(
   await queue.add(eventType, data, {
     ...DEFAULT_JOB_OPTIONS,
     ...options,
-    jobId: `${data.sessionId}:${eventType}`,
+    jobId: `${data.sessionId}_${eventType}`,
   });
 }
 
@@ -231,7 +231,7 @@ export async function publishInterviewInvited(
     ...DEFAULT_JOB_OPTIONS,
     ...options,
     priority: 10, // Invitations are high priority
-    jobId: `${data.sessionId}:${eventType}`,
+    jobId: `${data.sessionId}_${eventType}`,
   });
 }
 
@@ -251,7 +251,7 @@ export async function publishBatch<T extends string, D extends { sessionId: stri
     opts: {
       ...DEFAULT_JOB_OPTIONS,
       ...options,
-      jobId: `${data.sessionId}:${type}:${Date.now()}`,
+      jobId: `${data.sessionId}_${type}_${Date.now()}`,
     },
   }));
 
