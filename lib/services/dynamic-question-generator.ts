@@ -12,7 +12,7 @@
  */
 
 import prisma from "@/lib/prisma";
-import { getChatCompletion } from "./claude";
+import { generateQuestionFast } from "./claude";
 import type { AssessmentType, ComplexityProfile } from "@prisma/client";
 import { logger } from "@/lib/utils/logger";
 
@@ -110,7 +110,7 @@ export class DynamicQuestionGenerator {
       timeMinutes: profile.timeMinutes,
     });
 
-    // 4. Call Claude to generate the question
+    // 4. Call Claude to generate the question (using fast Haiku model)
     try {
       logger.info('[DynamicQuestionGenerator] Generating question', {
         role,
@@ -120,14 +120,8 @@ export class DynamicQuestionGenerator {
         skills: allSkills,
       });
 
-      const response = await getChatCompletion(
-        [{ role: 'user', content: prompt }],
-        {
-          problemTitle: 'Question Generation',
-          problemDescription: '',
-          language: techStack[0] || 'typescript',
-        }
-      );
+      // Use fast generation with Haiku (~13s vs ~50s with Sonnet)
+      const response = await generateQuestionFast(prompt);
 
       // Parse JSON from response
       const jsonMatch = response.content.match(/\{[\s\S]*\}/);
