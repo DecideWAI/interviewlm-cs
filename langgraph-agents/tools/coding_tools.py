@@ -12,9 +12,45 @@ import re
 import os
 import base64
 import asyncio
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Any, Optional
 from pathlib import Path
 from langchain_core.tools import tool
+
+# Timeout for tool operations (matches TypeScript implementation)
+TOOL_TIMEOUT_SECONDS = 30
+
+# Thread pool for running synchronous operations with timeout
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tool_timeout")
+
+
+def run_with_timeout(func, *args, timeout: float = TOOL_TIMEOUT_SECONDS, **kwargs):
+    """
+    Run a synchronous function with a timeout.
+
+    This prevents tools from hanging indefinitely when:
+    - Sandbox creation takes too long
+    - Redis lock acquisition hangs
+    - Modal API is slow or unresponsive
+
+    Args:
+        func: The function to run
+        *args: Arguments to pass to the function
+        timeout: Maximum time in seconds (default: 30s to match TypeScript)
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        The result of the function
+
+    Raises:
+        TimeoutError: If the function takes longer than timeout
+    """
+    future = _executor.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout)
+    except FuturesTimeoutError:
+        raise TimeoutError(f"Operation timed out after {timeout}s")
+
 
 # Modal SDK - import at module level for efficiency
 try:
@@ -392,7 +428,13 @@ def run_in_sandbox(sandbox, *args, **kwargs):
     """
     # Use getattr to call the method dynamically, avoiding static analysis issues
     execute_method = getattr(sandbox, "exec")
-    return execute_method(*args, **kwargs)
+    proc = execute_method(*args, **kwargs)
+    
+    # Modal sandbox exec returns a process that needs wait() before accessing results
+    # Call wait() to ensure the process completes before reading stdout/stderr/returncode
+    proc.wait()
+    
+    return proc
 
 
 # Global sandbox manager
@@ -625,70 +667,114 @@ def edit_file(
         return {"success": False, "error": str(e)}
 
 
+def _list_files_internal(
+    session_id: str,
+    path: str,
+) -> dict[str, Any]:
+    """
+    Internal implementation of list_files (called with timeout wrapper).
+
+    IMPORTANT: Modal mounts /workspace as a symlink to /__modal/volumes/...
+    We must use trailing slash (ls -la /workspace/) to list contents,
+    otherwise ls shows the symlink itself instead of directory contents.
+    """
+    sb = sandbox_mgr.get_sandbox(session_id)
+
+    # Normalize path - remove double slashes, trailing slashes
+    normalized_path = re.sub(r'/+', '/', path).rstrip('/') or '/workspace'
+
+    # Security: Only allow listing within /workspace
+    if not normalized_path.startswith('/workspace'):
+        return {"success": False, "error": "Path must be within /workspace", "files": []}
+
+    # Block directory traversal attempts
+    if '/../' in normalized_path or normalized_path.endswith('/..'):
+        return {"success": False, "error": "Directory traversal not allowed", "files": []}
+
+    # CRITICAL FIX: Use trailing slash to force following symlinks
+    # Modal mounts volumes as symlinks (e.g., /workspace -> /__modal/volumes/...)
+    # Without trailing slash, ls might show the symlink itself instead of contents
+    target_path = f"{normalized_path}/"
+    cmd = f"ls -la {target_path} 2>/dev/null"
+
+    proc = run_in_sandbox(sb, "bash", "-c", cmd)
+    stdout = proc.stdout.read()
+
+    files = []
+    for line in stdout.strip().split("\n"):
+        line = line.strip()
+        if not line or line.startswith("total"):
+            continue
+
+        # ls -la output: permissions links owner group size month day time name
+        # Example: -rw-r--r-- 1 root root 1234 Dec 5 12:00 filename.txt
+        # Symlinks: lrwxrwxrwx 1 root root 38 Dec 5 12:00 name -> target
+        parts = line.split()
+        if len(parts) >= 9:
+            perms = parts[0]
+
+            # Skip symlinks - they could point outside workspace and cause hangs
+            if perms.startswith("l"):
+                continue
+
+            size = int(parts[4]) if parts[4].isdigit() else 0
+            name = " ".join(parts[8:])
+
+            # Handle any remaining " -> " in filename (symlink artifacts)
+            if " -> " in name:
+                name = name.split(" -> ")[0]
+
+            if name not in [".", ".."]:
+                file_path = f"{normalized_path}/{name}"
+
+                # Double-check constructed path is still within workspace
+                if not file_path.startswith('/workspace'):
+                    continue
+
+                files.append({
+                    "name": name,
+                    "path": file_path,
+                    "type": "directory" if perms.startswith("d") else "file",
+                    "size": size,
+                })
+
+    return {
+        "success": True,
+        "path": normalized_path,
+        "files": files,
+        "count": len(files),
+    }
+
+
 @tool
 def list_files(
     session_id: str,
     path: str = "/workspace",
-    recursive: bool = False,
 ) -> dict[str, Any]:
     """
     List files and directories in a path.
 
+    Note: This is non-recursive by design. Modal mounts /workspace as a symlink,
+    and recursive operations (find) can hang when following symlinks.
+    Use glob_files for pattern matching across directories.
+
     Args:
         session_id: Session ID for sandbox access
         path: Directory path to list (default: /workspace)
-        recursive: Whether to list recursively (default: False)
 
     Returns:
         Dict with list of files (name, path, type, size)
     """
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
-
-        if recursive:
-            cmd = f"find {path} -maxdepth 5 2>/dev/null | head -200"
-        else:
-            cmd = f"ls -la {path} 2>/dev/null"
-
-        proc = run_in_sandbox(sb, "bash", "-c", cmd)
-        stdout = proc.stdout.read()
-
-        files = []
-        for line in stdout.strip().split("\n"):
-            line = line.strip()
-            if not line or line.startswith("total"):
-                continue
-
-            if recursive:
-                # find output - just paths
-                name = Path(line).name
-                if name:
-                    files.append({
-                        "name": name,
-                        "path": line,
-                        "type": "file",  # Can't determine type from find
-                    })
-            else:
-                # ls -la output
-                parts = line.split()
-                if len(parts) >= 9:
-                    perms = parts[0]
-                    size = int(parts[4]) if parts[4].isdigit() else 0
-                    name = " ".join(parts[8:])
-                    if name not in [".", ".."]:
-                        files.append({
-                            "name": name,
-                            "path": f"{path}/{name}",
-                            "type": "directory" if perms.startswith("d") else "file",
-                            "size": size,
-                        })
-
-        return {
-            "success": True,
-            "path": path,
-            "files": files,
-            "count": len(files),
-        }
+        # Use timeout wrapper to prevent hanging (matches TypeScript implementation)
+        return run_with_timeout(
+            _list_files_internal,
+            session_id,
+            path,
+            timeout=TOOL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as e:
+        return {"success": False, "error": str(e), "files": []}
     except Exception as e:
         return {"success": False, "error": str(e), "files": []}
 

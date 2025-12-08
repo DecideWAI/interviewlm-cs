@@ -24,6 +24,8 @@ import { createStreamingCodingAgent } from "@/lib/agents/coding-agent";
 import { traceAgentSession } from "@/lib/observability/langsmith";
 import type { HelpfulnessLevel } from "@/lib/types/agent";
 import { agentAssignmentService, type AgentBackendType } from "@/lib/experiments";
+import { fileStreamManager } from "@/lib/services/file-streaming";
+import { sessionService } from "@/lib/services";
 
 // Request validation schema (passed as query params for GET/SSE)
 const chatRequestSchema = z.object({
@@ -124,8 +126,7 @@ export async function POST(
     });
 
     console.log(
-      `[AgentStream] Using ${agentAssignment.backend} backend (source: ${agentAssignment.source}${
-        agentAssignment.experimentId ? `, experiment: ${agentAssignment.experimentId}` : ""
+      `[AgentStream] Using ${agentAssignment.backend} backend (source: ${agentAssignment.source}${agentAssignment.experimentId ? `, experiment: ${agentAssignment.experimentId}` : ""
       })`
     );
 
@@ -184,6 +185,7 @@ export async function POST(
                 return await callLangGraphAgent({
                   sessionId: id,
                   candidateId: id,
+                  sessionRecordingId: sessionRecording?.id,
                   message: enhancedMessage,
                   helpfulnessLevel: helpfulnessLevel || "pair-programming",
                   problemStatement,
@@ -346,6 +348,7 @@ export async function POST(
 interface LangGraphCallOptions {
   sessionId: string;
   candidateId: string;
+  sessionRecordingId?: string;
   message: string;
   helpfulnessLevel: string;
   problemStatement?: string;
@@ -365,7 +368,7 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
 
   try {
     // Try streaming endpoint first
-    const response = await fetch(`${langGraphUrl}/api/agent/chat/stream`, {
+    const response = await fetch(`${langGraphUrl}/api/coding/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -398,6 +401,8 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
     let filesModified: string[] = [];
     let metadata: Record<string, unknown> = {};
 
+    let currentEventType = "";
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -407,32 +412,77 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
 
       for (const line of lines) {
         if (line.startsWith("event: ")) {
-          const eventType = line.substring(7);
+          currentEventType = line.substring(7).trim();
           continue;
         }
         if (line.startsWith("data: ")) {
           try {
             const data = JSON.parse(line.substring(6));
+            // Merge SSE event type with data for consistent handling
+            const effectiveType = data.type || currentEventType;
 
-            if (data.type === "content" || data.delta) {
+            if (effectiveType === "content" || effectiveType === "text_delta" || data.delta) {
               const delta = data.delta || data.content || "";
               fullText += delta;
               options.onTextDelta(delta);
-            } else if (data.type === "tool_start" || data.tool_name) {
-              if (data.tool_name) {
-                options.onToolStart(data.tool_name, data.tool_id || "", data.input || {});
+            } else if (effectiveType === "tool_start" || data.tool_name) {
+              // Tool starting - Python sends: {tool, input}
+              const toolName = data.tool_name || data.tool || "";
+              if (toolName) {
+                options.onToolStart(toolName, data.tool_id || "", data.input || {});
               }
-            } else if (data.type === "tool_result") {
+            } else if (effectiveType === "tool_result" || effectiveType === "tool_end" || data.tool) {
+              // Handle both formats:
+              // - TypeScript agent: {type: "tool_result", tool_name, output}
+              // - Python LangGraph: {tool, output} with event: tool_end
+              const toolNameRaw = data.tool_name || data.tool || "";
+              const output = data.output || data.result || {};
+
               options.onToolResult(
-                data.tool_name || "",
+                toolNameRaw,
                 data.tool_id || "",
-                data.output || data.result,
+                output,
                 !!data.is_error
               );
-              if (data.tool_name) {
-                toolsUsed.push(data.tool_name);
+              if (toolNameRaw) {
+                toolsUsed.push(toolNameRaw);
               }
-            } else if (data.type === "done" || data.response) {
+
+              // Broadcast file changes for file operations from LangGraph agent
+              // This enables real-time file tree updates in the frontend
+              const toolName = toolNameRaw.toLowerCase();
+              if (
+                (toolName === "write_file" || toolName === "edit_file") &&
+                output.success &&
+                output.path
+              ) {
+                const isCreate = toolName === "write_file";
+                const filePath = output.path.startsWith("/workspace")
+                  ? output.path
+                  : `/workspace/${output.path}`;
+                const fileName = filePath.split("/").pop() || filePath;
+
+                // Track file in database so it appears in file tree on refresh
+                if (options.sessionRecordingId) {
+                  sessionService
+                    .addTrackedFile(options.sessionRecordingId, filePath)
+                    .catch((err) =>
+                      console.error("[LangGraph] Failed to track file:", err)
+                    );
+                }
+
+                // Broadcast file change event for real-time updates
+                fileStreamManager.broadcastFileChange({
+                  sessionId: options.sessionId,
+                  type: isCreate ? "create" : "update",
+                  path: filePath,
+                  fileType: "file",
+                  name: fileName,
+                  timestamp: new Date().toISOString(),
+                });
+                filesModified.push(filePath);
+              }
+            } else if (effectiveType === "done" || data.response) {
               fullText = data.response || data.text || fullText;
               toolsUsed = data.tools_used || toolsUsed;
               filesModified = data.files_modified || filesModified;
@@ -468,7 +518,7 @@ async function callLangGraphAgentNonStreaming(options: LangGraphCallOptions): Pr
 }> {
   const langGraphUrl = process.env.LANGGRAPH_API_URL || "http://localhost:9001";
 
-  const response = await fetch(`${langGraphUrl}/api/agent/chat`, {
+  const response = await fetch(`${langGraphUrl}/api/coding/chat/sync`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -503,9 +553,9 @@ async function callLangGraphAgentNonStreaming(options: LangGraphCallOptions): Pr
       model: result.model,
       usage: result.token_usage
         ? {
-            input_tokens: result.token_usage.input,
-            output_tokens: result.token_usage.output,
-          }
+          input_tokens: result.token_usage.input,
+          output_tokens: result.token_usage.output,
+        }
         : undefined,
       ...result.metadata,
     },

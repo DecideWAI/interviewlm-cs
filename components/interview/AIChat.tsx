@@ -59,6 +59,12 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
   } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationHistory = useRef<any[]>([]);
+  const messageIdCounter = useRef(0);
+
+  const generateMessageId = (prefix: string) => {
+    messageIdCounter.current += 1;
+    return `${Date.now()}_${prefix}_${messageIdCounter.current}`;
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -67,7 +73,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
   // Reset conversation (called when moving to next question)
   const resetConversation = () => {
     setMessages([{
-      id: Date.now().toString(),
+      id: generateMessageId("system"),
       role: "system",
       content: "🔄 Conversation reset for new question. Previous context cleared.",
       timestamp: new Date(),
@@ -169,7 +175,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     if (!input.trim() || isLoading) return;
 
     const userMessage: Message = {
-      id: Date.now().toString(),
+      id: generateMessageId("user"),
       role: "user",
       content: input.trim(),
       timestamp: new Date(),
@@ -209,7 +215,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
 
-      let assistantMessageId = (Date.now() + 1).toString();
+      let assistantMessageId = generateMessageId("assistant");
       let fullHistoryContent = ""; // Accumulates ALL content for conversation history
       let pendingContent = ""; // Content pending to be shown (reset when flushed to messages)
       let tokenUsage: { inputTokens: number; outputTokens: number } | undefined;
@@ -243,7 +249,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   // If there's accumulated text content, add it as a message BEFORE the tool call
                   if (pendingContent.trim()) {
                     const preToolMessage: Message = {
-                      id: `${Date.now()}_assistant_pre_tool`,
+                      id: generateMessageId("assistant_pre_tool"),
                       role: "assistant",
                       content: pendingContent,
                       timestamp: new Date(),
@@ -262,7 +268,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   });
                   // Add tool use message to show input
                   const toolUseMsg: Message = {
-                    id: `${Date.now()}_tool_use_${data.toolId}`,
+                    id: generateMessageId(`tool_use_${data.toolId || "unknown"}`),
                     role: "system",
                     content: formatToolUse(data.toolName, data.input),
                     timestamp: new Date(),
@@ -277,7 +283,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   setCurrentToolUse(null);
 
                   const toolResultMessage: Message = {
-                    id: `${Date.now()}_tool_result_${data.toolId}`,
+                    id: generateMessageId(`tool_result_${data.toolId || "unknown"}`),
                     role: "system",
                     content: formatToolResult(data.toolName, data.output),
                     timestamp: new Date(),
