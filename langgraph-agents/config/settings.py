@@ -25,7 +25,7 @@ class Settings(BaseSettings):
         env="EVALUATION_AGENT_MODEL"
     )
     interview_agent_model: str = Field(
-        default="claude-3-5-haiku-20241022",
+        default="claude-haiku-4-5-20251001",
         env="INTERVIEW_AGENT_MODEL"
     )
 
@@ -87,8 +87,8 @@ class Settings(BaseSettings):
         description="Number of recent conversation messages to cache (0 to disable)"
     )
 
-    # LangSmith Configuration (primary observability - will migrate to Langfuse later)
-    langchain_tracing_v2: bool = Field(default=False, env="LANGCHAIN_TRACING_V2")
+    # LangSmith Configuration (default LangChain observability)
+    langchain_tracing_v2: bool = Field(default=True, env="LANGCHAIN_TRACING_V2")
     langchain_api_key: str | None = Field(default=None, env="LANGCHAIN_API_KEY")
     langchain_project: str = Field(
         default="interviewlm-agents",
@@ -97,14 +97,6 @@ class Settings(BaseSettings):
     langchain_endpoint: str = Field(
         default="https://api.smith.langchain.com",
         env="LANGCHAIN_ENDPOINT"
-    )
-
-    # Langfuse (optional - future migration)
-    langfuse_public_key: str | None = Field(default=None, env="LANGFUSE_PUBLIC_KEY")
-    langfuse_secret_key: str | None = Field(default=None, env="LANGFUSE_SECRET_KEY")
-    langfuse_host: str = Field(
-        default="https://cloud.langfuse.com",
-        env="LANGFUSE_HOST"
     )
 
     class Config:
