@@ -7,6 +7,31 @@
 
 import { useEffect, useCallback, useRef } from 'react';
 
+// File node type for file tree caching (matches FileNode from FileTree.tsx)
+export interface CachedFileNode {
+  id: string;
+  name: string;
+  type: 'file' | 'folder';
+  path: string;
+  children?: CachedFileNode[];
+}
+
+// Cached question data for instant restore on refresh
+export interface CachedQuestion {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: string;
+  language: string;
+  starterCode?: string;
+  testCases: Array<{
+    name: string;
+    input: string;
+    expectedOutput: string;
+    hidden: boolean;
+  }>;
+}
+
 export interface SessionState {
   code: string;
   selectedFilePath: string | null;
@@ -19,6 +44,14 @@ export interface SessionState {
   questionStartTime: string | null;
   questionTimeElapsed: number;
   lastSaved: number;
+
+  // NEW: Cached data for fast restore on browser refresh
+  sessionId?: string;
+  question?: CachedQuestion;
+  fileTree?: CachedFileNode[];
+  sandboxReady?: boolean;
+  volumeId?: string;
+  totalQuestions?: number;
 }
 
 interface UseSessionRecoveryOptions {
@@ -86,6 +119,7 @@ export function useSessionRecovery(options: UseSessionRecoveryOptions) {
           : {};
 
         const newState: SessionState = {
+          // Core state fields
           code: state.code ?? existingState.code ?? '',
           selectedFilePath: state.selectedFilePath ?? existingState.selectedFilePath ?? null,
           testResults: state.testResults ?? existingState.testResults ?? { passed: 0, total: 0 },
@@ -94,6 +128,14 @@ export function useSessionRecovery(options: UseSessionRecoveryOptions) {
           questionStartTime: state.questionStartTime ?? existingState.questionStartTime ?? null,
           questionTimeElapsed: state.questionTimeElapsed ?? existingState.questionTimeElapsed ?? 0,
           lastSaved: Date.now(),
+
+          // NEW: Cached data for fast restore on browser refresh
+          sessionId: state.sessionId ?? existingState.sessionId,
+          question: state.question ?? existingState.question,
+          fileTree: state.fileTree ?? existingState.fileTree,
+          sandboxReady: state.sandboxReady ?? existingState.sandboxReady,
+          volumeId: state.volumeId ?? existingState.volumeId,
+          totalQuestions: state.totalQuestions ?? existingState.totalQuestions,
         };
 
         // Only save if state actually changed

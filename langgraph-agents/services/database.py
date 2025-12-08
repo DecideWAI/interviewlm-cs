@@ -10,8 +10,8 @@ from datetime import datetime
 from typing import Any
 import asyncpg
 
-from ..config import settings
-from ..models.state import EvaluationResult, InterviewMetrics
+from config import settings
+from models.state import EvaluationResult, InterviewMetrics
 
 
 class DatabaseService:

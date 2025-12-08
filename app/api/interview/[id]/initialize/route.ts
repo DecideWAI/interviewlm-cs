@@ -377,7 +377,68 @@ module.exports = longestPalindrome;`,
       },
     });
   } else {
-    // Both question and sandbox exist - check if workspace is empty
+    // FAST PATH: Both question and sandbox exist
+    // Skip Modal API calls entirely - use cached trackedFiles from DB
+    const trackedFiles = (candidate.sessionRecording?.trackedFiles as string[]) || [];
+
+    if (trackedFiles.length > 0) {
+      // Build file tree from tracked paths (no Modal call needed!)
+      const files = buildFileTreeFromTrackedPaths(trackedFiles);
+
+      // Calculate time remaining
+      const timeLimit = (candidate.assessment?.duration || 60) * 60;
+      const startedAt = sessionRecording.startTime || new Date();
+      const elapsedSeconds = Math.floor((Date.now() - startedAt.getTime()) / 1000);
+      const timeRemaining = Math.max(0, timeLimit - elapsedSeconds);
+
+      // Transform test cases
+      const transformedTestCases = Array.isArray(question.testCases)
+        ? question.testCases.map((tc: any) => {
+            const expectedValue = tc.expectedOutput || tc.expected;
+            return {
+              name: tc.name || "",
+              input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
+              expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
+              hidden: tc.hidden || false,
+            };
+          })
+        : [];
+
+      logger.info('[Initialize] FAST PATH - returning cached session data', {
+        candidateId,
+        sessionId: sessionRecording.id,
+        trackedFilesCount: trackedFiles.length,
+        timeRemaining,
+      });
+
+      // Return cached data immediately - no Modal API calls!
+      return success({
+        sessionId: sessionRecording.id,
+        candidateId,
+        totalQuestions: 3,
+        question: {
+          id: question.id,
+          title: question.title,
+          description: question.description,
+          difficulty: question.difficulty,
+          language: question.language.toLowerCase(),
+          starterCode: question.starterCode,
+          testCases: transformedTestCases,
+        },
+        sandbox: {
+          volumeId,
+          workspaceDir: "/workspace",
+          status: "ready",
+        },
+        files,
+        timeLimit,
+        timeRemaining,
+        startedAt: startedAt.toISOString(),
+        _fastPath: true, // Flag for client debugging
+      });
+    }
+
+    // Fallback: No tracked files - need to check Modal (first-time or recovery)
     const existingFiles = await modal.getFileSystem(candidateId, "/workspace");
     if (existingFiles.length === 0) {
       console.log(`[Initialize] Workspace is empty, will write starter files`);
@@ -586,6 +647,77 @@ function transformFileNode(file: { name: string; path: string; type: string; chi
   }
 
   return transformed;
+}
+
+/**
+ * Helper to build file tree from flat array of tracked file paths
+ * Converts ["/workspace/solution.js", "/workspace/src/utils.js"] to nested FileNode tree
+ * Note: FileNode type doesn't include 'language' - that's determined by CodeEditor based on extension
+ */
+function buildFileTreeFromTrackedPaths(paths: string[]): {
+  id: string;
+  name: string;
+  type: "file" | "folder";
+  path: string;
+  children?: any[];
+}[] {
+  // Map to store directories
+  const dirMap = new Map<string, { id: string; name: string; type: "folder"; path: string; children: any[] }>();
+  const rootFiles: any[] = [];
+  let idCounter = 0;
+
+  // Sort paths to ensure parents are processed before children
+  const sortedPaths = [...paths].sort();
+
+  for (const fullPath of sortedPaths) {
+    // Skip non-workspace paths
+    if (!fullPath.startsWith('/workspace')) continue;
+
+    const relativePath = fullPath.replace('/workspace/', '');
+    const parts = relativePath.split('/');
+    const fileName = parts[parts.length - 1];
+
+    // Create the file node (without language - matches FileNode type)
+    const fileNode = {
+      id: `file-${idCounter++}`,
+      name: fileName,
+      type: "file" as const,
+      path: fullPath,
+    };
+
+    if (parts.length === 1) {
+      // File is directly in /workspace
+      rootFiles.push(fileNode);
+    } else {
+      // File is in a subdirectory - create parent dirs if needed
+      let currentPath = '/workspace';
+      let parentChildren = rootFiles;
+
+      for (let i = 0; i < parts.length - 1; i++) {
+        const dirName = parts[i];
+        currentPath = `${currentPath}/${dirName}`;
+
+        let dir = dirMap.get(currentPath);
+        if (!dir) {
+          dir = {
+            id: `dir-${idCounter++}`,
+            name: dirName,
+            type: "folder" as const,
+            path: currentPath,
+            children: [],
+          };
+          dirMap.set(currentPath, dir);
+          parentChildren.push(dir);
+        }
+        parentChildren = dir.children;
+      }
+
+      // Add file to the deepest directory
+      parentChildren.push(fileNode);
+    }
+  }
+
+  return rootFiles;
 }
 
 /**

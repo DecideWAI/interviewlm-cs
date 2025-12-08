@@ -18,6 +18,12 @@ import {
   traceToolExecution,
   traceAgentSession,
 } from '../observability/langsmith';
+import {
+  buildCachedSystemPrompt,
+  addMessageCacheBreakpoints,
+  extractCacheMetrics,
+  logCacheMetrics,
+} from '../utils/agent-utils';
 import type { AssessmentType } from '@/types/seed';
 
 // =============================================================================
@@ -485,10 +491,14 @@ export class QuestionEvaluationAgent {
         model: this.config.model!,
         max_tokens: 4096,
         temperature: 0.3,
-        system: this.getSystemPrompt(),
-        messages: conversation,
+        system: buildCachedSystemPrompt(this.getSystemPrompt()),
+        messages: addMessageCacheBreakpoints(conversation),
         tools: ALL_EVALUATION_TOOLS,
       });
+
+      // Log cache metrics
+      const cacheMetrics = extractCacheMetrics(response);
+      logCacheMetrics(cacheMetrics, 'QuestionEvaluation');
 
       totalUsage.input_tokens += response.usage.input_tokens;
       totalUsage.output_tokens += response.usage.output_tokens;
@@ -586,11 +596,15 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
       model: this.config.model!,
       max_tokens: 2048,
       temperature: 0.3,
-      system: this.getSystemPrompt(),
-      messages: conversation,
+      system: buildCachedSystemPrompt(this.getSystemPrompt()),
+      messages: addMessageCacheBreakpoints(conversation),
       // Only include SubmitEvaluation tool to force structured submission
       tools: [SUBMIT_EVALUATION_TOOL],
     });
+
+    // Log cache metrics for final response
+    const finalCacheMetrics = extractCacheMetrics(finalResponse);
+    logCacheMetrics(finalCacheMetrics, 'QuestionEvaluation-Final');
 
     totalUsage.input_tokens += finalResponse.usage.input_tokens;
     totalUsage.output_tokens += finalResponse.usage.output_tokens;

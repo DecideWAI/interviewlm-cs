@@ -12,6 +12,12 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import {
+  buildCachedSystemPrompt,
+  createAgentClient,
+  extractCacheMetrics,
+  logCacheMetrics,
+} from '@/lib/utils/agent-utils';
 
 export interface PromptQuality {
   score: number; // 0-100
@@ -57,12 +63,8 @@ export async function analyzePrompts(
     };
   }
 
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    defaultHeaders: {
-      "anthropic-beta": "prompt-caching-2024-07-31",
-    },
-  });
+  // Use shared client with caching enabled
+  const client = createAgentClient();
 
   const evidence: PromptEvidence[] = [];
   let totalSpecificity = 0;
@@ -83,7 +85,7 @@ export async function analyzePrompts(
         model: 'claude-3-5-sonnet-20241022',
         max_tokens: 2000,
         temperature: 0, // Deterministic for consistency
-        system: PROMPT_ANALYZER_SYSTEM_PROMPT,
+        system: buildCachedSystemPrompt(PROMPT_ANALYZER_SYSTEM_PROMPT),
         messages: [
           {
             role: 'user',
@@ -91,6 +93,10 @@ export async function analyzePrompts(
           },
         ],
       });
+
+      // Log cache metrics
+      const cacheMetrics = extractCacheMetrics(response);
+      logCacheMetrics(cacheMetrics, 'PromptAnalysis');
 
       const analysis = extractAnalysisFromResponse(response);
 
@@ -148,36 +154,102 @@ export async function analyzePrompts(
 
 /**
  * System prompt for the prompt analyzer
+ *
+ * NOTE: This prompt is intentionally detailed (~1200+ tokens) to enable
+ * Anthropic's prompt caching. Minimum ~1024 tokens required for caching.
  */
-const PROMPT_ANALYZER_SYSTEM_PROMPT = `You are an expert evaluator of AI prompt quality in technical interviews.
+const PROMPT_ANALYZER_SYSTEM_PROMPT = `You are an expert evaluator of AI prompt quality in technical interviews. Your role is to objectively assess how effectively candidates communicate with AI coding assistants during real-world programming tasks.
 
-Analyze each prompt a candidate sends to an AI coding assistant and score it on:
+## Evaluation Framework
 
-1. **Specificity (0-100)**: Does the prompt include:
-   - Specific file names or line numbers?
-   - Error messages or test failures?
-   - Concrete examples or constraints?
-   - Relevant context about what they've tried?
+Analyze each prompt a candidate sends to an AI coding assistant and score it across four key dimensions:
 
-2. **Clarity (0-100)**: Is the request:
-   - Clearly stated with unambiguous intent?
-   - Well-structured and easy to understand?
-   - Free from vague language like "make it work" or "fix this"?
+### 1. Specificity (0-100)
+Measures how precise and contextual the prompt is. High-scoring prompts include:
+- **File references**: Specific file names, paths, or line numbers (e.g., "In src/utils/parser.ts at line 45...")
+- **Error context**: Exact error messages, stack traces, or test failure outputs
+- **Concrete examples**: Sample inputs, expected outputs, or edge cases
+- **Prior attempts**: What the candidate has already tried and why it didn't work
+- **Constraints**: Memory limits, time complexity requirements, API limitations
 
-3. **Technical Depth (0-100)**: Does the prompt show:
-   - Understanding of the underlying problem?
-   - Awareness of technical concepts (algorithms, data structures)?
-   - Ability to articulate technical constraints?
-   - Debugging reasoning or hypothesis?
+Score guide:
+- 90-100: Includes multiple specific details, error messages, and clear constraints
+- 70-89: Includes some specific context but missing key details
+- 50-69: Generic with minimal context (e.g., "this function isn't working")
+- 0-49: Extremely vague with no actionable context
 
-For each prompt, provide:
-- Analysis: 1-2 sentence explanation
-- Strength: What was done well (optional)
-- Weakness: What could be improved (optional)
-- Category: excellent | good | needs_improvement | poor
-- Scores for specificity, clarity, and technical depth (0-100)
+### 2. Clarity (0-100)
+Measures how well the request is communicated. High-scoring prompts are:
+- **Unambiguous**: Single clear interpretation of what's being asked
+- **Well-structured**: Organized thoughts, possibly using formatting or sections
+- **Action-oriented**: Clear about what outcome is desired
+- **Complete**: All necessary information in one message (not requiring clarification)
 
-Be objective and evidence-based. Compare prompts to best practices for AI collaboration.`;
+Red flags that reduce clarity scores:
+- Vague language: "make it work", "fix this", "help me", "something is wrong"
+- Multiple unrelated questions in one prompt
+- Stream of consciousness without organization
+- Missing crucial context that would require follow-up questions
+
+Score guide:
+- 90-100: Crystal clear, well-organized, single interpretation possible
+- 70-89: Clear but could be better organized or more precise
+- 50-69: Understandable but requires interpretation or has ambiguity
+- 0-49: Confusing, disorganized, or incomprehensible
+
+### 3. Technical Depth (0-100)
+Measures the candidate's demonstrated technical understanding. High-scoring prompts show:
+- **Problem understanding**: Articulates WHY something might not be working
+- **Algorithm awareness**: Mentions relevant algorithms, data structures, patterns
+- **Debugging reasoning**: Forms hypotheses about root causes
+- **Trade-off awareness**: Considers performance, maintainability, edge cases
+- **Technical vocabulary**: Uses correct terminology for the domain
+
+Score guide:
+- 90-100: Demonstrates deep understanding, forms hypotheses, discusses trade-offs
+- 70-89: Shows good technical grasp with some reasoning
+- 50-69: Basic technical awareness without deeper analysis
+- 0-49: Minimal technical engagement, treats AI as magic
+
+### 4. Iteration Quality
+This is calculated separately by analyzing prompt sequences. Good iteration shows:
+- Learning from previous AI responses
+- Refining questions based on new information
+- Progressive narrowing toward solution
+- Not repeating the same vague question
+
+## Output Requirements
+
+For each prompt analyzed, provide:
+- **Analysis**: 1-2 sentence explanation of the overall quality
+- **Strength**: What was done well (optional, only if notable)
+- **Weakness**: What could be improved (optional, only if notable)
+- **Category**: One of: excellent | good | needs_improvement | poor
+- **Scores**: Numeric scores (0-100) for specificity, clarity, and technicalDepth
+
+## Evaluation Principles
+
+1. **Be objective**: Base scores on evidence, not assumptions about intent
+2. **Consider context**: A simple question for a simple task is appropriate
+3. **Value precision**: Specific, actionable prompts are more valuable than verbose ones
+4. **Reward debugging mindset**: Candidates who show reasoning process score higher
+5. **Recognize good AI collaboration**: Effective prompts leverage AI strengths
+
+## Examples of Each Category
+
+**Excellent (90-100)**:
+"I'm implementing a LRU cache in TypeScript. My get() method at line 34 of cache.ts returns undefined for keys that should exist. I've verified the key is being added in put() (logged at line 28). I suspect the issue is in my doubly-linked list node removal - specifically whether I'm updating the prev/next pointers correctly when moving a node to the front. Can you review my moveToFront() method?"
+
+**Good (70-89)**:
+"My binary search function returns -1 when searching for values that exist in the array. Here's the function: [code]. I think the issue might be in how I'm calculating the midpoint or updating the boundaries."
+
+**Needs Improvement (50-69)**:
+"Why isn't my search working? It keeps returning -1."
+
+**Poor (0-49)**:
+"Help me fix this"
+
+Be thorough but fair in your evaluations. The goal is to provide actionable insights that help improve AI collaboration skills.`;
 
 /**
  * Build the analysis request for a batch of prompts
@@ -314,19 +386,17 @@ export async function analyzeSinglePrompt(
   score: number;
   feedback: string;
 }> {
-  const client = new Anthropic({
-    apiKey: process.env.ANTHROPIC_API_KEY,
-    defaultHeaders: {
-      "anthropic-beta": "prompt-caching-2024-07-31",
-    },
-  });
+  // Use shared client with caching enabled
+  const client = createAgentClient();
+
+  const singlePromptSystemPrompt = 'Rate this AI prompt on a scale of 0-100 based on specificity, clarity, and technical depth. Return only: SCORE: <number>\nFEEDBACK: <brief feedback>';
 
   try {
     const response = await client.messages.create({
       model: 'claude-3-5-haiku-20241022', // Faster model for real-time
       max_tokens: 300,
       temperature: 0,
-      system: 'Rate this AI prompt on a scale of 0-100 based on specificity, clarity, and technical depth. Return only: SCORE: <number>\nFEEDBACK: <brief feedback>',
+      system: buildCachedSystemPrompt(singlePromptSystemPrompt),
       messages: [
         {
           role: 'user',
@@ -334,6 +404,10 @@ export async function analyzeSinglePrompt(
         },
       ],
     });
+
+    // Log cache metrics
+    const cacheMetrics = extractCacheMetrics(response);
+    logCacheMetrics(cacheMetrics, 'SinglePromptAnalysis');
 
     const text = response.content[0].type === 'text' ? response.content[0].text : '';
     const scoreMatch = text.match(/SCORE:\s*(\d+)/);

@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     enable_prompt_caching: bool = Field(default=True, env="ENABLE_PROMPT_CACHING")
     enable_observability: bool = Field(default=False, env="ENABLE_OBSERVABILITY")
 
+    # Prompt Caching Configuration
+    message_cache_count: int = Field(
+        default=2,
+        env="MESSAGE_CACHE_COUNT",
+        description="Number of recent conversation messages to cache (0 to disable)"
+    )
+
     # LangSmith Configuration (primary observability - will migrate to Langfuse later)
     langchain_tracing_v2: bool = Field(default=False, env="LANGCHAIN_TRACING_V2")
     langchain_api_key: str | None = Field(default=None, env="LANGCHAIN_API_KEY")

@@ -1,21 +1,56 @@
 """
-Interview Agent - LangGraph Implementation
+Interview Agent - LangGraph v1 Implementation
 
 Observes candidate progress and adapts interview difficulty using IRT algorithms.
 This agent is HIDDEN from candidates - it only observes and updates metrics.
 
-Based on the original TypeScript implementation in workers/interview-agent.ts
+NOTE: This agent does NOT use LLM calls - it's a pure state machine for IRT
+calculations. Therefore it uses StateGraph directly rather than create_agent.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 from datetime import datetime
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
+import math
 
-from ..models.state import InterviewAgentState, InterviewMetrics
-from ..config import settings
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import BaseMessage
+from typing_extensions import TypedDict
+
+
+# =============================================================================
+# State Schema (LangGraph v1 style)
+# =============================================================================
+
+class InterviewMetrics(TypedDict, total=False):
+    """Metrics tracked during an interview session."""
+    session_id: str
+    irt_theta: float  # IRT ability estimate (-3 to +3)
+    irt_standard_error: float
+    questions_answered: int
+    questions_correct: int
+    questions_incorrect: int
+    ai_interactions_count: int
+    average_prompt_quality: float
+    ai_dependency_score: float  # 0-100
+    struggling_indicators: list[str]
+    average_response_time: float
+    test_failure_rate: float
+    current_difficulty: int  # 1-10
+    recommended_next_difficulty: int
+    last_updated: str
+
+
+class InterviewAgentState(TypedDict, total=False):
+    """State for the interview agent."""
+    messages: Annotated[list[BaseMessage], add_messages]
+    session_id: str
+    candidate_id: str
+    metrics: InterviewMetrics
+    current_event_type: str
+    current_event_data: dict
+    processing_complete: bool
 
 
 # =============================================================================
@@ -72,7 +107,6 @@ def update_irt_theta(
     new_theta = max(-3, min(3, current_theta + theta_delta))
 
     # Update standard error (decreases with more questions)
-    import math
     new_standard_error = 1.5 / math.sqrt(max(questions_answered, 1))
 
     return new_theta, new_standard_error
@@ -86,49 +120,8 @@ def calculate_recommended_difficulty(theta: float) -> int:
 
 
 # =============================================================================
-# Node Functions
+# Event Handlers
 # =============================================================================
-
-async def process_event(state: InterviewAgentState) -> dict:
-    """
-    Process an interview event and update metrics.
-
-    This is the main processing node that handles all event types.
-    """
-    event_type = state.get("current_event_type")
-    event_data = state.get("current_event_data", {})
-    metrics = state.get("metrics")
-
-    if not metrics:
-        metrics = create_default_metrics(state["session_id"])
-
-    # Update last_updated timestamp
-    metrics["last_updated"] = datetime.utcnow().isoformat()
-
-    # Handle different event types
-    if event_type == "ai-interaction":
-        metrics = await handle_ai_interaction(metrics, event_data)
-    elif event_type == "code-changed":
-        metrics = await handle_code_changed(metrics, event_data)
-    elif event_type == "test-run":
-        metrics = await handle_test_run(metrics, event_data)
-    elif event_type == "question-answered":
-        metrics = await handle_question_answered(metrics, event_data)
-    elif event_type == "session-started":
-        difficulty = event_data.get("difficulty", 5)
-        metrics = create_default_metrics(state["session_id"], difficulty)
-    elif event_type == "session-complete":
-        # Log final metrics
-        print(f"[Interview Agent] Session {state['session_id']} complete")
-        print(f"  IRT Theta: {metrics['irt_theta']:.2f}")
-        print(f"  Questions Answered: {metrics['questions_answered']}")
-        print(f"  AI Dependency: {metrics['ai_dependency_score']:.1f}")
-
-    return {
-        "metrics": metrics,
-        "processing_complete": True,
-    }
-
 
 async def handle_ai_interaction(metrics: InterviewMetrics, data: dict) -> InterviewMetrics:
     """Handle AI interaction event - updates AI usage metrics."""
@@ -218,14 +211,48 @@ async def handle_question_answered(metrics: InterviewMetrics, data: dict) -> Int
         if "slow_response_time" not in metrics["struggling_indicators"]:
             metrics["struggling_indicators"].append("slow_response_time")
 
-    # Log if difficulty adjustment is needed
-    if abs(metrics["current_difficulty"] - metrics["recommended_next_difficulty"]) >= 2:
-        print(
-            f"[Interview Agent] Recommend difficulty adjustment: "
-            f"{metrics['current_difficulty']} -> {metrics['recommended_next_difficulty']}"
-        )
-
     return metrics
+
+
+# =============================================================================
+# Node Functions
+# =============================================================================
+
+async def process_event(state: InterviewAgentState) -> dict:
+    """
+    Process an interview event and update metrics.
+
+    This is the main processing node that handles all event types.
+    """
+    event_type = state.get("current_event_type")
+    event_data = state.get("current_event_data", {})
+    metrics = state.get("metrics")
+
+    if not metrics:
+        metrics = create_default_metrics(state["session_id"])
+
+    # Update last_updated timestamp
+    metrics["last_updated"] = datetime.utcnow().isoformat()
+
+    # Handle different event types
+    if event_type == "ai-interaction":
+        metrics = await handle_ai_interaction(metrics, event_data)
+    elif event_type == "code-changed":
+        metrics = await handle_code_changed(metrics, event_data)
+    elif event_type == "test-run":
+        metrics = await handle_test_run(metrics, event_data)
+    elif event_type == "question-answered":
+        metrics = await handle_question_answered(metrics, event_data)
+    elif event_type == "session-started":
+        difficulty = event_data.get("difficulty", 5)
+        metrics = create_default_metrics(state["session_id"], difficulty)
+    elif event_type == "session-complete":
+        pass  # Just log final state
+
+    return {
+        "metrics": metrics,
+        "processing_complete": True,
+    }
 
 
 def should_continue(state: InterviewAgentState) -> Literal["end"]:
@@ -244,6 +271,9 @@ def create_interview_agent_graph() -> StateGraph:
 
     Flow:
     START -> process_event -> END
+
+    NOTE: This agent doesn't use LLM - it's a pure state machine for IRT
+    calculations, so we use StateGraph directly.
     """
     workflow = StateGraph(InterviewAgentState)
 
@@ -260,6 +290,10 @@ def create_interview_agent_graph() -> StateGraph:
 
     return workflow
 
+
+# =============================================================================
+# Wrapper Class
+# =============================================================================
 
 class InterviewAgentGraph:
     """

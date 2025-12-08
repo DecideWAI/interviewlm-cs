@@ -460,56 +460,183 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
   return { sandbox, sandboxId, volumeName };
 }
 
-// Timeout for fromId reconnection
-// Based on testing: fromId can take 2-4 seconds for alive sandboxes
-// Logs show successful reconnects at 2835ms, so 3s was too aggressive
-// Use 10s timeout to reliably reconnect to alive sandboxes
-const RECONNECT_TIMEOUT_MS = 10000;
+// Timeout for fromId reconnection (per attempt)
+// Based on testing: fromId takes 2-4s for warm sandboxes, 2-5s+ for cold
+// With retry logic, we use shorter timeout per attempt (5s × 3 attempts = 15s+ total)
+const RECONNECT_TIMEOUT_MS = 5000;
+
+// Retry configuration for reconnection
+const RECONNECT_MAX_RETRIES = 2;  // Total attempts = 3 (1 initial + 2 retries)
+const RECONNECT_RETRY_DELAY_MS = 1000;  // Base delay between retries (doubles each retry)
+
+// Keep-alive configuration
+const KEEPALIVE_INTERVAL_MS = 30000;  // Send heartbeat every 30 seconds
+const KEEPALIVE_TIMEOUT_MS = 5000;    // Timeout for heartbeat command
+
+// Track keep-alive intervals per session
+const keepAliveIntervals = new Map<string, NodeJS.Timeout>();
 
 /**
- * Try to reconnect to an existing sandbox by ID using fromId
- * fromId typically takes 2-4s for alive sandboxes based on testing
- * Timeout indicates sandbox is dead or Modal is having issues
+ * Try to reconnect to an existing sandbox by ID using fromId (single attempt)
+ * Returns sandbox if successful, null if failed
+ */
+async function attemptReconnect(sandboxId: string, timeoutMs: number): Promise<any | null> {
+  const modal = getModalClient();
+  const startTime = Date.now();
+
+  const sandbox = await Promise.race([
+    modal.sandboxes.fromId(sandboxId),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`fromId timed out after ${timeoutMs}ms`)), timeoutMs)
+    )
+  ]);
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[Modal] fromId completed in ${elapsed}ms, verifying sandbox is alive...`);
+
+  // Verify the sandbox is actually alive by calling tunnels()
+  // This catches cases where fromId returns a reference to a terminated sandbox
+  try {
+    const tunnels = await sandbox.tunnels();
+    console.log(`[Modal] Sandbox verified alive, tunnels:`, Object.keys(tunnels));
+    return sandbox;
+  } catch (verifyError) {
+    const errorMsg = verifyError instanceof Error ? verifyError.message : String(verifyError);
+    if (errorMsg.includes('terminated') || errorMsg.includes('finished')) {
+      console.log(`[Modal] Sandbox ${sandboxId} is terminated, fromId returned stale reference`);
+      return null;
+    }
+    // Other errors (e.g., tunnels not configured) - sandbox is still alive
+    console.log(`[Modal] Sandbox alive but tunnel check failed: ${errorMsg}`);
+    return sandbox;
+  }
+}
+
+/**
+ * Try to reconnect to an existing sandbox by ID using fromId with retry logic
+ * Uses exponential backoff for retries to handle cold sandbox wake-up delays
  *
- * IMPORTANT: After fromId succeeds, we verify the sandbox is alive by calling tunnels()
- * This catches cases where fromId returns a handle to a terminated sandbox
+ * IMPORTANT: Cold sandboxes (suspended by Modal to save resources) can take
+ * 2-5+ seconds to wake up. If the first attempt times out, retries with
+ * increasing delays often succeed as the sandbox finishes waking up.
+ *
+ * @param sandboxId - The Modal sandbox ID to reconnect to
+ * @returns The sandbox instance if successful, null if all retries failed
  */
 async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
-  try {
-    const modal = getModalClient();
-    console.log(`[Modal] Attempting fromId reconnect to ${sandboxId}...`);
+  let lastError: Error | null = null;
 
-    const startTime = Date.now();
-    const sandbox = await Promise.race([
-      modal.sandboxes.fromId(sandboxId),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`fromId timed out after ${RECONNECT_TIMEOUT_MS}ms`)), RECONNECT_TIMEOUT_MS)
-      )
-    ]);
-
-    const elapsed = Date.now() - startTime;
-    console.log(`[Modal] fromId completed in ${elapsed}ms, verifying sandbox is alive...`);
-
-    // Verify the sandbox is actually alive by calling tunnels()
-    // This catches cases where fromId returns a reference to a terminated sandbox
+  for (let attempt = 0; attempt <= RECONNECT_MAX_RETRIES; attempt++) {
     try {
-      const tunnels = await sandbox.tunnels();
-      console.log(`[Modal] Sandbox verified alive, tunnels:`, Object.keys(tunnels));
-      return sandbox;
-    } catch (verifyError) {
-      const errorMsg = verifyError instanceof Error ? verifyError.message : String(verifyError);
-      if (errorMsg.includes('terminated') || errorMsg.includes('finished')) {
-        console.log(`[Modal] Sandbox ${sandboxId} is terminated, fromId returned stale reference`);
+      const attemptNum = attempt + 1;
+      const totalAttempts = RECONNECT_MAX_RETRIES + 1;
+      console.log(`[Modal] Reconnect attempt ${attemptNum}/${totalAttempts} to ${sandboxId}...`);
+
+      const sandbox = await attemptReconnect(sandboxId, RECONNECT_TIMEOUT_MS);
+
+      if (sandbox) {
+        if (attempt > 0) {
+          console.log(`[Modal] Reconnect succeeded on attempt ${attemptNum} (sandbox was likely cold)`);
+        }
+        return sandbox;
+      }
+
+      // attemptReconnect returned null (sandbox terminated)
+      console.log(`[Modal] Sandbox ${sandboxId} is terminated, no retry needed`);
+      return null;
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      const isTimeout = lastError.message.includes('timed out');
+
+      console.log(`[Modal] Reconnect attempt ${attempt + 1} failed: ${lastError.message}`);
+
+      // Only retry on timeout (cold sandbox may still be waking up)
+      // Don't retry on other errors (e.g., sandbox not found, auth errors)
+      if (!isTimeout) {
+        console.log(`[Modal] Non-timeout error, skipping retries`);
         return null;
       }
-      // Other errors (e.g., tunnels not configured) - sandbox is still alive
-      console.log(`[Modal] Sandbox alive but tunnel check failed: ${errorMsg}`);
-      return sandbox;
+
+      // Wait before retry with exponential backoff
+      if (attempt < RECONNECT_MAX_RETRIES) {
+        const delay = RECONNECT_RETRY_DELAY_MS * Math.pow(2, attempt);
+        console.log(`[Modal] Waiting ${delay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
     }
-  } catch (error) {
-    console.log(`[Modal] fromId reconnect failed:`, error instanceof Error ? error.message : error);
-    return null;
   }
+
+  console.log(`[Modal] All ${RECONNECT_MAX_RETRIES + 1} reconnect attempts failed for ${sandboxId}`);
+  return null;
+}
+
+/**
+ * Start keep-alive pings for a sandbox to prevent Modal from suspending it
+ * Sends a lightweight command every 30 seconds to keep the sandbox warm
+ *
+ * @param sessionId - The session ID associated with the sandbox
+ * @param sandbox - The sandbox instance to keep alive
+ */
+function startKeepAlive(sessionId: string, sandbox: any): void {
+  // Clear any existing interval for this session
+  stopKeepAlive(sessionId);
+
+  console.log(`[Modal] Starting keep-alive for session ${sessionId} (interval: ${KEEPALIVE_INTERVAL_MS}ms)`);
+
+  const interval = setInterval(async () => {
+    try {
+      // Send a lightweight "true" command - minimal overhead, just keeps sandbox active
+      const proc = await Promise.race([
+        sandbox["exec"](["true"]),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Keep-alive timeout')), KEEPALIVE_TIMEOUT_MS)
+        )
+      ]);
+
+      // Wait for command to complete (don't need to check exitCode)
+      await proc.exitCode;
+      console.log(`[Modal] Keep-alive ping sent for session ${sessionId}`);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+
+      // If sandbox is terminated or unreachable, stop keep-alive
+      if (errorMsg.includes('terminated') || errorMsg.includes('finished') || errorMsg.includes('not found')) {
+        console.log(`[Modal] Sandbox ${sessionId} appears dead, stopping keep-alive`);
+        stopKeepAlive(sessionId);
+
+        // Also remove from cache since sandbox is dead
+        sandboxes.delete(sessionId);
+        return;
+      }
+
+      // Log other errors but continue trying
+      console.warn(`[Modal] Keep-alive failed for ${sessionId}: ${errorMsg}`);
+    }
+  }, KEEPALIVE_INTERVAL_MS);
+
+  keepAliveIntervals.set(sessionId, interval);
+}
+
+/**
+ * Stop keep-alive pings for a sandbox
+ *
+ * @param sessionId - The session ID to stop keep-alive for
+ */
+function stopKeepAlive(sessionId: string): void {
+  const existing = keepAliveIntervals.get(sessionId);
+  if (existing) {
+    clearInterval(existing);
+    keepAliveIntervals.delete(sessionId);
+    console.log(`[Modal] Stopped keep-alive for session ${sessionId}`);
+  }
+}
+
+/**
+ * Check if keep-alive is active for a session
+ */
+function hasKeepAlive(sessionId: string): boolean {
+  return keepAliveIntervals.has(sessionId);
 }
 
 /**
@@ -522,6 +649,9 @@ export async function createSandbox(sessionId: string, language?: string): Promi
 
   // Store in memory cache
   sandboxes.set(sessionId, { sandbox, sandboxId, createdAt });
+
+  // Start keep-alive to prevent Modal from suspending the sandbox
+  startKeepAlive(sessionId, sandbox);
 
   // Persist sandbox ID and language to database for reconnection after server restart
   // Note: Volume is deterministic (based on sessionId), but we store sandboxId for quick reconnect
@@ -631,7 +761,8 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
             // Expired sandbox - don't try to reconnect (Modal terminates after 1 hour)
             console.log(`[Modal] Sandbox expired (>59 min), skipping reconnect`);
           } else {
-            // Try fromId reconnection - it's fast (<1s) for alive sandboxes
+            // Try fromId reconnection with retry logic
+            // Cold sandboxes may need multiple attempts as they wake up
             sandbox = await reconnectToSandbox(candidate.volumeId);
             if (sandbox) {
               // Success! Store in cache and return
@@ -640,6 +771,10 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
                 sandboxId: candidate.volumeId,
                 createdAt: candidate.sandboxCreatedAt || new Date()
               });
+
+              // Start keep-alive to prevent Modal from suspending again
+              startKeepAlive(sessionId, sandbox);
+
               console.log(`[Modal] Reconnected to sandbox ${candidate.volumeId}`);
               resolveCreation(sandbox);
               return;
@@ -1366,6 +1501,9 @@ export async function deleteFile(
  * Terminate a sandbox
  */
 export async function terminateSandbox(sessionId: string): Promise<boolean> {
+  // Stop keep-alive pings first
+  stopKeepAlive(sessionId);
+
   const cached = sandboxes.get(sessionId);
   if (cached) {
     try {
@@ -1565,6 +1703,9 @@ export const modalService = {
   // Testing utilities
   clearSandboxCache,
   isSandboxCached,
+  // Keep-alive management (for debugging/testing)
+  stopKeepAlive,
+  hasKeepAlive,
 };
 
 export async function closeConnection(): Promise<void> {

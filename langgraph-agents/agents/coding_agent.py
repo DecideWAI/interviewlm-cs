@@ -1,35 +1,74 @@
 """
-Coding Agent - LangGraph Implementation
+Coding Agent - LangGraph v1 Implementation
 
 AI assistant that helps candidates solve coding problems during interviews.
-Features configurable helpfulness levels, security guardrails, and tool use.
+Uses langchain.agents.create_agent with native middleware support for
+Anthropic prompt caching and streaming.
 
-Based on the original TypeScript implementation in lib/agents/coding-agent.ts
-
-Uses LangGraph's agentic loop pattern:
-- Agent decides to use tools or respond
-- Tools execute and return results
-- Agent continues until task complete (stop_reason: 'end_turn')
+Reference: TheBlueOne/apps/langgraph-python/src/agent.py
 """
 
-from typing import Literal, Annotated, Sequence
-from datetime import datetime
-from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import (
-    BaseMessage,
-    HumanMessage,
-    AIMessage,
-    SystemMessage,
-    ToolMessage,
-)
-from langgraph.graph import StateGraph, START, END
+from typing import Annotated, Any, Literal, Optional, Callable, AsyncGenerator
+from dataclasses import dataclass
+
+from langchain.agents import create_agent
+from langchain.agents.middleware import wrap_model_call
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_anthropic import ChatAnthropic, convert_to_anthropic_tool
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import ToolNode, tools_condition
+from typing_extensions import TypedDict
 
-from ..models.state import CodingAgentState
-from ..tools.coding_tools import CODING_TOOLS
-from ..config import settings
+from tools.coding_tools import CODING_TOOLS
+from config import settings
+
+
+# =============================================================================
+# State Schema (LangGraph v1 style)
+# =============================================================================
+
+class CodingAgentState(TypedDict, total=False):
+    """State for the coding agent.
+
+    Uses Annotated with add_messages for automatic message handling.
+    """
+    messages: Annotated[list[BaseMessage], add_messages]
+    session_id: str
+    candidate_id: str
+    workspace_root: str
+    problem_statement: str | None
+    helpfulness_level: str
+    # Tracking
+    tools_used: list[str]
+    files_modified: list[str]
+    tool_call_count: int
+    iteration_count: int
+
+
+# =============================================================================
+# Context Schema (runtime configuration)
+# =============================================================================
+
+class CodingAgentContext(TypedDict, total=False):
+    """Runtime configuration passed via config["configurable"]."""
+    session_id: str
+    candidate_id: str
+    helpfulness_level: str
+    problem_statement: str | None
+
+
+# =============================================================================
+# Streaming Callbacks
+# =============================================================================
+
+@dataclass
+class StreamingCallbacks:
+    """Callbacks for streaming events during agent execution."""
+    on_text_delta: Optional[Callable[[str], None]] = None
+    on_tool_start: Optional[Callable[[str, dict], None]] = None
+    on_tool_end: Optional[Callable[[str, Any], None]] = None
+    on_error: Optional[Callable[[Exception], None]] = None
 
 
 # =============================================================================
@@ -79,7 +118,12 @@ def build_system_prompt(
     helpfulness_level: str,
     problem_statement: str | None = None,
 ) -> str:
-    """Build the system prompt with security constraints."""
+    """Build the system prompt with security constraints.
+
+    NOTE: This prompt must be at least 1024 tokens for Anthropic's prompt caching
+    to work with Sonnet (2048 tokens for Haiku). The detailed sections below
+    ensure we meet this threshold while providing genuinely useful guidance.
+    """
     config = HELPFULNESS_CONFIGS.get(helpfulness_level, HELPFULNESS_CONFIGS["pair-programming"])
 
     prompt = f"""You are Claude Code, an AI coding assistant helping a candidate during a technical interview.
@@ -95,13 +139,79 @@ def build_system_prompt(
 **Your Role ({config['level']} mode):**
 {config['description']}
 
-**Guidelines for Tool Use:**
-- Use tools proactively to help the candidate
-- When asked to check files, actually read them
-- When asked to run tests, execute them
+**Tool Usage Guidelines:**
+- Use tools proactively to help the candidate without waiting to be asked
+- When asked to check files, actually read them using read_file or list_files
+- When asked to run tests, execute them using run_tests or run_bash
 - When writing code, verify it works by reading the file back
 - If a tool fails, explain the error and try an alternative approach
 - Complete multi-step tasks autonomously without stopping after each step
+- Prefer parallel tool calls when operations are independent
+- When modifying files, read them first to understand context
+- After running tests, analyze failures and suggest fixes
+
+**Code Quality Standards:**
+- Write clean, readable code with meaningful variable and function names
+- Include appropriate error handling for edge cases
+- Follow language-specific conventions and best practices
+- Add comments for complex logic but avoid over-commenting obvious code
+- Consider performance implications for algorithmic solutions
+- Validate inputs and handle null/undefined cases appropriately
+- Use consistent formatting and indentation
+- Keep functions small and focused on single responsibilities
+- Prefer descriptive names over abbreviations
+- Handle errors gracefully with informative messages
+
+**Problem-Solving Approach:**
+- Start by understanding the requirements and constraints
+- Consider edge cases: empty inputs, single elements, large inputs, null values
+- Think about time and space complexity tradeoffs
+- Test solutions incrementally rather than all at once
+- Use debugging output strategically to trace issues
+- Break complex problems into smaller subproblems
+- Identify patterns that suggest specific algorithms
+- Consider both iterative and recursive approaches
+- Optimize only after correctness is established
+
+**Data Structures and When to Use Them:**
+- Arrays/Lists: Sequential access, known size, O(1) random access
+- Linked Lists: Frequent insertions/deletions, unknown size
+- Hash Maps/Dicts: O(1) lookup by key, counting, caching
+- Sets: Unique elements, O(1) membership testing
+- Stacks: LIFO operations, parentheses matching, undo functionality
+- Queues: FIFO operations, BFS, task scheduling
+- Heaps: Priority queues, top-k problems, scheduling
+- Trees: Hierarchical data, sorted operations, file systems
+- Graphs: Network relationships, pathfinding, dependencies
+
+**Algorithm Patterns:**
+- Two Pointers: Sorted arrays, palindromes, partitioning
+- Sliding Window: Subarrays, substrings, streaming data
+- Binary Search: Sorted data, search space reduction, optimization
+- Dynamic Programming: Overlapping subproblems, optimization
+- Backtracking: Constraint satisfaction, permutations, puzzles
+- BFS/DFS: Graph traversal, shortest paths, connected components
+- Divide and Conquer: Merge sort, quick sort, binary operations
+- Greedy: Local optimization, interval scheduling, Huffman coding
+
+**Time Complexity Guidelines:**
+- O(1): Hash lookups, array access, simple arithmetic
+- O(log n): Binary search, balanced tree operations
+- O(n): Single pass, linear search, counting
+- O(n log n): Efficient sorting (merge, heap, quick)
+- O(n^2): Nested loops, simple DP, brute force
+- O(2^n): Exponential, subsets, recursive without memoization
+- O(n!): Permutations, brute force TSP
+
+**Communication Style:**
+- Explain your reasoning as you work through problems
+- Ask clarifying questions when requirements are ambiguous
+- Acknowledge good ideas from the candidate and build on them
+- When suggesting changes, explain why they improve the code
+- Be encouraging while maintaining technical rigor
+- Keep explanations concise but thorough
+- Use examples to illustrate complex concepts
+- Highlight potential pitfalls and how to avoid them
 
 Be a helpful pair programming partner while maintaining assessment integrity."""
 
@@ -112,138 +222,187 @@ Be a helpful pair programming partner while maintaining assessment integrity."""
 
 
 # =============================================================================
-# Node Functions
+# Middleware: Model Selection with Caching
 # =============================================================================
 
-async def agent_node(state: CodingAgentState) -> dict:
-    """
-    Agent node that calls the LLM and decides whether to use tools or respond.
+def _create_anthropic_model(model_name: str) -> ChatAnthropic:
+    """Create Anthropic model with prompt caching configuration.
 
-    This implements the "agent" part of the ReAct loop.
+    Uses BOTH betas param AND default_headers for caching.
+    Reference: TheBlueOne model_selection.py
     """
-    # Check iteration limit
-    if state.get("iteration_count", 0) >= settings.max_iterations:
-        return {
-            "messages": [AIMessage(content="[Agent reached maximum iteration limit]")],
-            "should_continue": False,
-            "iteration_count": state.get("iteration_count", 0),
-        }
+    default_headers = {}
+    beta_versions = []
 
+    if settings.enable_prompt_caching:
+        beta_versions = ["prompt-caching-2024-07-31"]
+        default_headers["anthropic-beta"] = ",".join(beta_versions)
+
+    return ChatAnthropic(
+        model_name=model_name,
+        max_tokens=4096,
+        betas=beta_versions,
+        streaming=settings.enable_code_streaming,
+        default_headers=default_headers,
+        api_key=settings.anthropic_api_key,
+    )
+
+
+@wrap_model_call
+async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
+    """Middleware that selects the appropriate model and converts tools.
+
+    This middleware:
+    1. Creates the Anthropic model with caching headers
+    2. Converts tools to Anthropic format
+    3. Binds tools to the model
+    """
+    # Create model with caching support
+    model = _create_anthropic_model(settings.coding_agent_model)
+
+    # Convert tools to Anthropic format (without cache_control yet)
+    if request.tools:
+        converted_tools = []
+        for tool in request.tools:
+            try:
+                anthropic_tool = convert_to_anthropic_tool(tool)
+                converted_tools.append(anthropic_tool)
+            except Exception as e:
+                print(f"[ModelSelection] Warning: Failed to convert tool: {e}")
+                converted_tools.append(tool)
+
+        # Bind converted tools to model
+        model = model.bind_tools(converted_tools)
+
+    # Replace model in request
+    request.model = model
+
+    return await handler(request)
+
+
+# =============================================================================
+# Middleware: Anthropic Caching
+# =============================================================================
+
+@wrap_model_call
+async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
+    """Add cache_control to system prompt, tools, and messages.
+
+    This middleware runs LAST to add cache breakpoints:
+    - Breakpoint 1: LAST tool (caches all tools)
+    - Breakpoint 2: System prompt (caches prompt)
+    - Breakpoint 3: Nth message (caches conversation prefix)
+
+    IMPORTANT: Anthropic limits to 4 cache_control blocks maximum.
+    """
+    if not settings.enable_prompt_caching:
+        return await handler(request)
+
+    cache_control = {"type": "ephemeral"}
+
+    # 1. Add cache_control to system prompt's LAST block
+    if request.system_prompt:
+        if isinstance(request.system_prompt, str):
+            request.system_prompt = [
+                {
+                    "type": "text",
+                    "text": request.system_prompt,
+                    "cache_control": cache_control,
+                }
+            ]
+        elif isinstance(request.system_prompt, list) and len(request.system_prompt) > 0:
+            last_block = request.system_prompt[-1]
+            if isinstance(last_block, dict):
+                last_block["cache_control"] = cache_control
+            elif isinstance(last_block, str):
+                request.system_prompt[-1] = {
+                    "type": "text",
+                    "text": last_block,
+                    "cache_control": cache_control,
+                }
+
+    # 2. Add cache_control to LAST tool only (caches all tools as prefix)
+    if request.tools and len(request.tools) > 0:
+        last_tool = request.tools[-1]
+        if isinstance(last_tool, dict):
+            last_tool["cache_control"] = cache_control
+
+    # 3. Add cache_control to messages (cache first N messages)
+    message_cache_count = getattr(settings, 'message_cache_count', 2)
+
+    if request.messages and len(request.messages) > 0 and message_cache_count > 0:
+        cache_idx = min(message_cache_count - 1, len(request.messages) - 1)
+
+        if cache_idx >= 0:
+            message = request.messages[cache_idx]
+            if hasattr(message, 'content'):
+                if isinstance(message.content, str):
+                    message.content = [
+                        {
+                            "type": "text",
+                            "text": message.content,
+                            "cache_control": cache_control,
+                        }
+                    ]
+                elif isinstance(message.content, list) and len(message.content) > 0:
+                    last_block = message.content[-1]
+                    if isinstance(last_block, dict):
+                        last_block["cache_control"] = cache_control
+
+    return await handler(request)
+
+
+# =============================================================================
+# Agent Factory
+# =============================================================================
+
+def create_coding_agent_graph(
+    helpfulness_level: str = "pair-programming",
+    problem_statement: str | None = None,
+    use_checkpointing: bool = True,
+):
+    """Create the Coding Agent using LangGraph v1's create_agent.
+
+    Uses native middleware support for Anthropic prompt caching.
+    """
     # Get tools for helpfulness level
-    helpfulness_level = state.get("helpfulness_level", "pair-programming")
     tools = CODING_TOOLS.get(helpfulness_level, CODING_TOOLS["pair-programming"])
 
     # Build system prompt
-    system_prompt = build_system_prompt(
-        helpfulness_level,
-        state.get("problem_statement"),
-    )
+    system_prompt = build_system_prompt(helpfulness_level, problem_statement)
 
-    # Initialize LLM with tools
-    llm = ChatAnthropic(
-        model=settings.coding_agent_model,
-        max_tokens=4096,
-        api_key=settings.anthropic_api_key,
-    )
-    llm_with_tools = llm.bind_tools(tools)
+    # Create default model (will be replaced by middleware)
+    model = _create_anthropic_model(settings.coding_agent_model)
 
-    # Prepare messages with system prompt
-    messages = list(state["messages"])
-    if not messages or not isinstance(messages[0], SystemMessage):
-        messages = [SystemMessage(content=system_prompt)] + messages
+    # Build middleware list
+    middleware = [
+        model_selection_middleware,
+        anthropic_caching_middleware,  # MUST run LAST
+    ]
 
-    # Call LLM
-    response = await llm_with_tools.ainvoke(messages)
-
-    # Track tools used
-    tools_used = state.get("tools_used", [])
-    if response.tool_calls:
-        for tool_call in response.tool_calls:
-            tools_used.append(tool_call["name"])
-
-    return {
-        "messages": [response],
-        "tools_used": tools_used,
-        "tool_call_count": state.get("tool_call_count", 0) + len(response.tool_calls or []),
-        "iteration_count": state.get("iteration_count", 0) + 1,
-        "should_continue": True,
+    # Agent configuration
+    agent_kwargs = {
+        "model": model,
+        "tools": tools,
+        "system_prompt": system_prompt,
+        "middleware": middleware,
+        "state_schema": CodingAgentState,
+        "context_schema": CodingAgentContext,
     }
 
+    # Add checkpointing
+    if use_checkpointing:
+        agent_kwargs["checkpointer"] = MemorySaver()
 
-def should_continue(state: CodingAgentState) -> Literal["tools", "end"]:
-    """
-    Determine if the agent should continue to tools or end.
-
-    Uses LangGraph's tools_condition pattern:
-    - If last message has tool calls -> route to tools
-    - Otherwise -> end
-    """
-    messages = state.get("messages", [])
-    if not messages:
-        return "end"
-
-    last_message = messages[-1]
-
-    # Check if we should stop
-    if not state.get("should_continue", True):
-        return "end"
-
-    # Check for tool calls
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-        return "tools"
-
-    return "end"
+    return create_agent(**agent_kwargs)
 
 
 # =============================================================================
-# Graph Construction
+# Wrapper Class for Convenience
 # =============================================================================
-
-def create_coding_agent_graph(helpfulness_level: str = "pair-programming") -> StateGraph:
-    """
-    Create the Coding Agent graph.
-
-    Implements the ReAct (Reason + Act) pattern:
-    START -> agent -> (tool_calls?) -> tools -> agent -> ... -> END
-
-    The agentic loop continues until the LLM returns stop_reason: 'end_turn'
-    (no more tool calls).
-    """
-    # Get tools for helpfulness level
-    tools = CODING_TOOLS.get(helpfulness_level, CODING_TOOLS["pair-programming"])
-
-    workflow = StateGraph(CodingAgentState)
-
-    # Add nodes
-    workflow.add_node("agent", agent_node)
-    workflow.add_node("tools", ToolNode(tools))
-
-    # Add edges
-    workflow.add_edge(START, "agent")
-
-    # Conditional edge: agent decides to use tools or end
-    workflow.add_conditional_edges(
-        "agent",
-        should_continue,
-        {
-            "tools": "tools",
-            "end": END,
-        },
-    )
-
-    # After tools, go back to agent
-    workflow.add_edge("tools", "agent")
-
-    return workflow
-
 
 class CodingAgentGraph:
-    """
-    Coding Agent wrapper class.
-
-    Provides a convenient interface for chat interactions with
-    conversation history management and tool execution.
-    """
+    """Coding Agent wrapper class for convenient interaction."""
 
     def __init__(
         self,
@@ -252,71 +411,70 @@ class CodingAgentGraph:
         helpfulness_level: str = "pair-programming",
         problem_statement: str | None = None,
         workspace_root: str = "/workspace",
-        checkpointer=None,
     ):
-        """
-        Initialize the Coding Agent.
-
-        Args:
-            session_id: Session identifier (used for Modal volume)
-            candidate_id: Candidate identifier
-            helpfulness_level: One of 'consultant', 'pair-programming', 'full-copilot'
-            problem_statement: Current problem description
-            workspace_root: Root directory for file operations
-            checkpointer: Optional checkpointer for state persistence
-        """
         self.session_id = session_id
         self.candidate_id = candidate_id
         self.helpfulness_level = helpfulness_level
         self.problem_statement = problem_statement
         self.workspace_root = workspace_root
 
-        # Create workflow
-        workflow = create_coding_agent_graph(helpfulness_level)
-
-        # Use memory checkpointer for state persistence
-        self.checkpointer = checkpointer or MemorySaver()
-        self.graph = workflow.compile(checkpointer=self.checkpointer)
+        # Create agent graph
+        self.graph = create_coding_agent_graph(
+            helpfulness_level=helpfulness_level,
+            problem_statement=problem_statement,
+        )
 
     async def send_message(self, message: str) -> dict:
-        """
-        Send a message to the coding agent.
-
-        Args:
-            message: User message
-
-        Returns:
-            Dict with response text, tools used, and files modified
-        """
-        # Get current state or create initial state
-        config = {"configurable": {"thread_id": self.session_id}}
-
-        initial_state: CodingAgentState = {
-            "messages": [HumanMessage(content=message)],
-            "session_id": self.session_id,
-            "candidate_id": self.candidate_id,
-            "workspace_root": self.workspace_root,
-            "problem_statement": self.problem_statement,
-            "current_file": None,
-            "current_code": None,
-            "helpfulness_level": self.helpfulness_level,
-            "tools_used": [],
-            "files_modified": [],
-            "tool_call_count": 0,
-            "iteration_count": 0,
-            "should_continue": True,
+        """Send a message to the coding agent."""
+        config = {
+            "configurable": {
+                "thread_id": self.session_id,
+            }
         }
 
-        # Run the agent
-        result = await self.graph.ainvoke(initial_state, config)
+        # Context for middleware
+        context = {
+            "session_id": self.session_id,
+            "candidate_id": self.candidate_id,
+            "helpfulness_level": self.helpfulness_level,
+            "problem_statement": self.problem_statement,
+        }
 
-        # Extract response
+        # Invoke with message
+        result = await self.graph.ainvoke(
+            {"messages": [HumanMessage(content=message)]},
+            config=config,
+            context=context,
+        )
+
+        # Extract response and cache metrics
         messages = result.get("messages", [])
         response_text = ""
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage) and msg.content:
-                response_text = msg.content
-                break
+        total_cache_creation = 0
+        total_cache_read = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
+
+        for msg in messages:
+            if isinstance(msg, AIMessage):
+                # Extract text content
+                if not response_text:
+                    if isinstance(msg.content, str):
+                        response_text = msg.content
+                    elif isinstance(msg.content, list):
+                        for block in msg.content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                response_text = block.get("text", "")
+                                break
+
+                # Accumulate cache metrics from all AI messages
+                usage_meta = getattr(msg, 'usage_metadata', None)
+                if usage_meta:
+                    details = usage_meta.get('input_token_details', {})
+                    total_cache_creation += details.get('cache_creation', 0)
+                    total_cache_read += details.get('cache_read', 0)
+                    total_input_tokens += usage_meta.get('input_tokens', 0)
+                    total_output_tokens += usage_meta.get('output_tokens', 0)
 
         return {
             "text": response_text,
@@ -326,58 +484,99 @@ class CodingAgentGraph:
                 "model": settings.coding_agent_model,
                 "tool_call_count": result.get("tool_call_count", 0),
                 "iteration_count": result.get("iteration_count", 0),
+                "cache_creation_input_tokens": total_cache_creation,
+                "cache_read_input_tokens": total_cache_read,
+                "input_tokens": total_input_tokens,
+                "output_tokens": total_output_tokens,
             },
         }
 
-    async def load_conversation_history(
+    async def send_message_streaming(
         self,
-        history: list[dict],
-    ) -> None:
-        """
-        Load conversation history from previous interactions.
-
-        Args:
-            history: List of messages with 'role' and 'content'
-        """
-        config = {"configurable": {"thread_id": self.session_id}}
-
-        messages = []
-        for msg in history:
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-            if not content:
-                continue
-
-            if role == "user":
-                messages.append(HumanMessage(content=content))
-            elif role == "assistant":
-                messages.append(AIMessage(content=content))
-
-        if messages:
-            # Update state with history
-            state: CodingAgentState = {
-                "messages": messages,
-                "session_id": self.session_id,
-                "candidate_id": self.candidate_id,
-                "workspace_root": self.workspace_root,
-                "problem_statement": self.problem_statement,
-                "current_file": None,
-                "current_code": None,
-                "helpfulness_level": self.helpfulness_level,
-                "tools_used": [],
-                "files_modified": [],
-                "tool_call_count": 0,
-                "iteration_count": 0,
-                "should_continue": True,
+        message: str,
+        callbacks: Optional[StreamingCallbacks] = None,
+    ) -> AsyncGenerator[dict, None]:
+        """Send a message with streaming response."""
+        config = {
+            "configurable": {
+                "thread_id": self.session_id,
             }
-            await self.graph.aupdate_state(config, state)
+        }
 
-    def clear_conversation(self) -> None:
-        """Clear conversation history."""
-        # Create new checkpointer to reset state
-        self.checkpointer = MemorySaver()
-        workflow = create_coding_agent_graph(self.helpfulness_level)
-        self.graph = workflow.compile(checkpointer=self.checkpointer)
+        context = {
+            "session_id": self.session_id,
+            "candidate_id": self.candidate_id,
+            "helpfulness_level": self.helpfulness_level,
+            "problem_statement": self.problem_statement,
+        }
+
+        tools_used = []
+        files_modified = []
+        full_response = ""
+
+        try:
+            async for event in self.graph.astream_events(
+                {"messages": [HumanMessage(content=message)]},
+                config=config,
+                context=context,
+                version="v2",
+            ):
+                event_type = event.get("event")
+                data = event.get("data", {})
+
+                if event_type == "on_chat_model_stream":
+                    chunk = data.get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        delta = chunk.content
+                        full_response += delta
+
+                        if callbacks and callbacks.on_text_delta:
+                            callbacks.on_text_delta(delta)
+
+                        yield {"type": "text_delta", "delta": delta}
+
+                elif event_type == "on_tool_start":
+                    tool_name = event.get("name", "unknown")
+                    tool_input = data.get("input", {})
+                    tools_used.append(tool_name)
+
+                    if tool_name in ["write_file", "edit_file"]:
+                        file_path = tool_input.get("file_path", "")
+                        if file_path and file_path not in files_modified:
+                            files_modified.append(file_path)
+
+                    if callbacks and callbacks.on_tool_start:
+                        callbacks.on_tool_start(tool_name, tool_input)
+
+                    yield {"type": "tool_start", "name": tool_name, "input": tool_input}
+
+                elif event_type == "on_tool_end":
+                    tool_name = event.get("name", "unknown")
+                    tool_output = data.get("output")
+
+                    if callbacks and callbacks.on_tool_end:
+                        callbacks.on_tool_end(tool_name, tool_output)
+
+                    yield {
+                        "type": "tool_end",
+                        "name": tool_name,
+                        "output": str(tool_output)[:500] if tool_output else None,
+                    }
+
+            yield {
+                "type": "done",
+                "response": {
+                    "text": full_response,
+                    "tools_used": tools_used,
+                    "files_modified": files_modified,
+                    "metadata": {"model": settings.coding_agent_model, "streaming": True},
+                },
+            }
+
+        except Exception as e:
+            if callbacks and callbacks.on_error:
+                callbacks.on_error(e)
+            yield {"type": "error", "error": str(e)}
 
 
 def create_coding_agent(
@@ -386,7 +585,6 @@ def create_coding_agent(
     helpfulness_level: str = "pair-programming",
     problem_statement: str | None = None,
     workspace_root: str = "/workspace",
-    checkpointer=None,
 ) -> CodingAgentGraph:
     """Factory function to create a Coding Agent."""
     return CodingAgentGraph(
@@ -395,5 +593,4 @@ def create_coding_agent(
         helpfulness_level=helpfulness_level,
         problem_statement=problem_statement,
         workspace_root=workspace_root,
-        checkpointer=checkpointer,
     )
