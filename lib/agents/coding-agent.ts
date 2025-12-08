@@ -27,6 +27,7 @@ import {
 } from '../agent-security';
 import { buildCodingAgentSystemPrompt } from '../prompts/coding-agent-system';
 import { traceClaudeStreaming, getTracedAnthropicClient } from '../observability/langsmith';
+import { logCacheMetrics } from '../utils/agent-utils';
 
 /**
  * Streaming callbacks for real-time updates
@@ -119,10 +120,25 @@ export class StreamingCodingAgent {
       // Accumulate text
       finalText += text;
 
-      // Track usage
+      // Track usage including cache metrics
       totalUsage.input_tokens += usage.input_tokens;
       totalUsage.output_tokens += usage.output_tokens;
+      totalUsage.cache_creation_input_tokens += usage.cache_creation_input_tokens || 0;
+      totalUsage.cache_read_input_tokens += usage.cache_read_input_tokens || 0;
       lastModel = model;
+
+      // Log cache metrics per iteration
+      if (usage.cache_creation_input_tokens || usage.cache_read_input_tokens) {
+        logCacheMetrics({
+          cacheCreationInputTokens: usage.cache_creation_input_tokens || 0,
+          cacheReadInputTokens: usage.cache_read_input_tokens || 0,
+          inputTokens: usage.input_tokens,
+          outputTokens: usage.output_tokens,
+          cacheSavingsPercent: usage.input_tokens > 0
+            ? Math.round(((usage.cache_read_input_tokens || 0) / usage.input_tokens) * 90)
+            : 0,
+        }, 'CodingAgent');
+      }
 
       // Handle max_tokens without tool use
       if (stopReason === 'max_tokens' && toolUseBlocks.length === 0) {
@@ -552,6 +568,7 @@ export class StreamingCodingAgent {
 
   /**
    * Build system prompt with caching
+   * Caching is ALWAYS enabled - no conditional checks
    */
   private buildSystemPromptWithCaching(): Anthropic.Messages.TextBlockParam[] {
     const helpfulnessConfig = HELPFULNESS_CONFIGS[this.config.helpfulnessLevel];
@@ -567,13 +584,13 @@ export class StreamingCodingAgent {
       {
         type: 'text',
         text: staticInstructions,
-        ...(process.env.ENABLE_PROMPT_CACHING === 'true' && {
-          cache_control: { type: 'ephemeral' } as unknown as undefined,
-        }),
-      },
+        // Always enable caching for static instructions
+        cache_control: { type: 'ephemeral' },
+      } as Anthropic.Messages.TextBlockParam,
     ];
 
     if (this.config.problemStatement) {
+      // Dynamic content is NOT cached as it changes per problem
       systemBlocks.push({
         type: 'text',
         text: `\n**Current Problem:**\n${this.config.problemStatement}`,

@@ -40,7 +40,7 @@ except ImportError:
     REDIS_AVAILABLE = False
     redis = None
 
-from ..config import settings
+from config import settings
 
 
 # =============================================================================

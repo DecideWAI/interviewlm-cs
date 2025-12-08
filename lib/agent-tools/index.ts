@@ -20,6 +20,18 @@ export { bashTool, executeBash } from "./bash";
 export { runTestsTool, executeRunTests } from "./run-tests";
 export { suggestNextQuestionTool, executeSuggestNextQuestion } from "./suggest-next-question";
 
+// Package management and environment
+export { installPackagesTool, executeInstallPackages } from "./install-packages";
+export { getEnvironmentInfoTool, executeGetEnvironmentInfo } from "./environment-info";
+
+// Analysis tools (for evaluation)
+export {
+  analyzeCodeQuality,
+  analyzeProblemSolving,
+  analyzeAICollaboration,
+  analyzeCommunication,
+} from "./analysis";
+
 // Types - File operations
 export type {
   ReadFileToolInput,
@@ -64,3 +76,14 @@ export type {
   SuggestNextQuestionToolInput,
   SuggestNextQuestionToolOutput,
 } from "./suggest-next-question";
+
+// Types - Package management
+export type {
+  PackageManager,
+  InstallPackagesOutput,
+} from "./install-packages";
+
+export type {
+  EnvironmentInfo,
+  GetEnvironmentInfoOutput,
+} from "./environment-info";

@@ -122,6 +122,12 @@ class CodingAgentState(TypedDict):
     iteration_count: int
     should_continue: bool
 
+    # Cache metrics (tracked because response_metadata is lost in LangGraph state)
+    total_cache_creation_tokens: int
+    total_cache_read_tokens: int
+    total_input_tokens: int
+    total_output_tokens: int
+
 
 class InterviewAgentState(TypedDict):
     """

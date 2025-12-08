@@ -195,6 +195,60 @@ export default function InterviewPage() {
       setQuestionStartTime(new Date(state.questionStartTime));
     }
 
+    // FAST PATH: If we have cached question + fileTree, restore sessionData immediately
+    // This allows the UI to show instantly on browser refresh!
+    if (state.question && state.fileTree && state.sessionId) {
+      console.log('[FastRestore] Using cached question/fileTree for instant UI');
+
+      // Build sessionData from cached state
+      const cachedSessionData: SessionData = {
+        sessionId: state.sessionId,
+        candidateId,
+        totalQuestions: state.totalQuestions || 3,
+        question: {
+          id: state.question.id,
+          title: state.question.title,
+          description: state.question.description,
+          difficulty: state.question.difficulty,
+          language: state.question.language,
+          starterCode: state.question.starterCode || '',
+          testCases: state.question.testCases || [],
+        },
+        sandbox: {
+          volumeId: state.volumeId || '',
+          workspaceDir: '/workspace',
+          status: state.sandboxReady ? 'ready' : 'pending',
+        },
+        files: state.fileTree,
+        timeLimit: state.timeRemaining + state.questionTimeElapsed, // Approximate
+        timeRemaining: state.timeRemaining,
+        startedAt: new Date(Date.now() - state.questionTimeElapsed * 1000).toISOString(),
+      };
+
+      setSessionData(cachedSessionData);
+      setTotalQuestions(state.totalQuestions || 3);
+      setIsInitializing(false); // Hide loading screen immediately!
+
+      // Find and select the correct file
+      if (state.selectedFilePath && state.fileTree) {
+        const fileNode = state.fileTree.find(f => f.path === state.selectedFilePath);
+        if (fileNode) {
+          setSelectedFile(fileNode as FileNode);
+        }
+      }
+
+      // Mark that we used fast restore (skip API file fetch, validate in background)
+      sessionStorage.setItem(`fast-restored-${candidateId}`, 'true');
+
+      toast.success("Session resumed instantly", {
+        description: "Your progress has been restored from cache.",
+        duration: 2000,
+        icon: "⚡",
+      });
+      return;
+    }
+
+    // SLOW PATH: No cached question data - wait for API initialization
     // Mark that session was restored to prevent overwriting code during init
     sessionStorage.setItem(`session-restored-${candidateId}`, 'true');
 
@@ -280,6 +334,38 @@ export default function InterviewPage() {
       return;
     }
     initializationStartedRef.current = true;
+
+    // Check if we already did a fast-restore from localStorage cache
+    const wasFastRestored = sessionStorage.getItem(`fast-restored-${candidateId}`);
+    if (wasFastRestored) {
+      console.log('[FastRestore] Skipping API init - using cached data');
+      sessionStorage.removeItem(`fast-restored-${candidateId}`);
+
+      // Background validation: verify session is still valid and prefetch files
+      // This runs in background while UI is already showing
+      (async () => {
+        try {
+          // Validate session with API (will use fast path since session exists)
+          const response = await fetch(`/api/interview/${candidateId}/initialize`, {
+            method: "POST",
+          });
+
+          if (!response.ok) {
+            console.warn('[FastRestore] Background validation failed - session may have expired');
+            // Don't force reload - let user continue with cached data
+            // They'll see errors when they try to interact
+          } else {
+            console.log('[FastRestore] Background validation successful');
+            // Optionally refresh file contents in background
+            prefetchAllFiles();
+          }
+        } catch (error) {
+          console.warn('[FastRestore] Background validation error:', error);
+        }
+      })();
+
+      return; // Skip full initialization - UI already showing from cache
+    }
 
     const initializeSession = async () => {
       try {
@@ -396,7 +482,6 @@ export default function InterviewPage() {
               name: change.name,
               type: change.fileType === 'folder' ? 'folder' : 'file',
               path: change.path,
-              language: getLanguageFromPath(change.path),
             };
 
             // Determine parent path
@@ -491,10 +576,12 @@ export default function InterviewPage() {
   }, [testResults]);
 
   // Auto-save session state to localStorage (prevents data loss on refresh)
+  // Also caches question/fileTree for fast restore on browser refresh
   useEffect(() => {
     if (!sessionData) return;
 
     saveSessionState({
+      // Core state that changes frequently
       code,
       selectedFilePath: selectedFile?.path || null,
       testResults,
@@ -502,6 +589,22 @@ export default function InterviewPage() {
       currentQuestionIndex,
       questionStartTime: questionStartTime?.toISOString() || null,
       questionTimeElapsed,
+
+      // Cached data for fast restore on browser refresh (from sessionData)
+      sessionId: sessionData.sessionId,
+      question: {
+        id: sessionData.question.id,
+        title: sessionData.question.title,
+        description: sessionData.question.description,
+        difficulty: sessionData.question.difficulty,
+        language: sessionData.question.language,
+        starterCode: sessionData.question.starterCode,
+        testCases: sessionData.question.testCases,
+      },
+      fileTree: sessionData.files,
+      sandboxReady: sessionData.sandbox?.status === 'ready',
+      volumeId: sessionData.sandbox?.volumeId,
+      totalQuestions: sessionData.totalQuestions || totalQuestions,
     });
   }, [
     code,
@@ -513,6 +616,7 @@ export default function InterviewPage() {
     questionTimeElapsed,
     sessionData,
     saveSessionState,
+    totalQuestions,
   ]);
 
   // Show reconnection notification

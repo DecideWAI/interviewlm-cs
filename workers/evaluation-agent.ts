@@ -20,6 +20,12 @@ import { redisConnection } from '../lib/queues/config';
 import { QUEUE_NAMES } from '../lib/types/events';
 import { AGENT_MODEL_RECOMMENDATIONS } from '../lib/constants/models';
 import { moveToDeadLetterQueue } from '../lib/queues/dlq';
+import {
+  createAgentClient,
+  buildCachedSystemPrompt,
+  extractCacheMetrics,
+  logCacheMetrics,
+} from '../lib/utils/agent-utils';
 import type {
   EvaluationEventType,
   EvaluationAnalyzeEventData,
@@ -129,12 +135,8 @@ class EvaluationAgentWorker {
   private client: Anthropic;
 
   constructor() {
-    this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY,
-      defaultHeaders: {
-        "anthropic-beta": "prompt-caching-2024-07-31",
-      },
-    });
+    // Use shared client with caching always enabled
+    this.client = createAgentClient();
 
     this.worker = new Worker(
       QUEUE_NAMES.EVALUATION,
@@ -762,14 +764,8 @@ Scoring guidelines:
 
 IMPORTANT: Respond with ONLY a single number between 0-100. No explanations.`;
 
-    // Build system prompt with caching (cast to any for cache_control support)
-    const systemBlocks = [
-      {
-        type: 'text' as const,
-        text: staticInstructions,
-        cache_control: { type: 'ephemeral' },
-      },
-    ];
+    // Use shared utility for building cached system prompt
+    const systemBlocks = buildCachedSystemPrompt(staticInstructions);
 
     try {
       // Use circuit breaker and retry for Claude API
@@ -788,11 +784,9 @@ IMPORTANT: Respond with ONLY a single number between 0-100. No explanations.`;
               ],
             });
 
-            // Log cache metrics
-            const usageAny = response.usage as any;
-            if (usageAny.cache_creation_input_tokens || usageAny.cache_read_input_tokens) {
-              console.log(`[Evaluation Agent] Cache metrics - created: ${usageAny.cache_creation_input_tokens || 0}, read: ${usageAny.cache_read_input_tokens || 0}`);
-            }
+            // Log cache metrics using shared utility
+            const cacheMetrics = extractCacheMetrics(response);
+            logCacheMetrics(cacheMetrics, 'EvaluationWorker-CodeReview');
 
             const text = response.content[0].type === 'text' ? response.content[0].text : '0';
             const score = parseInt(text.trim(), 10);

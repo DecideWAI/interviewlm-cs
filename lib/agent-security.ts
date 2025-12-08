@@ -263,3 +263,9 @@ export function checkRateLimit(messages: any[]): { exceeded: boolean; reason?: s
 
   return { exceeded: false };
 }
+
+/**
+ * Alias for sanitizeMessages - more descriptive name for API preparation use case
+ * Combines security sanitization with cache breakpoint optimization
+ */
+export const prepareMessagesForAPI = sanitizeMessages;

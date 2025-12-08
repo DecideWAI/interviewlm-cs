@@ -11,8 +11,8 @@ import json
 from typing import Any
 import redis.asyncio as redis
 
-from ..config import settings
-from ..models.state import InterviewMetrics
+from config import settings
+from models.state import InterviewMetrics
 
 
 class CacheService:

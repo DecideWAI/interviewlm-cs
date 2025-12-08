@@ -12,6 +12,7 @@ import {
   buildChatSystemPromptWithCaching as buildSystemPromptWithCaching,
   type ChatPromptContext,
 } from "@/lib/prompts/chat-system";
+import { addMessageCacheBreakpoints } from "@/lib/utils/agent-utils";
 
 // Configuration
 const CLAUDE_MODEL = "claude-sonnet-4-5-20250929";
@@ -156,11 +157,13 @@ export async function* streamChatCompletion(
     const client = getAnthropicClient();
     const systemPromptWithCaching = buildSystemPromptWithCaching(context);
 
-    // Convert messages to Anthropic format
-    const anthropicMessages = messages.map((msg) => ({
-      role: msg.role,
-      content: msg.content,
-    }));
+    // Convert messages to Anthropic format and add cache breakpoints
+    const anthropicMessages = addMessageCacheBreakpoints(
+      messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }))
+    );
 
     // Stream the response with caching enabled
     const stream = await client.messages.stream({
@@ -246,11 +249,13 @@ export async function getChatCompletion(
     const client = getAnthropicClient();
     const systemPromptWithCaching = buildSystemPromptWithCaching(context);
 
-    // Convert messages to Anthropic format
-    const anthropicMessages = messages.map((msg) => ({
-      role: msg.role,
-      content: msg.content,
-    }));
+    // Convert messages to Anthropic format and add cache breakpoints
+    const anthropicMessages = addMessageCacheBreakpoints(
+      messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }))
+    );
 
     // Get complete response with caching enabled
     const response = await client.messages.create({

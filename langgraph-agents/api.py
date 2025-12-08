@@ -271,7 +271,20 @@ async def stream_coding_response(
     helpfulness_level: str,
     problem_statement: Optional[str],
 ) -> AsyncGenerator[str, None]:
-    """Generate SSE stream for coding agent response."""
+    """
+    Generate SSE stream for coding agent response.
+
+    Uses true token-by-token streaming via LangGraph's astream_events.
+    Streams text as it's generated, and tool events as they occur.
+
+    Events emitted:
+    - start: Connection established
+    - text_delta: Token/chunk of response text
+    - tool_start: Tool execution starting
+    - tool_end: Tool execution completed
+    - done: Response complete with metadata
+    - error: Error occurred
+    """
     try:
         # Get or create agent for this session
         agent_key = f"{session_id}:{candidate_id}"
@@ -289,37 +302,46 @@ async def stream_coding_response(
         # Send initial event
         yield f"event: start\ndata: {json.dumps({'session_id': session_id})}\n\n"
 
-        # Process message with streaming
-        # Note: Current implementation collects full response
-        # For true token streaming, agent would need streaming callback support
-        response = await agent.send_message(message)
+        # Use true streaming with astream_events
+        async for event in agent.send_message_streaming(message):
+            event_type = event.get("type")
 
-        # Stream thinking/response chunks
-        text = response.get("text", "")
-        chunk_size = 50  # Characters per chunk for streaming effect
+            if event_type == "text_delta":
+                # Stream text as it's generated
+                event_data = {"delta": event.get("delta", ""), "type": "text"}
+                yield f"event: text_delta\ndata: {json.dumps(event_data)}\n\n"
 
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i:i + chunk_size]
-            event_data = {"delta": chunk, "type": "text"}
-            yield f"event: thinking\ndata: {json.dumps(event_data)}\n\n"
-            await asyncio.sleep(0.02)  # Small delay for streaming effect
+            elif event_type == "tool_start":
+                # Tool execution starting
+                tool_data = {
+                    "tool": event.get("name"),
+                    "input": event.get("input", {}),
+                }
+                yield f"event: tool_start\ndata: {json.dumps(tool_data)}\n\n"
 
-        # Send tool usage events
-        for tool in response.get("tools_used", []):
-            yield f"event: tool_used\ndata: {json.dumps({'tool': tool})}\n\n"
+            elif event_type == "tool_end":
+                # Tool execution completed
+                tool_data = {
+                    "tool": event.get("name"),
+                    "output": event.get("output"),
+                }
+                yield f"event: tool_end\ndata: {json.dumps(tool_data)}\n\n"
 
-        # Send file modification events
-        for file_path in response.get("files_modified", []):
-            yield f"event: file_modified\ndata: {json.dumps({'path': file_path})}\n\n"
+            elif event_type == "done":
+                # Response complete
+                response = event.get("response", {})
+                done_data = {
+                    "response": response.get("text", ""),
+                    "tools_used": response.get("tools_used", []),
+                    "files_modified": response.get("files_modified", []),
+                    "metadata": response.get("metadata", {}),
+                }
+                yield f"event: done\ndata: {json.dumps(done_data)}\n\n"
 
-        # Send done event with full response
-        done_data = {
-            "response": text,
-            "tools_used": response.get("tools_used", []),
-            "files_modified": response.get("files_modified", []),
-            "metadata": response.get("metadata", {}),
-        }
-        yield f"event: done\ndata: {json.dumps(done_data)}\n\n"
+            elif event_type == "error":
+                # Error occurred
+                error_data = {"error": event.get("error"), "type": "error"}
+                yield f"event: error\ndata: {json.dumps(error_data)}\n\n"
 
     except Exception as e:
         error_data = {"error": str(e), "type": "error"}
