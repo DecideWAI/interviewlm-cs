@@ -16,6 +16,7 @@ import { addMessageCacheBreakpoints } from "@/lib/utils/agent-utils";
 
 // Configuration
 const CLAUDE_MODEL = "claude-sonnet-4-5-20250929";
+const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 const MAX_TOKENS = 4096;
 const TEMPERATURE = 0.7;
 
@@ -335,6 +336,58 @@ export async function testConnection(): Promise<boolean> {
 }
 
 /**
+ * Fast question generation using Haiku model
+ *
+ * Optimized for speed (~10-15s vs ~50s with Sonnet):
+ * - Uses Haiku model (3x faster than Sonnet)
+ * - No system prompt overhead
+ * - Direct API call without chat context
+ *
+ * @param prompt - The question generation prompt
+ * @returns The generated text response
+ */
+export async function generateQuestionFast(prompt: string): Promise<{
+  content: string;
+  latency: number;
+  inputTokens: number;
+  outputTokens: number;
+}> {
+  const startTime = Date.now();
+
+  try {
+    const client = getAnthropicClient();
+
+    const response = await client.messages.create({
+      model: HAIKU_MODEL,
+      max_tokens: 2048,
+      temperature: TEMPERATURE,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const content = response.content
+      .filter((block) => block.type === "text")
+      .map((block) => (block as Anthropic.TextBlock).text)
+      .join("\n");
+
+    const latency = Date.now() - startTime;
+    console.log(`[Claude] Fast question generation: ${latency}ms, ${response.usage.input_tokens}in/${response.usage.output_tokens}out`);
+
+    return {
+      content,
+      latency,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+    };
+  } catch (error) {
+    console.error("Error in generateQuestionFast:", error);
+    throw new Error(
+      `Fast question generation failed: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+  }
+}
+
+/**
  * Export the model name for reference
  */
 export const CURRENT_MODEL = CLAUDE_MODEL;
+export const FAST_MODEL = HAIKU_MODEL;

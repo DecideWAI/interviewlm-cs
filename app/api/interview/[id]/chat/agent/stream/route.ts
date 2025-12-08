@@ -23,6 +23,7 @@ import { publishAIInteraction } from "@/lib/queues";
 import { createStreamingCodingAgent } from "@/lib/agents/coding-agent";
 import { traceAgentSession } from "@/lib/observability/langsmith";
 import type { HelpfulnessLevel } from "@/lib/types/agent";
+import { agentAssignmentService, type AgentBackendType } from "@/lib/experiments";
 
 // Request validation schema (passed as query params for GET/SSE)
 const chatRequestSchema = z.object({
@@ -114,6 +115,20 @@ export async function POST(
       });
     }
 
+    // Get agent backend assignment (DB-based, session-sticky)
+    const agentAssignment = await agentAssignmentService.getBackendForSession({
+      sessionId: sessionRecording.id,
+      candidateId: id,
+      organizationId: candidate.organizationId,
+      assessmentId: candidate.assessmentId,
+    });
+
+    console.log(
+      `[AgentStream] Using ${agentAssignment.backend} backend (source: ${agentAssignment.source}${
+        agentAssignment.experimentId ? `, experiment: ${agentAssignment.experimentId}` : ""
+      })`
+    );
+
     // Get current question for problem statement
     const currentQuestion = await prisma.generatedQuestion.findFirst({
       where: {
@@ -156,7 +171,39 @@ export async function POST(
             id, // sessionId (used as thread_id to group all messages from same session)
             id, // candidateId
             async () => {
-              // Create streaming agent
+              // Load conversation history
+              const previousInteractions = await prisma.claudeInteraction.findMany({
+                where: { sessionId: sessionRecording!.id },
+                orderBy: { timestamp: "asc" },
+                select: { role: true, content: true },
+              });
+
+              // Route based on agent assignment
+              if (agentAssignment.backend === "langgraph") {
+                // Call LangGraph Python agent via HTTP
+                return await callLangGraphAgent({
+                  sessionId: id,
+                  candidateId: id,
+                  message: enhancedMessage,
+                  helpfulnessLevel: helpfulnessLevel || "pair-programming",
+                  problemStatement,
+                  conversationHistory: previousInteractions.map((i) => ({
+                    role: i.role,
+                    content: i.content,
+                  })),
+                  onTextDelta: (delta: string) => {
+                    sendEvent("content", { delta });
+                  },
+                  onToolStart: (toolName: string, toolId: string, input: unknown) => {
+                    sendEvent("tool_use_start", { toolName, toolId, input });
+                  },
+                  onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
+                    sendEvent("tool_result", { toolName, toolId, output: result, isError });
+                  },
+                });
+              }
+
+              // Default: TypeScript Claude SDK agent
               const agent = await createStreamingCodingAgent({
                 sessionId: id,
                 candidateId: id,
@@ -164,13 +211,6 @@ export async function POST(
                 helpfulnessLevel: (helpfulnessLevel || "pair-programming") as HelpfulnessLevel,
                 workspaceRoot: "/workspace",
                 problemStatement,
-              });
-
-              // Load conversation history
-              const previousInteractions = await prisma.claudeInteraction.findMany({
-                where: { sessionId: sessionRecording!.id },
-                orderBy: { timestamp: "asc" },
-                select: { role: true, content: true },
               });
 
               if (previousInteractions.length > 0) {
@@ -255,6 +295,9 @@ export async function POST(
               model: modelName,
               toolCallCount: agentResponse.metadata?.toolCallCount as number | undefined,
               latency,
+              agentBackend: agentAssignment.backend,
+              agentSource: agentAssignment.source,
+              experimentId: agentAssignment.experimentId,
             },
           });
 
@@ -295,6 +338,178 @@ export async function POST(
       { status: 500 }
     );
   }
+}
+
+/**
+ * Call LangGraph Python agent via HTTP with streaming support
+ */
+interface LangGraphCallOptions {
+  sessionId: string;
+  candidateId: string;
+  message: string;
+  helpfulnessLevel: string;
+  problemStatement?: string;
+  conversationHistory: Array<{ role: string; content: string }>;
+  onTextDelta: (delta: string) => void;
+  onToolStart: (toolName: string, toolId: string, input: unknown) => void;
+  onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => void;
+}
+
+async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
+  text: string;
+  toolsUsed?: string[];
+  filesModified?: string[];
+  metadata?: Record<string, unknown>;
+}> {
+  const langGraphUrl = process.env.LANGGRAPH_API_URL || "http://localhost:9001";
+
+  try {
+    // Try streaming endpoint first
+    const response = await fetch(`${langGraphUrl}/api/agent/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        session_id: options.sessionId,
+        candidate_id: options.candidateId,
+        message: options.message,
+        helpfulness_level: options.helpfulnessLevel,
+        problem_statement: options.problemStatement,
+        conversation_history: options.conversationHistory,
+      }),
+    });
+
+    if (!response.ok) {
+      // Fallback to non-streaming endpoint
+      return await callLangGraphAgentNonStreaming(options);
+    }
+
+    // Parse SSE stream
+    const reader = response.body?.getReader();
+    if (!reader) {
+      return await callLangGraphAgentNonStreaming(options);
+    }
+
+    const decoder = new TextDecoder();
+    let fullText = "";
+    let toolsUsed: string[] = [];
+    let filesModified: string[] = [];
+    let metadata: Record<string, unknown> = {};
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split("\n");
+
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          const eventType = line.substring(7);
+          continue;
+        }
+        if (line.startsWith("data: ")) {
+          try {
+            const data = JSON.parse(line.substring(6));
+
+            if (data.type === "content" || data.delta) {
+              const delta = data.delta || data.content || "";
+              fullText += delta;
+              options.onTextDelta(delta);
+            } else if (data.type === "tool_start" || data.tool_name) {
+              if (data.tool_name) {
+                options.onToolStart(data.tool_name, data.tool_id || "", data.input || {});
+              }
+            } else if (data.type === "tool_result") {
+              options.onToolResult(
+                data.tool_name || "",
+                data.tool_id || "",
+                data.output || data.result,
+                !!data.is_error
+              );
+              if (data.tool_name) {
+                toolsUsed.push(data.tool_name);
+              }
+            } else if (data.type === "done" || data.response) {
+              fullText = data.response || data.text || fullText;
+              toolsUsed = data.tools_used || toolsUsed;
+              filesModified = data.files_modified || filesModified;
+              metadata = data.metadata || metadata;
+            }
+          } catch {
+            // Ignore parse errors
+          }
+        }
+      }
+    }
+
+    return {
+      text: fullText,
+      toolsUsed,
+      filesModified,
+      metadata,
+    };
+  } catch (error) {
+    console.error("[LangGraph] Streaming failed, trying non-streaming:", error);
+    return await callLangGraphAgentNonStreaming(options);
+  }
+}
+
+/**
+ * Non-streaming fallback for LangGraph agent
+ */
+async function callLangGraphAgentNonStreaming(options: LangGraphCallOptions): Promise<{
+  text: string;
+  toolsUsed?: string[];
+  filesModified?: string[];
+  metadata?: Record<string, unknown>;
+}> {
+  const langGraphUrl = process.env.LANGGRAPH_API_URL || "http://localhost:9001";
+
+  const response = await fetch(`${langGraphUrl}/api/agent/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      session_id: options.sessionId,
+      candidate_id: options.candidateId,
+      message: options.message,
+      helpfulness_level: options.helpfulnessLevel,
+      problem_statement: options.problemStatement,
+      conversation_history: options.conversationHistory,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`LangGraph API error: ${response.status} ${errorText}`);
+  }
+
+  const result = await response.json();
+
+  // Send full response as single delta
+  if (result.text) {
+    options.onTextDelta(result.text);
+  }
+
+  return {
+    text: result.text || "",
+    toolsUsed: result.tools_used || [],
+    filesModified: result.files_modified || [],
+    metadata: {
+      model: result.model,
+      usage: result.token_usage
+        ? {
+            input_tokens: result.token_usage.input,
+            output_tokens: result.token_usage.output,
+          }
+        : undefined,
+      ...result.metadata,
+    },
+  };
 }
 
 /**

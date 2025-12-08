@@ -3,11 +3,18 @@
  *
  * Routes requests to the appropriate agent backend based on experiment assignments.
  * Supports Claude Code SDK (TypeScript) and LangGraph (Python) backends.
+ *
+ * Now uses DB-based AgentAssignmentService for persistent, session-sticky assignments.
  */
 
 import type { AgentBackend, AgentRequest, AgentResponse, ExperimentAssignment } from './types';
 import { experimentService } from './experiment-service';
 import { metricsCollector } from './metrics-collector';
+import {
+  agentAssignmentService,
+  type AssignmentContext,
+  type AgentBackendType,
+} from './agent-assignment-service';
 
 /**
  * Claude SDK Agent Interface (TypeScript)
@@ -265,6 +272,120 @@ export class AgentRouter {
       sessionId,
     );
     return assignment?.backend || null;
+  }
+
+  /**
+   * Route request using DB-based assignment (recommended)
+   *
+   * Uses AgentAssignmentService for:
+   * - Persistent DB storage
+   * - Session-sticky assignments
+   * - DB-configurable experiments
+   * - Organization/assessment-level config
+   */
+  async routeRequestWithDbConfig(
+    request: AgentRequest,
+    context?: {
+      organizationId?: string;
+      assessmentId?: string;
+      seniority?: string;
+      role?: string;
+      assessmentType?: string;
+    },
+  ): Promise<AgentResponse> {
+    const startTime = Date.now();
+
+    // Get assignment from DB-based service
+    const assignmentContext: AssignmentContext = {
+      sessionId: request.sessionId,
+      candidateId: request.candidateId,
+      organizationId: context?.organizationId,
+      assessmentId: context?.assessmentId,
+      seniority: context?.seniority,
+      role: context?.role,
+      assessmentType: context?.assessmentType,
+    };
+
+    const assignment = await agentAssignmentService.getBackendForSession(assignmentContext);
+    const backend = assignment.backend;
+
+    console.log(
+      `[AgentRouter] Routing to ${backend} (source: ${assignment.source}${
+        assignment.experimentId ? `, experiment: ${assignment.experimentId}` : ''
+      })`,
+    );
+
+    // Route to appropriate backend
+    let response: AgentResponse;
+    try {
+      if (backend === 'langgraph') {
+        response = await this.callLangGraphAgent(request);
+      } else {
+        response = await this.callClaudeSdkAgent(request);
+      }
+
+      // Record metrics if from experiment
+      if (assignment.experimentId) {
+        await metricsCollector.recordMetric({
+          experimentId: assignment.experimentId,
+          variantId: assignment.variant || 'unknown',
+          metricName: 'response_latency_ms',
+          value: response.latencyMs,
+          timestamp: new Date(),
+          metadata: {
+            sessionId: request.sessionId,
+            backend,
+            source: assignment.source,
+          },
+        });
+
+        await metricsCollector.recordMetric({
+          experimentId: assignment.experimentId,
+          variantId: assignment.variant || 'unknown',
+          metricName: 'request_success',
+          value: 1,
+          timestamp: new Date(),
+        });
+      }
+
+      return response;
+    } catch (error) {
+      // Record error metrics if from experiment
+      if (assignment.experimentId) {
+        await metricsCollector.recordMetric({
+          experimentId: assignment.experimentId,
+          variantId: assignment.variant || 'unknown',
+          metricName: 'request_error',
+          value: 1,
+          timestamp: new Date(),
+          metadata: {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            backend,
+          },
+        });
+      }
+
+      throw error;
+    }
+  }
+
+  /**
+   * Get current assignment for a session (for UI display)
+   */
+  async getCurrentAssignment(
+    sessionId: string,
+    candidateId: string,
+    context?: {
+      organizationId?: string;
+      assessmentId?: string;
+    },
+  ) {
+    return agentAssignmentService.getBackendForSession({
+      sessionId,
+      candidateId,
+      organizationId: context?.organizationId,
+      assessmentId: context?.assessmentId,
+    });
   }
 }
 
