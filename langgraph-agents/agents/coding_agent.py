@@ -173,6 +173,16 @@ def build_system_prompt(
 - Consider both iterative and recursive approaches
 - Optimize only after correctness is established
 
+**IMPORTANT - Solving Large Problems:**
+When facing a large or complex task, ALWAYS break it down into smaller parts:
+1. First, outline the major components or steps needed
+2. Implement ONE component at a time, verifying each works before moving on
+3. After each component, summarize what was done and what remains
+4. If a single step requires many tool calls (>10), pause and explain progress
+5. Prioritize the most critical functionality first (MVP approach)
+6. If you notice you're making many iterations without progress, stop and reassess the approach
+7. Ask the candidate for clarification if requirements are ambiguous rather than guessing
+
 **Data Structures and When to Use Them:**
 - Arrays/Lists: Sequential access, known size, O(1) random access
 - Linked Lists: Frequent insertions/deletions, unknown size
@@ -429,7 +439,8 @@ class CodingAgentGraph:
         config = {
             "configurable": {
                 "thread_id": self.session_id,
-            }
+            },
+            "recursion_limit": 100,  # Increased from default 25 for complex tasks
         }
 
         # Context for middleware
@@ -500,7 +511,8 @@ class CodingAgentGraph:
         config = {
             "configurable": {
                 "thread_id": self.session_id,
-            }
+            },
+            "recursion_limit": 100,  # Increased from default 25 for complex tasks
         }
 
         context = {
@@ -527,13 +539,28 @@ class CodingAgentGraph:
                 if event_type == "on_chat_model_stream":
                     chunk = data.get("chunk")
                     if chunk and hasattr(chunk, "content") and chunk.content:
-                        delta = chunk.content
-                        full_response += delta
+                        # Handle content which can be str or list of blocks
+                        content = chunk.content
+                        if isinstance(content, str):
+                            delta = content
+                        elif isinstance(content, list):
+                            # Extract text from content blocks
+                            delta = ""
+                            for block in content:
+                                if isinstance(block, str):
+                                    delta += block
+                                elif isinstance(block, dict) and block.get("type") == "text":
+                                    delta += block.get("text", "")
+                        else:
+                            delta = str(content) if content else ""
+                        
+                        if delta:
+                            full_response += delta
 
-                        if callbacks and callbacks.on_text_delta:
-                            callbacks.on_text_delta(delta)
+                            if callbacks and callbacks.on_text_delta:
+                                callbacks.on_text_delta(delta)
 
-                        yield {"type": "text_delta", "delta": delta}
+                            yield {"type": "text_delta", "delta": delta}
 
                 elif event_type == "on_tool_start":
                     tool_name = event.get("name", "unknown")
@@ -557,10 +584,19 @@ class CodingAgentGraph:
                     if callbacks and callbacks.on_tool_end:
                         callbacks.on_tool_end(tool_name, tool_output)
 
+                    # Keep output as dict for file operations so TypeScript can parse it
+                    # Only truncate string outputs for large non-structured results
+                    if isinstance(tool_output, dict):
+                        output_data = tool_output
+                    elif tool_output is not None:
+                        output_data = str(tool_output)[:500]
+                    else:
+                        output_data = None
+
                     yield {
                         "type": "tool_end",
                         "name": tool_name,
-                        "output": str(tool_output)[:500] if tool_output else None,
+                        "output": output_data,
                     }
 
             yield {
