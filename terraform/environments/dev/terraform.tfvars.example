@@ -1,0 +1,19 @@
+# Development Environment - Example Variables
+# Copy this file to terraform.tfvars and fill in your values
+
+# Required
+project_id = "your-gcp-project-id"
+
+# Optional - override defaults
+region = "us-central1"
+
+# Container image (update after first push to Artifact Registry)
+app_image = "us-central1-docker.pkg.dev/your-project/interviewlm-dev-docker/app:latest"
+
+# Alerts (disabled by default in dev)
+enable_alerts         = false
+alert_email_addresses = ["dev@example.com"]
+
+# GitHub Actions Workload Identity (optional)
+enable_workload_identity = false
+github_repo              = "your-org/interviewlm"

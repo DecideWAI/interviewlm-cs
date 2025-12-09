@@ -16,7 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeou
 from typing import Any, Optional
 from pathlib import Path
 from langchain_core.tools import tool
-
+from langchain_core.runnables import RunnableConfig
+from pydantic import BaseModel, Field
 # Timeout for tool operations (matches TypeScript implementation)
 TOOL_TIMEOUT_SECONDS = 30
 
@@ -195,12 +196,30 @@ class SandboxManager:
 
     @classmethod
     async def _get_sandbox_id_from_db(cls, session_id: str) -> Optional[str]:
-        """Get sandbox ID from database (volumeId field on candidates table)."""
+        """Get sandbox ID from database (volumeId field on candidates table).
+
+        Note: session_id can be either:
+        - A session recording ID (from Next.js route) - we resolve to candidate first
+        - A candidate ID (legacy) - we query directly
+        """
         if not ASYNCPG_AVAILABLE:
             return None
         try:
             conn = await asyncpg.connect(settings.database_url)
             try:
+                # First try: session_id is a session recording ID
+                # Look up the candidate ID from session_recordings table
+                row = await conn.fetchrow(
+                    """SELECT c.volume_id
+                       FROM session_recordings sr
+                       JOIN candidates c ON c.id = sr.candidate_id
+                       WHERE sr.id = $1""",
+                    session_id
+                )
+                if row and row["volume_id"]:
+                    return row["volume_id"]
+
+                # Fallback: session_id might be a candidate ID directly (legacy)
                 row = await conn.fetchrow(
                     "SELECT volume_id FROM candidates WHERE id = $1",
                     session_id
@@ -214,17 +233,32 @@ class SandboxManager:
 
     @classmethod
     async def _save_sandbox_id_to_db(cls, session_id: str, sandbox_id: str) -> None:
-        """Persist sandbox ID to database for reconnection after restart."""
+        """Persist sandbox ID to database for reconnection after restart.
+
+        Note: session_id can be either a session recording ID or candidate ID.
+        We resolve to candidate ID before updating.
+        """
         if not ASYNCPG_AVAILABLE:
             return
         try:
             conn = await asyncpg.connect(settings.database_url)
             try:
+                # First try: session_id is a session recording ID
+                result = await conn.execute(
+                    """UPDATE candidates SET volume_id = $1, updated_at = NOW()
+                       WHERE id = (SELECT candidate_id FROM session_recordings WHERE id = $2)""",
+                    sandbox_id, session_id
+                )
+                if result == "UPDATE 1":
+                    print(f"[SandboxManager] Persisted sandbox {sandbox_id} to DB via session recording {session_id}")
+                    return
+
+                # Fallback: session_id might be a candidate ID directly
                 await conn.execute(
                     'UPDATE candidates SET volume_id = $1, updated_at = NOW() WHERE id = $2',
                     sandbox_id, session_id
                 )
-                print(f"[SandboxManager] Persisted sandbox {sandbox_id} to DB for session {session_id}")
+                print(f"[SandboxManager] Persisted sandbox {sandbox_id} to DB for candidate {session_id}")
             finally:
                 await conn.close()
         except Exception as e:
@@ -232,12 +266,25 @@ class SandboxManager:
 
     @classmethod
     async def _clear_sandbox_id_from_db(cls, session_id: str) -> None:
-        """Clear sandbox ID from database when sandbox is terminated."""
+        """Clear sandbox ID from database when sandbox is terminated.
+
+        Note: session_id can be either a session recording ID or candidate ID.
+        """
         if not ASYNCPG_AVAILABLE:
             return
         try:
             conn = await asyncpg.connect(settings.database_url)
             try:
+                # First try: session_id is a session recording ID
+                result = await conn.execute(
+                    """UPDATE candidates SET volume_id = NULL, updated_at = NOW()
+                       WHERE id = (SELECT candidate_id FROM session_recordings WHERE id = $1)""",
+                    session_id
+                )
+                if result == "UPDATE 1":
+                    return
+
+                # Fallback: session_id might be a candidate ID directly
                 await conn.execute(
                     'UPDATE candidates SET volume_id = NULL, updated_at = NOW() WHERE id = $1',
                     session_id
@@ -503,7 +550,7 @@ def sanitize_output(text: str, max_size: int = 50000) -> str:
 @tool
 def read_file(
     file_path: str,
-    session_id: str,
+    config: RunnableConfig,
     offset: int = 0,
     limit: int = 10000,
 ) -> dict[str, Any]:
@@ -514,13 +561,14 @@ def read_file(
 
     Args:
         file_path: Path to the file (relative to /workspace or absolute)
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
         offset: Character offset to start reading from (default: 0)
         limit: Maximum number of characters to read (default: 10000)
 
     Returns:
         Dict with success status, content, and metadata
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     allowed, reason = is_path_allowed(file_path)
     if not allowed:
         return {"success": False, "error": reason}
@@ -565,7 +613,7 @@ def read_file(
 def write_file(
     file_path: str,
     content: str,
-    session_id: str,
+    config: RunnableConfig,
 ) -> dict[str, Any]:
     """
     Create or overwrite a file with new content.
@@ -573,11 +621,12 @@ def write_file(
     Args:
         file_path: Path to the file (relative to /workspace or absolute)
         content: Content to write to the file
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
 
     Returns:
         Dict with success status and metadata
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     allowed, reason = is_path_allowed(file_path)
     if not allowed:
         return {"success": False, "error": reason}
@@ -611,7 +660,7 @@ def edit_file(
     file_path: str,
     old_string: str,
     new_string: str,
-    session_id: str,
+    config: RunnableConfig,
 ) -> dict[str, Any]:
     """
     Edit an existing file by replacing a specific section.
@@ -623,11 +672,12 @@ def edit_file(
         file_path: Path to the file (relative to /workspace or absolute)
         old_string: The exact string to replace (must be unique in the file)
         new_string: The new string to insert
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
 
     Returns:
         Dict with success status and replacement count
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     allowed, reason = is_path_allowed(file_path)
     if not allowed:
         return {"success": False, "error": reason}
@@ -748,7 +798,7 @@ def _list_files_internal(
 
 @tool
 def list_files(
-    session_id: str,
+    config: RunnableConfig,
     path: str = "/workspace",
 ) -> dict[str, Any]:
     """
@@ -759,12 +809,13 @@ def list_files(
     Use glob_files for pattern matching across directories.
 
     Args:
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
         path: Directory path to list (default: /workspace)
 
     Returns:
         Dict with list of files (name, path, type, size)
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     try:
         # Use timeout wrapper to prevent hanging (matches TypeScript implementation)
         return run_with_timeout(
@@ -782,7 +833,7 @@ def list_files(
 @tool
 def grep_files(
     pattern: str,
-    session_id: str,
+    config: RunnableConfig,
     path: str = "/workspace",
 ) -> dict[str, Any]:
     """
@@ -790,12 +841,13 @@ def grep_files(
 
     Args:
         pattern: Regular expression pattern to search for
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
         path: Directory to search in (default: /workspace)
 
     Returns:
         Dict with matches (file, line number, content)
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     try:
         # Validate regex
         try:
@@ -843,18 +895,19 @@ def grep_files(
 @tool
 def glob_files(
     pattern: str,
-    session_id: str,
+    config: RunnableConfig,
 ) -> dict[str, Any]:
     """
     Find files matching a glob pattern.
 
     Args:
         pattern: Glob pattern (e.g., "*.ts", "**/*.py", "src/**/*.js")
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
 
     Returns:
         Dict with list of matching file paths
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     try:
         sb = sandbox_mgr.get_sandbox(session_id)
 
@@ -884,7 +937,7 @@ def glob_files(
 @tool
 def run_bash(
     command: str,
-    session_id: str,
+    config: RunnableConfig,
     working_dir: str = "/workspace",
     timeout: int = 120,
 ) -> dict[str, Any]:
@@ -900,13 +953,14 @@ def run_bash(
 
     Args:
         command: Bash command to run
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
         working_dir: Working directory (default: /workspace)
         timeout: Timeout in seconds (default: 120)
 
     Returns:
         Dict with stdout, stderr, exit code, and success status
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     allowed, reason = is_command_allowed(command)
     if not allowed:
         return {"success": False, "error": reason, "stdout": "", "stderr": "", "exit_code": 1}
@@ -950,170 +1004,156 @@ def run_bash(
 
 @tool
 def run_tests(
-    session_id: str,
-    test_command: str = "",
+    test_cmd: str,
+    config: RunnableConfig,
+    working_dir: str = "/workspace",
+    timeout: int = 180,
 ) -> dict[str, Any]:
     """
-    Run the test suite for the current project.
-
-    Automatically detects project type (npm/pytest/go/cargo) and runs tests.
-    You can also specify a custom test command.
+    Run tests and return structured results.
 
     Args:
-        session_id: Session ID for sandbox access
-        test_command: Optional custom test command (auto-detects if empty)
+        test_cmd: Test command (e.g., "npm test", "pytest", "go test")
+        config: RunnableConfig with session_id in configurable
+        working_dir: Working directory (default: /workspace)
+        timeout: Timeout in seconds (default: 180)
 
     Returns:
-        Dict with test results (passed, failed, total, output)
+        Dict with status, output, and test count
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
+    allowed, reason = is_command_allowed(test_cmd)
+    if not allowed:
+        return {"success": False, "error": reason, "passed": False}
+
     try:
         sb = sandbox_mgr.get_sandbox(session_id)
 
-        # Auto-detect test command if not provided
-        if not test_command:
-            # Check for package.json (Node.js)
-            proc = run_in_sandbox(sb, "bash", "-c", "cat /workspace/package.json 2>/dev/null")
-            if proc.returncode == 0:
-                pkg = proc.stdout.read()
-                if '"test"' in pkg:
-                    test_command = "npm test 2>&1"
-                elif "jest" in pkg.lower():
-                    test_command = "npx jest 2>&1"
+        # Build command with working directory
+        full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {test_cmd}"
 
-            # Check for pytest
-            if not test_command:
-                proc = run_in_sandbox(sb, "bash", "-c", "ls /workspace/*.py /workspace/tests/*.py 2>/dev/null")
-                if proc.returncode == 0:
-                    test_command = "python -m pytest --tb=short -v 2>&1"
-
-            # Check for Go
-            if not test_command:
-                proc = run_in_sandbox(sb, "bash", "-c", "ls /workspace/go.mod 2>/dev/null")
-                if proc.returncode == 0:
-                    test_command = "go test -v ./... 2>&1"
-
-            # Check for Cargo (Rust)
-            if not test_command:
-                proc = run_in_sandbox(sb, "bash", "-c", "ls /workspace/Cargo.toml 2>/dev/null")
-                if proc.returncode == 0:
-                    test_command = "cargo test 2>&1"
-
-            # Default fallback
-            if not test_command:
-                test_command = "python -m pytest --tb=short -v 2>&1 || npm test 2>&1"
-
-        # Run tests
-        proc = run_in_sandbox(sb, "bash", "-c", f"cd /workspace && {test_command}", timeout=120)
+        proc = run_in_sandbox(sb, "bash", "-c", full_cmd, timeout=min(timeout, 180))
 
         stdout = proc.stdout.read()
         stderr = proc.stderr.read()
         exit_code = proc.returncode
 
-        # Parse test results
-        passed = 0
-        failed = 0
-        test_results = []
+        # Simple parsing for common test runners (pytest, jest, etc.)
+        passed_count = 0
+        failed_count = 0
+        total_count = 0
 
-        # Try to parse pytest-style output
-        for line in stdout.split("\n"):
-            line = line.strip()
-            if " PASSED" in line:
-                test_name = line.split(" PASSED")[0].strip()
-                test_results.append({"name": test_name, "passed": True})
-                passed += 1
-            elif " FAILED" in line:
-                test_name = line.split(" FAILED")[0].strip()
-                test_results.append({"name": test_name, "passed": False})
-                failed += 1
-
-        # Look for summary lines
-        if not test_results:
-            import re
-            # pytest summary
-            match = re.search(r"(\d+) passed", stdout)
-            if match:
-                passed = int(match.group(1))
-            match = re.search(r"(\d+) failed", stdout)
-            if match:
-                failed = int(match.group(1))
+        # Pytest-like output
+        if "== short test summary info ==" in stdout:
+            passed_match = re.search(r"(\d+) passed", stdout)
+            failed_match = re.search(r"(\d+) failed", stdout)
+            if passed_match:
+                passed_count = int(passed_match.group(1))
+            if failed_match:
+                failed_count = int(failed_match.group(1))
+            total_count = passed_count + failed_count
+        # Jest-like output
+        elif "Test Suites:" in stdout:
+            passed_match = re.search(r"(\d+) passed", stdout)
+            failed_match = re.search(r"(\d+) failed", stdout)
+            total_match = re.search(r"(\d+) total", stdout)
+            if passed_match:
+                passed_count = int(passed_match.group(1))
+            if failed_match:
+                failed_count = int(failed_match.group(1))
+            if total_match:
+                total_count = int(total_match.group(1))
+        else:
+            # Fallback: if exit code is 0, assume success
+            if exit_code == 0:
+                passed_count = 1
+                total_count = 1
+            else:
+                failed_count = 1
+                total_count = 1
 
         return {
-            "success": exit_code == 0 and failed == 0,
-            "passed": passed,
-            "failed": failed,
-            "total": passed + failed,
-            "test_results": test_results,
+            "success": exit_code == 0 and failed_count == 0,
             "stdout": sanitize_output(stdout),
             "stderr": sanitize_output(stderr),
+            "exit_code": exit_code,
+            "passed": passed_count,
+            "failed": failed_count,
+            "total": total_count,
         }
     except Exception as e:
+        error_msg = str(e)
+        if "timeout" in error_msg.lower():
+            return {
+                "success": False,
+                "error": f"Command timed out after {timeout}s",
+                "stdout": "",
+                "stderr": "",
+                "exit_code": -1,
+                "passed": 0,
+                "failed": 0,
+                "total": 0,
+            }
         return {
             "success": False,
-            "error": str(e),
+            "error": error_msg,
+            "stdout": "",
+            "stderr": error_msg,
+            "exit_code": 1,
             "passed": 0,
             "failed": 0,
             "total": 0,
-            "test_results": [],
         }
 
 
 @tool
 def install_packages(
-    packages: str,
-    session_id: str,
-    package_manager: str = "auto",
+    packages: list[str],
+    config: RunnableConfig,
+    manager: str = "npm",
+    working_dir: str = "/workspace",
 ) -> dict[str, Any]:
     """
-    Install packages in the sandbox.
+    Install packages using npm, pip, go, or cargo.
 
     Args:
-        packages: Space-separated list of packages to install
-        session_id: Session ID for sandbox access
-        package_manager: Package manager to use (npm, pip, cargo, go, or auto)
+        packages: List of package names to install
+        config: RunnableConfig with session_id in configurable
+        manager: Package manager ("npm", "pip", "go", "cargo")
+        working_dir: Working directory (default: /workspace)
 
     Returns:
-        Dict with installation result
+        Dict with success status and output
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
+    if not packages:
+        return {"success": True, "message": "No packages to install"}
+
+    # Basic validation of package names (alphanumeric, -, _, @, /, .)
+    for pkg in packages:
+        if not re.match(r'^[a-zA-Z0-9_\-@/.]+$', pkg):
+            return {"success": False, "error": f"Invalid package name: {pkg}"}
+
     try:
         sb = sandbox_mgr.get_sandbox(session_id)
 
-        # Auto-detect package manager
-        if package_manager == "auto":
-            proc = run_in_sandbox(sb, "bash", "-c", "ls /workspace/package.json 2>/dev/null")
-            if proc.returncode == 0:
-                package_manager = "npm"
-            else:
-                proc = run_in_sandbox(sb, "bash", "-c", "ls /workspace/requirements.txt 2>/dev/null")
-                if proc.returncode == 0:
-                    package_manager = "pip"
-                else:
-                    proc = run_in_sandbox(sb, "bash", "-c", "ls /workspace/Cargo.toml 2>/dev/null")
-                    if proc.returncode == 0:
-                        package_manager = "cargo"
-                    else:
-                        proc = run_in_sandbox(sb, "bash", "-c", "ls /workspace/go.mod 2>/dev/null")
-                        if proc.returncode == 0:
-                            package_manager = "go"
-                        else:
-                            package_manager = "npm"  # Default to npm
-
         # Build install command
-        if package_manager == "npm":
-            cmd = f"npm install {packages}"
-        elif package_manager == "pip":
-            cmd = f"pip install {packages}"
-        elif package_manager == "cargo":
-            cmd = f"cargo add {packages}"
-        elif package_manager == "go":
-            cmd = f"go get {packages}"
+        if manager == "npm":
+            cmd = f"npm install {' '.join(packages)}"
+        elif manager == "pip":
+            cmd = f"pip install {' '.join(packages)}"
+        elif manager == "cargo":
+            cmd = f"cargo add {' '.join(packages)}"
+        elif manager == "go":
+            cmd = f"go get {' '.join(packages)}"
         else:
-            return {"success": False, "error": f"Unknown package manager: {package_manager}"}
+            return {"success": False, "error": f"Unknown package manager: {manager}"}
 
-        proc = run_in_sandbox(sb, "bash", "-c", f"cd /workspace && {cmd}", timeout=120)
+        proc = run_in_sandbox(sb, "bash", "-c", f"cd {working_dir} && {cmd}", timeout=300) # Increased timeout for installs
 
         return {
             "success": proc.returncode == 0,
-            "package_manager": package_manager,
+            "package_manager": manager,
             "packages": packages,
             "stdout": sanitize_output(proc.stdout.read()),
             "stderr": sanitize_output(proc.stderr.read()),
@@ -1123,16 +1163,19 @@ def install_packages(
 
 
 @tool
-def get_environment_info(session_id: str) -> dict[str, Any]:
+def get_environment_info(
+    config: RunnableConfig,
+) -> dict[str, Any]:
     """
-    Get information about the sandbox environment.
+    Get information about the environment (Node/Python versions, etc).
 
     Args:
-        session_id: Session ID for sandbox access
+        config: RunnableConfig with session_id in configurable
 
     Returns:
-        Dict with installed language/tool versions
+        Dict with version info
     """
+    session_id = config.get("configurable", {}).get("session_id", "default")
     try:
         sb = sandbox_mgr.get_sandbox(session_id)
 

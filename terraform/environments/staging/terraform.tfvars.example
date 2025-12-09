@@ -1,0 +1,21 @@
+# Staging Environment - Example Variables
+# Copy this file to terraform.tfvars and fill in your values
+
+# Required
+project_id = "your-gcp-project-id"
+app_image  = "us-central1-docker.pkg.dev/your-project/interviewlm-staging-docker/app:latest"
+
+# Required for staging
+alert_email_addresses = ["staging-alerts@example.com", "team@example.com"]
+
+# Optional - override defaults
+region        = "us-central1"
+app_url       = "https://staging.interviewlm.com"
+custom_domain = "staging.interviewlm.com"
+
+# GitHub Actions Workload Identity
+enable_workload_identity = true
+github_repo              = "your-org/interviewlm"
+
+# OAuth providers (if needed)
+enable_oauth = false
