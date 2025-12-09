@@ -1,0 +1,56 @@
+# Production Environment - Example Variables
+# Copy this file to terraform.tfvars and fill in your values
+# IMPORTANT: Never commit terraform.tfvars with real values!
+
+# Required
+project_id    = "your-gcp-project-id"
+app_image     = "us-central1-docker.pkg.dev/your-project/interviewlm-prod-docker/app:latest"
+custom_domain = "interviewlm.com"
+
+# Required - GitHub
+github_repo = "your-org/interviewlm"
+
+# Required - Alerts
+alert_email_addresses = ["ops@interviewlm.com", "engineering@interviewlm.com"]
+
+# Optional - Slack alerts
+slack_webhook_url  = ""
+slack_channel_name = "#interviewlm-alerts"
+slack_auth_token   = ""
+
+# Required - Paddle payment configuration
+paddle_vendor_id          = "your-vendor-id"
+paddle_product_single     = "pri_single_assessment"
+paddle_product_medium     = "pri_medium_pack"
+paddle_product_enterprise = "pri_enterprise"
+
+# Optional - Override defaults
+region           = "us-central1"
+storage_location = "US"
+
+# App scaling
+app_cpu           = "4"
+app_memory        = "2Gi"
+app_min_instances = 2
+app_max_instances = 20
+
+# Worker scaling
+worker_cpu           = "2"
+worker_memory        = "2Gi"
+worker_min_instances = 2
+worker_max_instances = 10
+
+# Database sizing
+database_tier = "db-custom-2-4096"  # 2 vCPU, 4GB RAM
+
+# Redis sizing
+redis_memory_gb = 5
+
+# OAuth providers
+enable_oauth = true
+
+# CI/CD
+enable_workload_identity = true
+
+# Email
+resend_from_email = "noreply@interviewlm.com"

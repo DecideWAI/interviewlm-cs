@@ -439,6 +439,7 @@ class CodingAgentGraph:
         config = {
             "configurable": {
                 "thread_id": self.session_id,
+                "session_id": self.session_id,
             },
             "recursion_limit": 100,  # Increased from default 25 for complex tasks
         }
@@ -511,6 +512,7 @@ class CodingAgentGraph:
         config = {
             "configurable": {
                 "thread_id": self.session_id,
+                "session_id": self.session_id,
             },
             "recursion_limit": 100,  # Increased from default 25 for complex tasks
         }

@@ -1,0 +1,295 @@
+# Terraform CI/CD Pipeline for InterviewLM
+# Uses Workload Identity Federation for keyless authentication
+
+name: Terraform
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      action:
+        description: 'Terraform action'
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  TF_VERSION: '1.6.0'
+  TF_VAR_FILE: 'terraform.tfvars'
+
+jobs:
+  # Validate Terraform configuration
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+        working-directory: terraform
+
+      - name: Validate Dev
+        run: |
+          cd terraform/environments/dev
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Staging
+        run: |
+          cd terraform/environments/staging
+          terraform init -backend=false
+          terraform validate
+
+      - name: Validate Prod
+        run: |
+          cd terraform/environments/prod
+          terraform init -backend=false
+          terraform validate
+
+  # Plan for dev environment (on PR)
+  plan-dev:
+    name: Plan (Dev)
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER_DEV }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT_DEV }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        working-directory: terraform/environments/dev
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET_DEV }}" \
+            -backend-config="prefix=dev"
+
+      - name: Terraform Plan
+        id: plan
+        working-directory: terraform/environments/dev
+        run: |
+          terraform plan -no-color -out=tfplan 2>&1 | tee plan.txt
+          # Save plan to file for safe handling
+          echo "plan_file=plan.txt" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-dev
+          path: terraform/environments/dev/plan.txt
+          retention-days: 7
+
+      - name: Comment PR with Plan
+        uses: actions/github-script@v7
+        env:
+          PLAN_EXIT_CODE: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const planPath = 'terraform/environments/dev/plan.txt';
+            let plan = '';
+
+            try {
+              plan = fs.readFileSync(planPath, 'utf8');
+            } catch (e) {
+              plan = 'Unable to read plan output';
+            }
+
+            // Truncate if too long
+            const maxLength = 60000;
+            if (plan.length > maxLength) {
+              plan = plan.substring(0, maxLength) + '\n... (truncated)';
+            }
+
+            const exitCode = process.env.PLAN_EXIT_CODE;
+            const status = exitCode === 'success' ? '✅' : '❌';
+
+            const output = `### Terraform Plan (Dev) ${status}
+
+            <details>
+            <summary>Show Plan</summary>
+
+            \`\`\`hcl
+            ${plan}
+            \`\`\`
+
+            </details>
+
+            *Plan Status: ${exitCode}*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # Deploy to dev (on push to main)
+  deploy-dev:
+    name: Deploy (Dev)
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER_DEV }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT_DEV }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        working-directory: terraform/environments/dev
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET_DEV }}" \
+            -backend-config="prefix=dev"
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/dev
+        run: terraform apply -auto-approve
+
+  # Manual deployment for staging/prod
+  deploy-manual:
+    name: Deploy (${{ github.event.inputs.environment }})
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    environment: ${{ github.event.inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Set environment variables
+        id: env
+        env:
+          INPUT_ENV: ${{ github.event.inputs.environment }}
+          WIF_DEV: ${{ vars.WIF_PROVIDER_DEV }}
+          WIF_SA_DEV: ${{ vars.WIF_SERVICE_ACCOUNT_DEV }}
+          BUCKET_DEV: ${{ vars.TF_STATE_BUCKET_DEV }}
+          WIF_STAGING: ${{ vars.WIF_PROVIDER_STAGING }}
+          WIF_SA_STAGING: ${{ vars.WIF_SERVICE_ACCOUNT_STAGING }}
+          BUCKET_STAGING: ${{ vars.TF_STATE_BUCKET_STAGING }}
+          WIF_PROD: ${{ vars.WIF_PROVIDER_PROD }}
+          WIF_SA_PROD: ${{ vars.WIF_SERVICE_ACCOUNT_PROD }}
+          BUCKET_PROD: ${{ vars.TF_STATE_BUCKET_PROD }}
+        run: |
+          if [ "$INPUT_ENV" == "dev" ]; then
+            echo "wif_provider=$WIF_DEV" >> "$GITHUB_OUTPUT"
+            echo "wif_sa=$WIF_SA_DEV" >> "$GITHUB_OUTPUT"
+            echo "state_bucket=$BUCKET_DEV" >> "$GITHUB_OUTPUT"
+          elif [ "$INPUT_ENV" == "staging" ]; then
+            echo "wif_provider=$WIF_STAGING" >> "$GITHUB_OUTPUT"
+            echo "wif_sa=$WIF_SA_STAGING" >> "$GITHUB_OUTPUT"
+            echo "state_bucket=$BUCKET_STAGING" >> "$GITHUB_OUTPUT"
+          else
+            echo "wif_provider=$WIF_PROD" >> "$GITHUB_OUTPUT"
+            echo "wif_sa=$WIF_SA_PROD" >> "$GITHUB_OUTPUT"
+            echo "state_bucket=$BUCKET_PROD" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ steps.env.outputs.wif_provider }}
+          service_account: ${{ steps.env.outputs.wif_sa }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Terraform Init
+        env:
+          TF_ENV: ${{ github.event.inputs.environment }}
+          STATE_BUCKET: ${{ steps.env.outputs.state_bucket }}
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: |
+          terraform init \
+            -backend-config="bucket=$STATE_BUCKET" \
+            -backend-config="prefix=$TF_ENV"
+
+      - name: Terraform Plan
+        if: github.event.inputs.action == 'plan'
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: terraform plan
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: terraform apply -auto-approve
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        working-directory: terraform/environments/${{ github.event.inputs.environment }}
+        run: terraform destroy -auto-approve
