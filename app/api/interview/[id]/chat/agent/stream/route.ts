@@ -169,7 +169,7 @@ export async function POST(
           // Wrap the entire agent interaction with LangSmith trace
           // This groups all LLM calls and tool executions under a single "user message" run
           const agentResponse = await traceAgentSession(
-            id, // sessionId (used as thread_id to group all messages from same session)
+            sessionRecording!.id, // sessionId (used as thread_id to group all messages from same session)
             id, // candidateId
             async () => {
               // Load conversation history
@@ -182,8 +182,12 @@ export async function POST(
               // Route based on agent assignment
               if (agentAssignment.backend === "langgraph") {
                 // Call LangGraph Python agent via HTTP
+                // IMPORTANT: Use sessionRecording.id as sessionId for:
+                // - Consistent sandbox operations in LangGraph
+                // - Correct file streaming subscriptions (frontend subscribes to session recording ID)
+                // - Proper conversation history grouping
                 return await callLangGraphAgent({
-                  sessionId: id,
+                  sessionId: sessionRecording!.id,
                   candidateId: id,
                   sessionRecordingId: sessionRecording?.id,
                   message: enhancedMessage,
@@ -206,8 +210,9 @@ export async function POST(
               }
 
               // Default: TypeScript Claude SDK agent
+              // Use sessionRecording.id as sessionId for consistency with LangGraph path
               const agent = await createStreamingCodingAgent({
-                sessionId: id,
+                sessionId: sessionRecording!.id,
                 candidateId: id,
                 sessionRecordingId: sessionRecording!.id,
                 helpfulnessLevel: (helpfulnessLevel || "pair-programming") as HelpfulnessLevel,
