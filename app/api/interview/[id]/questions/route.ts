@@ -531,7 +531,9 @@ export const POST = withErrorHandling(async (
         candidate.assessment.role,
         candidate.assessment.seniority,
         difficulty,
-        candidate.generatedQuestions
+        candidate.generatedQuestions,
+        candidate.assessment.techStack || ['TypeScript'],
+        nextQuestionOrder + 1 // 1-indexed question number
       );
 
       // Save generated question
@@ -550,6 +552,19 @@ export const POST = withErrorHandling(async (
           status: "PENDING",
         },
       });
+
+      // Link to parent question if this isn't the first question
+      if (candidate.generatedQuestions.length > 0) {
+        const parentQuestion = candidate.generatedQuestions[candidate.generatedQuestions.length - 1];
+        await prisma.generatedQuestion.update({
+          where: { id: newQuestion.id },
+          data: { parentQuestionId: parentQuestion.id },
+        });
+        logger.debug('[Questions POST] Linked question to parent', {
+          questionId: newQuestion.id,
+          parentId: parentQuestion.id,
+        });
+      }
     }
 
     // Calculate incremental context if this is an incremental assessment
@@ -718,36 +733,99 @@ function determineNextDifficulty(
 }
 
 /**
+ * Determine the primary programming language from tech stack
+ */
+function determineLanguage(techStack: string[]): "python" | "go" | "typescript" | "javascript" {
+  const lowerStack = techStack.map(t => t.toLowerCase());
+
+  if (lowerStack.some(t => ['python', 'fastapi', 'django', 'flask', 'pytest'].includes(t))) {
+    return 'python';
+  }
+  if (lowerStack.some(t => ['go', 'golang', 'gin', 'echo'].includes(t))) {
+    return 'go';
+  }
+  if (lowerStack.some(t => ['typescript', 'nestjs', 'ts-node'].includes(t))) {
+    return 'typescript';
+  }
+  return 'javascript';
+}
+
+/**
+ * Get complexity additions based on difficulty level
+ */
+function getComplexityAdditions(difficulty: "EASY" | "MEDIUM" | "HARD"): string {
+  const additions: Record<string, string> = {
+    EASY: 'input validation, error handling, basic data transformations',
+    MEDIUM: 'async operations, database integration, caching, API design',
+    HARD: 'concurrent processing, optimization, system integration, complex business logic',
+  };
+  return additions[difficulty] || additions.MEDIUM;
+}
+
+/**
  * Generate problem using LLM
  */
 async function generateProblemWithLLM(
   role: string,
   seniority: string,
   difficulty: "EASY" | "MEDIUM" | "HARD",
-  previousQuestions: any[]
+  previousQuestions: any[],
+  techStack: string[],
+  questionNumber: number
 ): Promise<Omit<GeneratedProblem, "id" | "generatedAt" | "generatedBy" | "seedId">> {
-  const previousTitles = previousQuestions.map((q) => q.title).join(", ");
+  const language = determineLanguage(techStack);
+  const techStackStr = techStack.length > 0 ? techStack.join(', ') : 'TypeScript';
+
+  // Build previous questions context
+  let previousContext = '';
+  if (previousQuestions.length > 0) {
+    const questionSummaries = previousQuestions.map((q, i) => {
+      const desc = q.description?.substring(0, 300) || '';
+      const reqs = Array.isArray(q.requirements) ? q.requirements.slice(0, 3).join(', ') : '';
+      return `Question ${i + 1}: ${q.title}
+Description: ${desc}${desc.length >= 300 ? '...' : ''}
+Key Requirements: ${reqs}`;
+    }).join('\n\n');
+
+    previousContext = `
+### Previous Questions (BUILD ON THIS WORK):
+${questionSummaries}
+
+IMPORTANT: The new question MUST:
+- BUILD directly on the candidate's previous work
+- Extend the existing codebase (don't start fresh)
+- Add new complexity to the same domain/problem
+- Reference concepts from previous questions
+- Use the same entities, APIs, or data models where appropriate`;
+  }
 
   const prompt = `Generate a coding problem for a ${seniority} ${role} developer.
 
-Requirements:
-- Difficulty: ${difficulty}
-- Language: TypeScript
-- Must be different from these previous questions: ${previousTitles || "none"}
-- Include realistic test cases
-- Provide starter code template
+## Tech Stack Requirements
+Use these technologies: ${techStackStr}
+Primary language: ${language}
 
+## Question Context
+This is question #${questionNumber} in a progressive assessment.
+${previousContext}
+
+## Difficulty Progression
+- Difficulty: ${difficulty}
+- Question ${questionNumber} should be ${questionNumber > 1 ? 'more challenging than the previous, building on existing work' : 'foundational - establish the core domain and entities'}
+${questionNumber > 1 ? `- Add complexity through: ${getComplexityAdditions(difficulty)}` : ''}
+
+## Output Format
 Return a JSON object with this structure:
 {
-  "title": "Problem title",
-  "description": "Detailed problem description with examples",
+  "title": "${questionNumber > 1 ? 'Problem title that relates to previous work' : 'Problem title'}",
+  "description": "${questionNumber > 1 ? 'Description that REFERENCES and extends the previous question context' : 'Detailed problem description with examples'}",
   "requirements": ["Requirement 1", "Requirement 2"],
   "difficulty": "${difficulty.toLowerCase()}",
-  "estimatedTime": 30,
-  "language": "typescript",
+  "estimatedTime": ${difficulty === "EASY" ? 20 : difficulty === "MEDIUM" ? 30 : 45},
+  "language": "${language}",
   "starterCode": [
     {
-      "fileName": "solution.ts",
+      "fileName": "solution.${language === 'python' ? 'py' : language === 'go' ? 'go' : 'ts'}",
       "content": "// Starter code here"
     }
   ],
@@ -792,10 +870,17 @@ Return a JSON object with this structure:
       error: error instanceof Error ? error.message : 'Unknown error',
     });
 
-    // Fallback to a default problem
+    // Fallback to a default problem using the determined language
+    const fileExt = language === 'python' ? 'py' : language === 'go' ? 'go' : 'ts';
+    const starterContent = language === 'python'
+      ? `# TODO: Implement your solution here\n\ndef solution():\n    # Your code here\n    pass\n`
+      : language === 'go'
+      ? `package main\n\n// TODO: Implement your solution here\nfunc solution() {\n\t// Your code here\n}\n`
+      : `// TODO: Implement your solution here\n\nexport function solution() {\n  // Your code here\n}\n`;
+
     return {
       title: `${role} Challenge - ${difficulty}`,
-      description: `Solve this ${difficulty.toLowerCase()} ${role} programming challenge.`,
+      description: `Solve this ${difficulty.toLowerCase()} ${role} programming challenge using ${language}.`,
       requirements: [
         "Implement the required functionality",
         "Pass all test cases",
@@ -803,11 +888,11 @@ Return a JSON object with this structure:
       ],
       difficulty: difficulty.toLowerCase() as "easy" | "medium" | "hard",
       estimatedTime: difficulty === "EASY" ? 20 : difficulty === "MEDIUM" ? 30 : 45,
-      language: "typescript",
+      language: language,
       starterCode: [
         {
-          fileName: "solution.ts",
-          content: `// TODO: Implement your solution here\n\nexport function solution() {\n  // Your code here\n}\n`,
+          fileName: `solution.${fileExt}`,
+          content: starterContent,
         },
       ],
       testCases: [

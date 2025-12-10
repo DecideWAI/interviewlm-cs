@@ -1004,9 +1004,14 @@ export default function InterviewPage() {
       setIsLoadingNextQuestion(true);
       setShowCompletionCard(false);
 
-      // Calculate performance score
+      // Store current test results before resetting (for performance calculation)
+      const currentTestResults = { ...testResults };
+      // Reset test results immediately to prevent completion card from re-showing
+      setTestResults({ passed: 0, total: 0 });
+
+      // Calculate performance score (using stored values before reset)
       const timeSpent = questionTimeElapsed;
-      const testsPassedRatio = testResults.total > 0 ? testResults.passed / testResults.total : 0;
+      const testsPassedRatio = currentTestResults.total > 0 ? currentTestResults.passed / currentTestResults.total : 0;
       const score = Math.round(testsPassedRatio * 100); // Simple score calculation
 
       // Store performance for loading screen (full context for incremental)
@@ -1082,7 +1087,7 @@ export default function InterviewPage() {
       setCurrentQuestionIndex((prev) => prev + 1);
       setQuestionStartTime(new Date());
       setQuestionTimeElapsed(0);
-      setTestResults({ passed: 0, total: 0 });
+      // Note: testResults already reset at start of function
 
       // Reset editor with new starter code
       setCode(newStarterCode);
