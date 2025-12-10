@@ -24,14 +24,49 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
 
+# Workspace exploration tools (from coding agent)
+from tools.coding_tools import (
+    list_files,
+    read_file,
+    grep_files,
+    glob_files,
+)
+# Evaluation tools (DB query + analysis + storage)
 from tools.evaluation_tools import (
+    # DB query tools
+    get_session_metadata,
+    get_claude_interactions,
+    get_test_results,
+    # Analysis tools
     analyze_code_quality,
     analyze_problem_solving,
     analyze_ai_collaboration,
     analyze_communication,
+    # Storage tools
+    store_evaluation_result,
+    send_evaluation_progress,
     EVALUATION_TOOLS,
+    DB_QUERY_TOOLS,
+    ANALYSIS_TOOLS,
+    STORAGE_TOOLS,
 )
 from config import settings
+
+
+# =============================================================================
+# Combined Tools for Agentic Evaluation
+# =============================================================================
+
+# Workspace exploration tools
+WORKSPACE_TOOLS = [
+    list_files,
+    read_file,
+    grep_files,
+    glob_files,
+]
+
+# All tools for the agentic evaluation agent (workspace + DB + analysis + storage)
+AGENTIC_EVALUATION_TOOLS = WORKSPACE_TOOLS + DB_QUERY_TOOLS + ANALYSIS_TOOLS + STORAGE_TOOLS
 
 
 # =============================================================================
@@ -62,16 +97,16 @@ class EvaluationResult(TypedDict, total=False):
 
 
 class EvaluationAgentState(TypedDict, total=False):
-    """State for the evaluation agent."""
+    """State for the evaluation agent.
+
+    The agent discovers data via tools rather than receiving pre-packaged data:
+    - Code files: list_files, read_file, grep_files, glob_files (workspace)
+    - Session data: get_session_metadata, get_claude_interactions, get_test_results (database)
+    """
     messages: Annotated[list[BaseMessage], add_messages]
     session_id: str
     candidate_id: str
-    # Input data
-    code_snapshots: list[dict]
-    test_results: list[dict]
-    claude_interactions: list[dict]
-    terminal_commands: list[dict]
-    # Dimension scores
+    # Dimension scores (populated by analysis tools)
     code_quality_score: DimensionScore | None
     problem_solving_score: DimensionScore | None
     ai_collaboration_score: DimensionScore | None
@@ -119,75 +154,69 @@ DEFAULT_SCORING_WEIGHTS = {
 
 EVALUATION_SYSTEM_PROMPT = """You are an expert technical interviewer evaluating coding interview sessions.
 
-**Your Role:**
-Analyze completed interview sessions and provide evidence-based scoring across 4 dimensions.
+**Your Workflow:**
+You must DISCOVER the session data using your tools, ANALYZE, SCORE, and STORE the results.
+
+1. **SEND PROGRESS**: Use `send_evaluation_progress` to notify the frontend you are starting (10%)
+2. **GET CONTEXT**: Use `get_session_metadata` to understand the session (problem, language, duration)
+3. **SEND PROGRESS**: Update progress to 20%
+4. **EXPLORE CODE**: Use `list_files` to see the workspace structure
+5. **READ CODE**: Use `read_file` to examine solution files (look for main code files)
+6. **SEND PROGRESS**: Update progress to 40%
+7. **GET HISTORY**: Use `get_claude_interactions` and `get_test_results` to see what happened
+8. **SEND PROGRESS**: Update progress to 60%
+9. **ANALYZE**: Score each dimension with evidence (progress 80%)
+10. **STORE RESULTS**: Use `store_evaluation_result` to save scores to database and notify frontend
+
+**Available Tools:**
+
+*Progress & Storage:*
+- `send_evaluation_progress(session_id, candidate_id, status, progress_percent, current_step)` - Send real-time progress updates
+- `store_evaluation_result(...)` - Save final evaluation to database (MUST call at the end)
+
+*Workspace Exploration:*
+- `list_files(path)` - List directory contents
+- `read_file(file_path)` - Read file content
+- `grep_files(pattern, path)` - Search for patterns
+- `glob_files(pattern)` - Find files by pattern
+
+*Database Query:*
+- `get_session_metadata(session_id)` - Get session info, problem title, language
+- `get_claude_interactions(session_id)` - Get full AI chat history
+- `get_test_results(session_id)` - Get test run history
+
+*Analysis (use after gathering data):*
+- `analyze_code_quality(code_snapshots, test_results)` - Score code
+- `analyze_problem_solving(code_snapshots, test_results, terminal_commands)` - Score approach
+- `analyze_ai_collaboration(claude_interactions, metrics)` - Score AI usage
+- `analyze_communication(claude_interactions, code_snapshots)` - Score clarity
 
 **Evaluation Dimensions:**
 
-1. **Code Quality (40%)** - Evaluate the final code output:
+1. **Code Quality (40%)** - Final code output:
    - Test pass rate and correctness
    - Code organization and readability
    - Error handling and edge cases
    - Following language best practices
-   - Security considerations
 
-2. **Problem Solving (25%)** - Evaluate the approach:
+2. **Problem Solving (25%)** - The approach:
    - How the candidate broke down the problem
    - Iteration patterns (productive debugging vs. random changes)
-   - Use of terminal/tools for exploration
    - Recovery from mistakes
-   - Time management
 
-3. **AI Collaboration (20%)** - Evaluate AI usage:
+3. **AI Collaboration (20%)** - AI usage quality:
    - Quality of prompts (specific, contextual, well-structured)
-   - Effective use of AI suggestions
    - Understanding vs. copy-paste behavior
    - Balance of AI assistance vs. own thinking
-   - Building on AI suggestions creatively
 
-4. **Communication (15%)** - Evaluate clarity:
+4. **Communication (15%)** - Clarity:
    - Code documentation and comments
    - Prompt clarity and specificity
-   - Explaining reasoning in prompts
-   - Asking clarifying questions
 
-**Output Format:**
-For each dimension, provide:
-- Score (0-100)
-- Confidence (0.0-1.0)
-- Specific evidence from the session
-- Breakdown of sub-scores if applicable
+**IMPORTANT: You MUST call `store_evaluation_result` at the end with all scores.**
+Calculate overall_score using weights: code_quality*0.40 + problem_solving*0.25 + ai_collaboration*0.20 + communication*0.15
 
-Be thorough, fair, and evidence-based. Avoid bias from irrelevant factors.
-
-**Algorithm Understanding:**
-When evaluating problem-solving, consider:
-- Two Pointers: Sorted arrays, palindromes, partitioning
-- Sliding Window: Subarrays, substrings, streaming data
-- Binary Search: Sorted data, optimization problems
-- Dynamic Programming: Overlapping subproblems
-- BFS/DFS: Graph traversal, tree operations
-- Divide and Conquer: Merge sort, binary operations
-
-**Code Quality Indicators:**
-- Clean, readable code with meaningful names
-- Appropriate error handling
-- Following language conventions
-- Efficient algorithms (O(n), O(n log n) preferred)
-- Edge case handling
-
-**AI Collaboration Indicators:**
-Good:
-- Specific, contextual prompts
-- Building on suggestions
-- Asking for explanations
-- Iterating on solutions
-
-Poor:
-- Vague "help me" prompts
-- Copy-pasting without understanding
-- Over-reliance on AI
-- Not reading suggestions carefully"""
+Be thorough, fair, and evidence-based. Start by sending a progress update, then explore the session data."""
 
 
 # =============================================================================
@@ -205,7 +234,7 @@ def _create_anthropic_model(model_name: str) -> ChatAnthropic:
 
     return ChatAnthropic(
         model_name=model_name,
-        max_tokens=4096,
+        max_tokens=32000,
         temperature=0.3,
         betas=beta_versions,
         default_headers=default_headers,
@@ -300,7 +329,13 @@ def detect_biases(
 # =============================================================================
 
 def create_evaluation_agent_graph(use_checkpointing: bool = True):
-    """Create the Evaluation Agent using LangGraph v1's create_agent."""
+    """Create the Evaluation Agent using LangGraph v1's create_agent.
+
+    The agent uses agentic discovery with workspace exploration and database query tools.
+
+    Args:
+        use_checkpointing: Whether to use memory checkpointing
+    """
     model = _create_anthropic_model(settings.evaluation_agent_model)
 
     middleware = [
@@ -310,7 +345,7 @@ def create_evaluation_agent_graph(use_checkpointing: bool = True):
 
     agent_kwargs = {
         "model": model,
-        "tools": EVALUATION_TOOLS,
+        "tools": AGENTIC_EVALUATION_TOOLS,  # Workspace + DB + analysis tools
         "system_prompt": EVALUATION_SYSTEM_PROMPT,
         "middleware": middleware,
         "state_schema": EvaluationAgentState,
@@ -331,47 +366,52 @@ class EvaluationAgentGraph:
     """
     Evaluation Agent wrapper class.
 
-    Provides a convenient interface for evaluating interview sessions.
+    Uses agentic discovery to evaluate interview sessions. The agent:
+    1. Queries the database for session metadata, interactions, and test results
+    2. Explores the workspace to read code files
+    3. Analyzes and scores across all dimensions
     """
 
     def __init__(self, checkpointer=None):
         """Initialize the Evaluation Agent."""
-        self.graph = create_evaluation_agent_graph(use_checkpointing=checkpointer is not None)
+        self.graph = create_evaluation_agent_graph(
+            use_checkpointing=checkpointer is not None,
+        )
 
     async def evaluate_session(
         self,
         session_id: str,
         candidate_id: str,
-        code_snapshots: list[dict],
-        test_results: list[dict],
-        claude_interactions: list[dict],
-        terminal_commands: list[dict] | None = None,
     ) -> EvaluationResult:
         """
-        Evaluate a completed interview session.
+        Evaluate a completed interview session using agentic discovery.
+
+        The agent will autonomously:
+        1. Call get_session_metadata to understand the session context
+        2. Use list_files/read_file to explore the workspace code
+        3. Call get_claude_interactions to get AI chat history
+        4. Call get_test_results to get test run history
+        5. Analyze and score across all 4 dimensions
 
         Args:
-            session_id: Session identifier
-            candidate_id: Candidate identifier
-            code_snapshots: List of code snapshots with files and timestamps
-            test_results: List of test run results
-            claude_interactions: List of AI chat interactions
-            terminal_commands: Optional list of terminal commands
+            session_id: Session recording ID (used for DB queries and workspace access)
+            candidate_id: Candidate ID
 
         Returns:
             EvaluationResult with scores for all dimensions
         """
-        # Build evaluation prompt with session data
-        evaluation_prompt = self._build_evaluation_prompt(
-            code_snapshots=code_snapshots,
-            test_results=test_results,
-            claude_interactions=claude_interactions,
-            terminal_commands=terminal_commands or [],
-        )
+        evaluation_prompt = f"""Evaluate interview session {session_id}.
+
+Start by using get_session_metadata to understand the context, then explore the workspace
+and gather all relevant data before scoring.
+
+Session ID: {session_id}
+"""
 
         config = {
             "configurable": {
                 "thread_id": f"eval-{session_id}",
+                "session_id": session_id,  # Used by workspace and DB tools
             }
         }
 
@@ -386,73 +426,17 @@ class EvaluationAgentGraph:
             context=context,
         )
 
-        # Parse evaluation from response
         return self._parse_evaluation_result(
             result,
             session_id=session_id,
             candidate_id=candidate_id,
-            code_snapshots=code_snapshots,
         )
-
-    def _build_evaluation_prompt(
-        self,
-        code_snapshots: list[dict],
-        test_results: list[dict],
-        claude_interactions: list[dict],
-        terminal_commands: list[dict],
-    ) -> str:
-        """Build the evaluation prompt from session data."""
-        prompt_parts = ["Please evaluate this interview session:\n"]
-
-        # Final code snapshot
-        if code_snapshots:
-            final_snapshot = code_snapshots[-1]
-            files = final_snapshot.get("files", {})
-            prompt_parts.append("## Final Code:\n")
-            for filename, content in files.items():
-                prompt_parts.append(f"### {filename}\n```\n{content}\n```\n")
-
-        # Test results
-        if test_results:
-            prompt_parts.append("\n## Test Results:\n")
-            for result in test_results[-5:]:  # Last 5 test runs
-                passed = result.get("passed", 0)
-                failed = result.get("failed", 0)
-                prompt_parts.append(f"- Passed: {passed}, Failed: {failed}\n")
-
-        # AI interactions (summarized)
-        if claude_interactions:
-            prompt_parts.append(f"\n## AI Interactions ({len(claude_interactions)} total):\n")
-            for interaction in claude_interactions[:10]:  # First 10 interactions
-                role = interaction.get("role", "unknown")
-                content = interaction.get("content", "")[:200]
-                prompt_parts.append(f"[{role}]: {content}...\n")
-
-        # Terminal commands
-        if terminal_commands:
-            prompt_parts.append(f"\n## Terminal Commands ({len(terminal_commands)} total):\n")
-            for cmd in terminal_commands[-10:]:
-                command = cmd.get("command", "")
-                prompt_parts.append(f"$ {command}\n")
-
-        prompt_parts.append("""
-Please evaluate across all 4 dimensions and return a JSON response:
-{
-    "code_quality": {"score": 0-100, "confidence": 0.0-1.0, "evidence": ["..."], "breakdown": {...}},
-    "problem_solving": {"score": 0-100, "confidence": 0.0-1.0, "evidence": ["..."], "breakdown": {...}},
-    "ai_collaboration": {"score": 0-100, "confidence": 0.0-1.0, "evidence": ["..."], "breakdown": {...}},
-    "communication": {"score": 0-100, "confidence": 0.0-1.0, "evidence": ["..."], "breakdown": {...}}
-}
-""")
-
-        return "".join(prompt_parts)
 
     def _parse_evaluation_result(
         self,
         result: dict,
         session_id: str,
         candidate_id: str,
-        code_snapshots: list[dict],
     ) -> EvaluationResult:
         """Parse the evaluation result from agent response."""
         import json
@@ -523,17 +507,6 @@ Please evaluate across all 4 dimensions and return a JSON response:
             communication["confidence"],
         )
 
-        # Detect biases
-        bias_flags = detect_biases(
-            code_snapshots,
-            {
-                "code_quality": code_quality,
-                "problem_solving": problem_solving,
-                "ai_collaboration": ai_collaboration,
-                "communication": communication,
-            },
-        )
-
         return EvaluationResult(
             session_id=session_id,
             candidate_id=candidate_id,
@@ -545,32 +518,34 @@ Please evaluate across all 4 dimensions and return a JSON response:
             overall_confidence=overall_confidence,
             evaluated_at=datetime.utcnow().isoformat(),
             model=settings.evaluation_agent_model,
-            bias_flags=bias_flags,
+            bias_flags=[],  # Bias detection removed in agentic mode
         )
 
     async def evaluate_session_streaming(
         self,
         session_id: str,
         candidate_id: str,
-        code_snapshots: list[dict],
-        test_results: list[dict],
-        claude_interactions: list[dict],
-        terminal_commands: list[dict] | None = None,
         callbacks: Optional[EvaluationStreamingCallbacks] = None,
     ) -> AsyncGenerator[dict, None]:
         """
-        Evaluate a session with streaming progress updates.
+        Evaluate a session with streaming progress updates using agentic discovery.
 
         Yields events as evaluation progresses.
         """
-        evaluation_prompt = self._build_evaluation_prompt(
-            code_snapshots=code_snapshots,
-            test_results=test_results,
-            claude_interactions=claude_interactions,
-            terminal_commands=terminal_commands or [],
-        )
+        evaluation_prompt = f"""Evaluate interview session {session_id}.
 
-        config = {"configurable": {"thread_id": f"eval-{session_id}"}}
+Start by using get_session_metadata to understand the context, then explore the workspace
+and gather all relevant data before scoring.
+
+Session ID: {session_id}
+"""
+
+        config = {
+            "configurable": {
+                "thread_id": f"eval-{session_id}",
+                "session_id": session_id,
+            }
+        }
         context = {"session_id": session_id, "candidate_id": candidate_id}
 
         try:
@@ -601,7 +576,7 @@ Please evaluate across all 4 dimensions and return a JSON response:
             )
 
             evaluation_result = self._parse_evaluation_result(
-                result, session_id, candidate_id, code_snapshots
+                result, session_id, candidate_id
             )
 
             if callbacks and callbacks.on_complete:

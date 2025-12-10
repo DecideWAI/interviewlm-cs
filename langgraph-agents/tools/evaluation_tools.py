@@ -3,11 +3,197 @@ Evaluation tools for the LangGraph Evaluation Agent.
 
 These tools analyze code, problem-solving approaches, AI collaboration,
 and communication skills with evidence-based scoring.
+
+Also includes database query tools for fetching session data.
 """
 
 import re
 from typing import Any
+from datetime import datetime
+import asyncpg
 from langchain_core.tools import tool
+from langchain_core.runnables import RunnableConfig
+
+from config import settings
+
+
+# =============================================================================
+# Database Connection Pool
+# =============================================================================
+
+_db_pool: asyncpg.Pool | None = None
+
+
+async def get_db_pool() -> asyncpg.Pool:
+    """Get or create the database connection pool."""
+    global _db_pool
+    if _db_pool is None:
+        _db_pool = await asyncpg.create_pool(
+            settings.database_url,
+            min_size=1,
+            max_size=5,
+        )
+    return _db_pool
+
+
+# =============================================================================
+# Database Query Tools
+# =============================================================================
+
+@tool
+async def get_session_metadata(
+    session_id: str,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """
+    Fetch session metadata including candidate info, problem, and timing.
+
+    Use this tool FIRST to understand the context of the interview session.
+
+    Args:
+        session_id: The session recording ID
+
+    Returns:
+        Dict with session_id, candidate_id, started_at, problem_title, language, duration
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        # Query session recording with candidate and assessment info
+        row = await conn.fetchrow("""
+            SELECT
+                sr.id as session_id,
+                sr.candidate_id,
+                sr.started_at,
+                sr.ended_at,
+                c.preferred_language as language,
+                a.title as problem_title,
+                a.description as problem_description
+            FROM session_recordings sr
+            JOIN candidates c ON sr.candidate_id = c.id
+            LEFT JOIN assessments a ON c.assessment_id = a.id
+            WHERE sr.id = $1
+        """, session_id)
+
+        if not row:
+            return {"error": f"Session {session_id} not found", "success": False}
+
+        duration_minutes = None
+        if row["started_at"] and row["ended_at"]:
+            duration = row["ended_at"] - row["started_at"]
+            duration_minutes = round(duration.total_seconds() / 60, 1)
+
+        return {
+            "success": True,
+            "session_id": row["session_id"],
+            "candidate_id": row["candidate_id"],
+            "started_at": row["started_at"].isoformat() if row["started_at"] else None,
+            "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
+            "duration_minutes": duration_minutes,
+            "language": row["language"],
+            "problem_title": row["problem_title"],
+            "problem_description": row["problem_description"][:500] if row["problem_description"] else None,
+        }
+
+
+@tool
+async def get_claude_interactions(
+    session_id: str,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """
+    Fetch all Claude AI interactions for a session from the database.
+
+    Use this to see the full conversation between the candidate and AI assistant.
+
+    Args:
+        session_id: The session recording ID
+
+    Returns:
+        Dict with interactions list containing timestamp, role, content, prompt_quality
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                timestamp,
+                role,
+                content,
+                model,
+                input_tokens,
+                output_tokens,
+                prompt_quality,
+                metadata
+            FROM claude_interactions
+            WHERE session_id = $1
+            ORDER BY timestamp ASC
+        """, session_id)
+
+        interactions = []
+        for row in rows:
+            interactions.append({
+                "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                "role": row["role"],
+                "content": row["content"],
+                "model": row["model"],
+                "input_tokens": row["input_tokens"],
+                "output_tokens": row["output_tokens"],
+                "prompt_quality": row["prompt_quality"],
+            })
+
+        return {
+            "success": True,
+            "count": len(interactions),
+            "interactions": interactions,
+        }
+
+
+@tool
+async def get_test_results(
+    session_id: str,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """
+    Fetch all test results for a session from the database.
+
+    Use this to see how the candidate's tests progressed over time.
+
+    Args:
+        session_id: The session recording ID
+
+    Returns:
+        Dict with test_results list containing timestamp, passed, failed, total, output
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                timestamp,
+                passed,
+                failed,
+                total,
+                output,
+                coverage
+            FROM test_results
+            WHERE session_id = $1
+            ORDER BY timestamp ASC
+        """, session_id)
+
+        test_results = []
+        for row in rows:
+            test_results.append({
+                "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                "passed": row["passed"],
+                "failed": row["failed"],
+                "total": row["total"],
+                "output": row["output"][:2000] if row["output"] else None,  # Truncate long output
+                "coverage": row["coverage"],
+            })
+
+        return {
+            "success": True,
+            "count": len(test_results),
+            "test_results": test_results,
+        }
 
 
 # =============================================================================
@@ -507,12 +693,285 @@ async def analyze_communication(
 
 
 # =============================================================================
-# Tool List
+# Store Evaluation Result
 # =============================================================================
 
-EVALUATION_TOOLS = [
+@tool
+async def store_evaluation_result(
+    session_id: str,
+    candidate_id: str,
+    code_quality_score: int,
+    code_quality_evidence: list[dict],
+    code_quality_confidence: float,
+    problem_solving_score: int,
+    problem_solving_evidence: list[dict],
+    problem_solving_confidence: float,
+    ai_collaboration_score: int,
+    ai_collaboration_evidence: list[dict],
+    ai_collaboration_confidence: float,
+    communication_score: int,
+    communication_evidence: list[dict],
+    communication_confidence: float,
+    overall_score: int,
+    overall_confidence: float,
+    bias_flags: list[str] | None = None,
+    hiring_recommendation: str | None = None,
+    hiring_confidence: float | None = None,
+    hiring_reasoning: dict | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """
+    Store evaluation results to the database and trigger SSE update.
+
+    Use this tool AFTER analyzing all dimensions to persist the final evaluation.
+    This also triggers a real-time update to any connected frontend clients.
+
+    Args:
+        session_id: The session recording ID
+        candidate_id: The candidate ID
+        code_quality_score: Score 0-100 for code quality dimension
+        code_quality_evidence: Evidence list for code quality
+        code_quality_confidence: Confidence 0-1 for code quality
+        problem_solving_score: Score 0-100 for problem solving dimension
+        problem_solving_evidence: Evidence list for problem solving
+        problem_solving_confidence: Confidence 0-1 for problem solving
+        ai_collaboration_score: Score 0-100 for AI collaboration dimension
+        ai_collaboration_evidence: Evidence list for AI collaboration
+        ai_collaboration_confidence: Confidence 0-1 for AI collaboration
+        communication_score: Score 0-100 for communication dimension
+        communication_evidence: Evidence list for communication
+        communication_confidence: Confidence 0-1 for communication
+        overall_score: Weighted overall score 0-100
+        overall_confidence: Overall confidence 0-1
+        bias_flags: Optional list of detected bias flags
+        hiring_recommendation: Optional hiring recommendation (strong_yes, yes, maybe, no, strong_no)
+        hiring_confidence: Optional confidence in hiring recommendation
+        hiring_reasoning: Optional reasoning for hiring recommendation
+
+    Returns:
+        Dict with success status, evaluation_id, and any errors
+    """
+    import json
+    import httpx
+
+    pool = await get_db_pool()
+
+    try:
+        async with pool.acquire() as conn:
+            # Check if evaluation already exists for this session
+            existing = await conn.fetchval(
+                "SELECT id FROM evaluations WHERE session_id = $1",
+                session_id
+            )
+
+            if existing:
+                # Update existing evaluation
+                await conn.execute("""
+                    UPDATE evaluations SET
+                        code_quality_score = $1,
+                        code_quality_evidence = $2,
+                        code_quality_confidence = $3,
+                        problem_solving_score = $4,
+                        problem_solving_evidence = $5,
+                        problem_solving_confidence = $6,
+                        ai_collaboration_score = $7,
+                        ai_collaboration_evidence = $8,
+                        ai_collaboration_confidence = $9,
+                        communication_score = $10,
+                        communication_evidence = $11,
+                        communication_confidence = $12,
+                        overall_score = $13,
+                        confidence = $14,
+                        bias_flags = $15,
+                        hiring_recommendation = $16,
+                        hiring_confidence = $17,
+                        hiring_reasoning = $18,
+                        evaluated_at = NOW(),
+                        updated_at = NOW()
+                    WHERE session_id = $19
+                """,
+                    code_quality_score,
+                    json.dumps(code_quality_evidence),
+                    code_quality_confidence,
+                    problem_solving_score,
+                    json.dumps(problem_solving_evidence),
+                    problem_solving_confidence,
+                    ai_collaboration_score,
+                    json.dumps(ai_collaboration_evidence),
+                    ai_collaboration_confidence,
+                    communication_score,
+                    json.dumps(communication_evidence),
+                    communication_confidence,
+                    overall_score,
+                    overall_confidence,
+                    bias_flags or [],
+                    hiring_recommendation,
+                    hiring_confidence,
+                    json.dumps(hiring_reasoning) if hiring_reasoning else None,
+                    session_id,
+                )
+                evaluation_id = existing
+            else:
+                # Insert new evaluation
+                evaluation_id = await conn.fetchval("""
+                    INSERT INTO evaluations (
+                        id, candidate_id, session_id,
+                        code_quality_score, code_quality_evidence, code_quality_confidence,
+                        problem_solving_score, problem_solving_evidence, problem_solving_confidence,
+                        ai_collaboration_score, ai_collaboration_evidence, ai_collaboration_confidence,
+                        communication_score, communication_evidence, communication_confidence,
+                        overall_score, confidence, bias_flags,
+                        hiring_recommendation, hiring_confidence, hiring_reasoning,
+                        evaluated_at, created_at, updated_at
+                    ) VALUES (
+                        gen_random_uuid(), $1, $2,
+                        $3, $4, $5,
+                        $6, $7, $8,
+                        $9, $10, $11,
+                        $12, $13, $14,
+                        $15, $16, $17,
+                        $18, $19, $20,
+                        NOW(), NOW(), NOW()
+                    )
+                    RETURNING id
+                """,
+                    candidate_id, session_id,
+                    code_quality_score, json.dumps(code_quality_evidence), code_quality_confidence,
+                    problem_solving_score, json.dumps(problem_solving_evidence), problem_solving_confidence,
+                    ai_collaboration_score, json.dumps(ai_collaboration_evidence), ai_collaboration_confidence,
+                    communication_score, json.dumps(communication_evidence), communication_confidence,
+                    overall_score, overall_confidence, bias_flags or [],
+                    hiring_recommendation, hiring_confidence,
+                    json.dumps(hiring_reasoning) if hiring_reasoning else None,
+                )
+
+            # Update candidate status to EVALUATED
+            await conn.execute("""
+                UPDATE candidates
+                SET status = 'EVALUATED', overall_score = $1, updated_at = NOW()
+                WHERE id = $2
+            """, overall_score, candidate_id)
+
+        # Trigger SSE notification to frontend
+        sse_payload = {
+            "sessionId": session_id,
+            "candidateId": candidate_id,
+            "evaluationId": str(evaluation_id),
+            "type": "evaluation_complete",
+            "overallScore": overall_score,
+            "codeQualityScore": code_quality_score,
+            "problemSolvingScore": problem_solving_score,
+            "aiCollaborationScore": ai_collaboration_score,
+            "communicationScore": communication_score,
+            "confidence": overall_confidence,
+        }
+
+        # Call Next.js internal API to broadcast SSE event
+        try:
+            async with httpx.AsyncClient() as client:
+                # Use internal API URL (localhost in dev, internal service URL in prod)
+                internal_url = settings.nextjs_internal_url or "http://localhost:3000"
+                await client.post(
+                    f"{internal_url}/api/internal/evaluation/notify",
+                    json=sse_payload,
+                    timeout=5.0,
+                )
+        except Exception as sse_error:
+            # Log but don't fail - SSE notification is best-effort
+            print(f"[EvaluationTools] SSE notification failed: {sse_error}")
+
+        return {
+            "success": True,
+            "evaluation_id": str(evaluation_id),
+            "message": "Evaluation result stored successfully",
+        }
+
+    except Exception as e:
+        print(f"[EvaluationTools] Error storing evaluation: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@tool
+async def send_evaluation_progress(
+    session_id: str,
+    candidate_id: str,
+    status: str,
+    progress_percent: int,
+    current_step: str,
+    details: dict | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """
+    Send real-time progress update to frontend during evaluation.
+
+    Use this tool to notify the frontend about evaluation progress as you work
+    through different analysis steps.
+
+    Args:
+        session_id: The session recording ID
+        candidate_id: The candidate ID
+        status: Current status (analyzing, scoring, finalizing)
+        progress_percent: Progress percentage 0-100
+        current_step: Human-readable description of current step
+        details: Optional additional details
+
+    Returns:
+        Dict with success status
+    """
+    import httpx
+
+    sse_payload = {
+        "sessionId": session_id,
+        "candidateId": candidate_id,
+        "type": "evaluation_progress",
+        "status": status,
+        "progressPercent": progress_percent,
+        "currentStep": current_step,
+        "details": details or {},
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+    try:
+        async with httpx.AsyncClient() as client:
+            internal_url = settings.nextjs_internal_url or "http://localhost:3000"
+            await client.post(
+                f"{internal_url}/api/internal/evaluation/notify",
+                json=sse_payload,
+                timeout=5.0,
+            )
+        return {"success": True}
+    except Exception as e:
+        print(f"[EvaluationTools] Progress notification failed: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# Tool Lists
+# =============================================================================
+
+# Database query tools for fetching session data
+DB_QUERY_TOOLS = [
+    get_session_metadata,
+    get_claude_interactions,
+    get_test_results,
+]
+
+# Analysis tools for scoring dimensions
+ANALYSIS_TOOLS = [
     analyze_code_quality,
     analyze_problem_solving,
     analyze_ai_collaboration,
     analyze_communication,
 ]
+
+# Storage and notification tools
+STORAGE_TOOLS = [
+    store_evaluation_result,
+    send_evaluation_progress,
+]
+
+# All evaluation tools (DB query + analysis + storage)
+EVALUATION_TOOLS = DB_QUERY_TOOLS + ANALYSIS_TOOLS + STORAGE_TOOLS

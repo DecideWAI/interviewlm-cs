@@ -125,13 +125,15 @@ class InterviewMetricsResponse(BaseModel):
 
 
 class EvaluationRequest(BaseModel):
-    """Request to evaluate a completed session."""
+    """Request to evaluate a completed session.
+
+    The evaluation agent uses agentic discovery - it will:
+    1. Query the database for session metadata, interactions, and test results
+    2. Explore the Modal workspace to read code files
+    3. Analyze and score across all 4 dimensions
+    """
     session_id: str
     candidate_id: str
-    # Session data passed directly (alternative: fetch from DB)
-    code_snapshots: Optional[list[dict]] = None
-    test_results: Optional[list[dict]] = None
-    claude_interactions: Optional[list[dict]] = None
 
 
 class EvaluationResponse(BaseModel):
@@ -495,10 +497,12 @@ async def get_interview_metrics(session_id: str):
 @app.post("/api/evaluation/evaluate", response_model=EvaluationResponse, dependencies=[Depends(verify_api_key)])
 async def evaluate_session(request: EvaluationRequest):
     """
-    Evaluate a completed interview session.
+    Evaluate a completed interview session using agentic discovery.
 
-    Analyzes code quality, problem solving approach,
-    AI collaboration patterns, and communication skills.
+    The agent will autonomously:
+    1. Query the database for session metadata, interactions, and test results
+    2. Explore the Modal workspace to read code files
+    3. Analyze and score across all 4 dimensions
 
     Returns scores (0-100) for each dimension with evidence.
     """
@@ -508,9 +512,6 @@ async def evaluate_session(request: EvaluationRequest):
         result = await agent.evaluate_session(
             session_id=request.session_id,
             candidate_id=request.candidate_id,
-            code_snapshots=request.code_snapshots or [],
-            test_results=request.test_results or [],
-            claude_interactions=request.claude_interactions or [],
         )
 
         return EvaluationResponse(

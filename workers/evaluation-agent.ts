@@ -774,7 +774,7 @@ IMPORTANT: Respond with ONLY a single number between 0-100. No explanations.`;
           return await circuitBreakers.claude.execute(async () => {
             const response = await this.client.messages.create({
               model: AGENT_MODEL_RECOMMENDATIONS.evaluationAgent,
-              max_tokens: 1024,
+              max_tokens: 32000,
               system: systemBlocks,
               messages: [
                 {

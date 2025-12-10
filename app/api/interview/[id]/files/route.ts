@@ -196,13 +196,34 @@ Given a string s, return the longest palindromic substring in s.`,
       });
     }
 
-    // Get tracked files from session recording and build file tree
+    // Get tracked files from session recording
     let trackedFiles: string[] = [];
     if (candidate.sessionRecording) {
       trackedFiles = (candidate.sessionRecording.trackedFiles as string[]) || [];
     }
 
-    // Build file tree from tracked files
+    // IMPORTANT: Also list actual files from sandbox to catch files created by Python agent
+    // This ensures files created via LangGraph tools appear even if tracking failed
+    try {
+      // Use getFileSystem for recursive file tree (uses find command)
+      // This returns FileNode[] with nested children for directories
+      const sandboxFiles = await modal.getFileSystem(candidateId, "/workspace");
+      console.log(`[Files] Listed ${sandboxFiles.length} top-level items from sandbox for ${candidateId}`);
+
+      if (sandboxFiles && sandboxFiles.length > 0) {
+        // Filter out system directories and return actual sandbox file tree
+        const filteredFiles = filterFileTree(sandboxFiles);
+        fileIdCounter = 0;
+        return NextResponse.json({
+          files: filteredFiles.map(transformFileNode),
+          volumeId,
+        });
+      }
+    } catch (listError) {
+      console.warn("[Files] Failed to list sandbox files, falling back to tracked files:", listError);
+    }
+
+    // Fallback to tracked files if sandbox listing fails
     const files = buildFileTreeFromPaths(trackedFiles);
 
     fileIdCounter = 0; // Reset counter for each request

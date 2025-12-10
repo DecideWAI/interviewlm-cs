@@ -200,7 +200,7 @@ def _create_anthropic_model(model_name: str) -> ChatAnthropic:
 
     return ChatAnthropic(
         model_name=model_name,
-        max_tokens=4096,
+        max_tokens=32000,
         temperature=0.3,
         betas=beta_versions,
         default_headers=default_headers,

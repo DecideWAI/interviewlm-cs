@@ -501,9 +501,13 @@ async function attemptReconnect(sandboxId: string, timeoutMs: number): Promise<a
     console.log(`[Modal] Sandbox verified alive, tunnels:`, Object.keys(tunnels));
     return sandbox;
   } catch (verifyError) {
-    const errorMsg = verifyError instanceof Error ? verifyError.message : String(verifyError);
-    if (errorMsg.includes('terminated') || errorMsg.includes('finished')) {
-      console.log(`[Modal] Sandbox ${sandboxId} is terminated, fromId returned stale reference`);
+    const errorMsg = (verifyError instanceof Error ? verifyError.message : String(verifyError)).toLowerCase();
+    // Handle all cases where sandbox is no longer accessible:
+    // - terminated/finished: sandbox lifecycle ended
+    // - permission_denied/permission denied: sandbox created by different app/credentials or expired
+    // - not found: sandbox ID doesn't exist
+    if (['terminated', 'finished', 'permission_denied', 'permission denied', 'not found'].some(x => errorMsg.includes(x))) {
+      console.log(`[Modal] Sandbox ${sandboxId} is inaccessible: ${verifyError}`);
       return null;
     }
     // Other errors (e.g., tunnels not configured) - sandbox is still alive

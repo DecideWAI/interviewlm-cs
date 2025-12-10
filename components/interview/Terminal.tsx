@@ -24,7 +24,7 @@ export interface TerminalHandle {
   write: (data: string) => void;
   writeln: (data: string) => void;
   connectionStatus: "connected" | "disconnected" | "connecting";
-  connectionMode: "pty" | "tunnel" | "fallback";
+  connectionMode: "pty" | "tunnel";
 }
 
 export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
@@ -36,7 +36,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const eventSourceRef = useRef<EventSource | null>(null);
     const connectionStatusRef = useRef<"connected" | "disconnected" | "connecting">("connecting");
     const [connectionStatus, setConnectionStatus] = useState<"connected" | "disconnected" | "connecting">("connecting");
-    const [connectionMode, setConnectionMode] = useState<"pty" | "tunnel" | "fallback">("pty");
+    const [connectionMode, setConnectionMode] = useState<"pty" | "tunnel">("pty");
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef<number>(0);
     const onCommandRef = useRef(onCommand);
@@ -110,9 +110,16 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           updateConnectionStatus("disconnected");
           eventSource.close();
 
-          // Fall back to HTTP/SSE mode
-          terminal.writeln("\x1b[33m[PTY connection failed, falling back to HTTP mode]\x1b[0m");
-          fallbackToSSE(terminal);
+          // Retry PTY connection
+          reconnectAttemptsRef.current++;
+          if (reconnectAttemptsRef.current < MAX_SSE_RECONNECT_ATTEMPTS) {
+            const delay = Math.min(2000 * reconnectAttemptsRef.current, 10000);
+            terminal.writeln(`\x1b[33m[PTY connection failed, retrying in ${delay / 1000}s... (${reconnectAttemptsRef.current}/${MAX_SSE_RECONNECT_ATTEMPTS})]\x1b[0m`);
+            reconnectTimeoutRef.current = setTimeout(() => connectPTY(terminal), delay);
+          } else {
+            terminal.writeln(`\x1b[31m[PTY connection failed after ${MAX_SSE_RECONNECT_ATTEMPTS} attempts]\x1b[0m`);
+            terminal.writeln(`\x1b[33mPlease refresh the page to try again.\x1b[0m`);
+          }
         };
 
         // Handle terminal input - optimized for low latency
@@ -210,185 +217,19 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       } catch (error) {
         console.error("[PTY] Connection failed:", error);
         terminal.writeln(`\x1b[31m[Error] ${error instanceof Error ? error.message : "Connection failed"}\x1b[0m`);
-        fallbackToSSE(terminal);
+
+        // Retry PTY connection
+        reconnectAttemptsRef.current++;
+        if (reconnectAttemptsRef.current < MAX_SSE_RECONNECT_ATTEMPTS) {
+          const delay = Math.min(2000 * reconnectAttemptsRef.current, 10000);
+          terminal.writeln(`\x1b[33m[Retrying PTY connection in ${delay / 1000}s... (${reconnectAttemptsRef.current}/${MAX_SSE_RECONNECT_ATTEMPTS})]\x1b[0m`);
+          reconnectTimeoutRef.current = setTimeout(() => connectPTY(terminal), delay);
+        } else {
+          terminal.writeln(`\x1b[31m[PTY connection failed after ${MAX_SSE_RECONNECT_ATTEMPTS} attempts]\x1b[0m`);
+          terminal.writeln(`\x1b[33mPlease refresh the page to try again.\x1b[0m`);
+        }
       }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [sessionId, updateConnectionStatus]);
-
-    // Fallback to SSE/HTTP mode (existing implementation)
-    const fallbackToSSE = useCallback((terminal: XTerm) => {
-      setConnectionMode("fallback");
-      terminal.writeln("\x1b[33m[Info] Using HTTP mode for terminal\x1b[0m");
-      terminal.writeln("");
-
-      // Simple loading state
-      let isWaitingForOutput = false;
-      const showLoading = () => {
-        isWaitingForOutput = true;
-        terminal.write("\x1b[90m⏳ Running...\x1b[0m");
-      };
-      const hideLoading = () => {
-        if (isWaitingForOutput) {
-          isWaitingForOutput = false;
-          terminal.write("\r\x1b[K");
-        }
-      };
-
-      // SSE connection for terminal output
-      const connectSSE = () => {
-        const sseUrl = `/api/interview/${sessionId}/terminal`;
-
-        try {
-          updateConnectionStatus("connecting");
-          const eventSource = new EventSource(sseUrl);
-          eventSourceRef.current = eventSource;
-
-          eventSource.onopen = () => {
-            updateConnectionStatus("connected");
-            reconnectAttemptsRef.current = 0;
-            terminal.writeln("\x1b[32m✓ Terminal connected (HTTP mode)\x1b[0m");
-            terminal.write("\x1b[1;32m$\x1b[0m ");
-          };
-
-          eventSource.onmessage = (event) => {
-            try {
-              const data = JSON.parse(event.data);
-              if (data.output) {
-                hideLoading();
-                terminal.write(data.output);
-              }
-            } catch {
-              hideLoading();
-              terminal.write(event.data);
-            }
-          };
-
-          eventSource.onerror = () => {
-            updateConnectionStatus("disconnected");
-            eventSource.close();
-            reconnectAttemptsRef.current++;
-
-            if (reconnectAttemptsRef.current < MAX_SSE_RECONNECT_ATTEMPTS) {
-              const delay = Math.min(3000 * reconnectAttemptsRef.current, 15000);
-              terminal.writeln(
-                `\r\n\x1b[31m✗ Connection lost. Retrying (${reconnectAttemptsRef.current}/${MAX_SSE_RECONNECT_ATTEMPTS}) in ${delay / 1000}s...\x1b[0m`
-              );
-              reconnectTimeoutRef.current = setTimeout(connectSSE, delay);
-            } else {
-              terminal.writeln(`\r\n\x1b[31m✗ Connection failed after ${MAX_SSE_RECONNECT_ATTEMPTS} attempts.\x1b[0m`);
-              terminal.writeln(`\x1b[33mPlease refresh the page to reconnect.\x1b[0m`);
-            }
-          };
-        } catch (error) {
-          console.error("Failed to connect SSE:", error);
-          updateConnectionStatus("disconnected");
-        }
-      };
-
-      // Handle data input for HTTP mode
-      let currentLine = "";
-      terminal.onData((data) => {
-        const code = data.charCodeAt(0);
-
-        // Handle Enter key
-        if (code === 13) {
-          terminal.write("\r\n");
-          if (currentLine.trim()) {
-            const command = currentLine.trim();
-
-            if (connectionStatusRef.current === "connected") {
-              showLoading();
-
-              fetch(`/api/interview/${sessionId}/terminal/stream`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ command }),
-              })
-                .then(async (res) => {
-                  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                  hideLoading();
-
-                  const reader = res.body?.getReader();
-                  if (!reader) throw new Error("No response body");
-
-                  const decoder = new TextDecoder();
-                  let buffer = "";
-
-                  while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-                    buffer = lines.pop() || "";
-
-                    for (const line of lines) {
-                      if (line.startsWith("data: ")) {
-                        try {
-                          const data = JSON.parse(line.slice(6));
-                          if (data.output) terminal.write(data.output);
-                          if (data.done) return;
-                        } catch {
-                          // Ignore parse errors
-                        }
-                      }
-                    }
-                  }
-                })
-                .catch((err) => {
-                  console.error("Failed to send terminal input:", err);
-                  hideLoading();
-                  terminal.writeln("\x1b[31mFailed to send command\x1b[0m");
-                  terminal.write("\x1b[1;32m$\x1b[0m ");
-                });
-            } else {
-              terminal.writeln("Command: " + command);
-              terminal.writeln("\x1b[33m(Not connected to backend)\x1b[0m");
-              terminal.write("\x1b[1;32m$\x1b[0m ");
-            }
-
-            // Record terminal event
-            fetch(`/api/interview/${sessionId}/events`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ eventType: "terminal_command", data: { command } }),
-            }).catch((err) => console.error("Failed to record terminal event:", err));
-
-            onCommandRef.current?.(command);
-          } else {
-            terminal.write("\x1b[1;32m$\x1b[0m ");
-          }
-          currentLine = "";
-        }
-        // Handle Backspace
-        else if (code === 127) {
-          if (currentLine.length > 0) {
-            currentLine = currentLine.slice(0, -1);
-            terminal.write("\b \b");
-          }
-        }
-        // Handle Ctrl+C
-        else if (code === 3) {
-          terminal.write("^C\r\n");
-          if (connectionStatusRef.current === "connected") {
-            fetch(`/api/interview/${sessionId}/terminal/input`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ type: "interrupt" }),
-            }).catch((err) => console.error("Failed to send interrupt:", err));
-          }
-          currentLine = "";
-          terminal.write("\x1b[1;32m$\x1b[0m ");
-        }
-        // Regular characters
-        else if (code >= 32) {
-          currentLine += data;
-          terminal.write(data);
-        }
-      });
-
-      // Connect SSE
-      connectSSE();
     }, [sessionId, updateConnectionStatus]);
 
     // Connect via WebSocket tunnel
@@ -403,8 +244,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         if (!response.ok) {
           const errorData = await response.json();
           if (errorData.fallback) {
-            terminal.writeln("\x1b[33m[Info] Tunnel not available\x1b[0m");
-            fallbackToSSE(terminal);
+            terminal.writeln("\x1b[33m[Info] Tunnel not available, using PTY mode\x1b[0m");
+            connectPTY(terminal);
             return;
           }
           throw new Error(errorData.error || "Failed to get tunnel URL");
@@ -527,8 +368,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             terminal.writeln(`\x1b[33m[Reconnecting in ${delay / 1000}s... (${reconnectAttemptsRef.current}/${MAX_TUNNEL_RECONNECT_ATTEMPTS})]\x1b[0m`);
             reconnectTimeoutRef.current = setTimeout(() => connectTunnel(terminal), delay);
           } else {
-            terminal.writeln("\x1b[33m[Max reconnect attempts reached, falling back to HTTP mode]\x1b[0m");
-            fallbackToSSE(terminal);
+            terminal.writeln("\x1b[33m[Max tunnel reconnect attempts reached, switching to PTY mode]\x1b[0m");
+            reconnectAttemptsRef.current = 0;
+            connectPTY(terminal);
           }
         };
 
@@ -539,9 +381,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       } catch (error) {
         console.error("Tunnel connection failed:", error);
         terminal.writeln(`\x1b[31m[Error] ${error instanceof Error ? error.message : "Connection failed"}\x1b[0m`);
-        fallbackToSSE(terminal);
+        terminal.writeln("\x1b[33m[Switching to PTY mode]\x1b[0m");
+        connectPTY(terminal);
       }
-    }, [sessionId, fallbackToSSE, updateConnectionStatus]);
+    }, [sessionId, connectPTY, updateConnectionStatus]);
 
     useEffect(() => {
       if (!terminalRef.current) return;
@@ -609,8 +452,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
       // Connect based on session mode
       if (sessionId === "demo") {
-        // Demo mode uses simulated terminal (fallback mode with no real backend)
-        setConnectionMode("fallback");
+        // Demo mode uses simulated terminal (local-only with no real backend)
+        setConnectionMode("pty");
         updateConnectionStatus("connected");
         terminal.writeln("\x1b[32m✓ Connected to AI Sandbox\x1b[0m");
         terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");

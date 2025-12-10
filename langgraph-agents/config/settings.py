@@ -7,6 +7,11 @@ import os
 from typing import Literal
 from pydantic_settings import BaseSettings
 from pydantic import Field
+from dotenv import load_dotenv
+
+# Load .env file BEFORE pydantic-settings initializes
+# This ensures Modal SDK can read MODAL_TOKEN_ID and MODAL_TOKEN_SECRET
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -72,6 +77,12 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql://localhost:5432/interviewlm",
         env="DATABASE_URL"
+    )
+
+    # Next.js Internal API URL (for SSE notifications)
+    nextjs_internal_url: str = Field(
+        default="http://localhost:3000",
+        env="NEXTJS_INTERNAL_URL"
     )
 
     # Agent Configuration

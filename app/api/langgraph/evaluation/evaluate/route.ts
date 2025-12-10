@@ -3,6 +3,11 @@
  * POST /api/langgraph/evaluation/evaluate - Proxy to Python LangGraph server
  *
  * Proxies session evaluation requests to the Python LangGraph API.
+ *
+ * The evaluation agent uses agentic discovery - it will:
+ * 1. Query the database for session metadata, interactions, and test results
+ * 2. Explore the Modal workspace to read code files
+ * 3. Analyze and score across all 4 dimensions
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -12,24 +17,10 @@ import prisma from "@/lib/prisma";
 
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:8080";
 
-// Request validation schema
+// Request validation schema - only session_id and candidate_id required
 const evaluationRequestSchema = z.object({
   sessionId: z.string(),
   candidateId: z.string(),
-  codeSnapshots: z.array(z.object({
-    timestamp: z.string(),
-    files: z.record(z.string()),
-  })).optional(),
-  testResults: z.array(z.object({
-    timestamp: z.string(),
-    passed: z.number(),
-    failed: z.number(),
-    total: z.number(),
-  })).optional(),
-  claudeInteractions: z.array(z.object({
-    candidateMessage: z.string(),
-    timestamp: z.string(),
-  })).optional(),
 });
 
 /**
@@ -55,7 +46,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { sessionId, candidateId, codeSnapshots, testResults, claudeInteractions } = validationResult.data;
+    const { sessionId, candidateId } = validationResult.data;
 
     // Verify candidate exists and user is org member (only admins can evaluate)
     const candidate = await prisma.candidate.findUnique({
@@ -83,7 +74,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    // Proxy to LangGraph API
+    // Proxy to LangGraph API - agent discovers data via tools
     const langGraphResponse = await fetch(`${LANGGRAPH_API_URL}/api/evaluation/evaluate`, {
       method: "POST",
       headers: {
@@ -92,9 +83,6 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({
         session_id: sessionId,
         candidate_id: candidateId,
-        code_snapshots: codeSnapshots,
-        test_results: testResults,
-        claude_interactions: claudeInteractions,
       }),
     });
 

@@ -250,7 +250,7 @@ def _create_anthropic_model(model_name: str) -> ChatAnthropic:
 
     return ChatAnthropic(
         model_name=model_name,
-        max_tokens=4096,
+        max_tokens=32000,
         betas=beta_versions,
         streaming=settings.enable_code_streaming,
         default_headers=default_headers,
@@ -586,14 +586,24 @@ class CodingAgentGraph:
                     if callbacks and callbacks.on_tool_end:
                         callbacks.on_tool_end(tool_name, tool_output)
 
-                    # Keep output as dict for file operations so TypeScript can parse it
-                    # Only truncate string outputs for large non-structured results
-                    if isinstance(tool_output, dict):
-                        output_data = tool_output
-                    elif tool_output is not None:
-                        output_data = str(tool_output)[:500]
-                    else:
-                        output_data = None
+                    # Extract actual content from LangChain ToolMessage objects
+                    # ToolMessage has a .content attribute containing the JSON result
+                    output_data = None
+                    if tool_output is not None:
+                        # Try to get content from ToolMessage-like objects
+                        raw_content = getattr(tool_output, 'content', tool_output)
+
+                        # Parse JSON string content to dict for proper frontend handling
+                        if isinstance(raw_content, str):
+                            try:
+                                import json
+                                output_data = json.loads(raw_content)
+                            except (json.JSONDecodeError, TypeError):
+                                output_data = str(raw_content)[:500]
+                        elif isinstance(raw_content, dict):
+                            output_data = raw_content
+                        else:
+                            output_data = str(raw_content)[:500]
 
                     yield {
                         "type": "tool_end",

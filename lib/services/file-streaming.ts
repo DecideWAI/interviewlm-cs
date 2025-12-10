@@ -66,7 +66,9 @@ class FileStreamManager extends EventEmitter {
    */
   broadcastFileChange(event: FileChangeEvent): void {
     const clients = this.activeClients.get(event.sessionId);
-    console.log(`[FileStreaming] Broadcast request: ${event.type} for ${event.path}, session=${event.sessionId}, activeClients=${clients?.size || 0}`);
+    console.log(`[FileStreaming] Broadcast request: ${event.type} for ${event.path}`);
+    console.log(`[FileStreaming] Session: ${event.sessionId}, activeClients: ${clients?.size || 0}`);
+    console.log(`[FileStreaming] All active sessions:`, Array.from(this.activeClients.keys()));
 
     if (!clients || clients.size === 0) {
       console.log(`[FileStreaming] No active clients for session ${event.sessionId}, skipping broadcast`);

@@ -430,17 +430,17 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
               const delta = data.delta || data.content || "";
               fullText += delta;
               options.onTextDelta(delta);
-            } else if (effectiveType === "tool_start" || data.tool_name) {
-              // Tool starting - Python sends: {tool, input}
-              const toolName = data.tool_name || data.tool || "";
+            } else if (effectiveType === "tool_start" || data.tool_name || (effectiveType === "on_tool_start" && data.name)) {
+              // Tool starting - Python sends: {type: "tool_start", name, input}
+              const toolName = data.tool_name || data.name || data.tool || "";
               if (toolName) {
                 options.onToolStart(toolName, data.tool_id || "", data.input || {});
               }
             } else if (effectiveType === "tool_result" || effectiveType === "tool_end" || data.tool) {
               // Handle both formats:
               // - TypeScript agent: {type: "tool_result", tool_name, output}
-              // - Python LangGraph: {tool, output} with event: tool_end
-              const toolNameRaw = data.tool_name || data.tool || "";
+              // - Python LangGraph: {type: "tool_end", name, output}
+              const toolNameRaw = data.tool_name || data.name || data.tool || "";
               const output = data.output || data.result || {};
 
               options.onToolResult(
@@ -456,11 +456,13 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
               // Broadcast file changes for file operations from LangGraph agent
               // This enables real-time file tree updates in the frontend
               const toolName = toolNameRaw.toLowerCase();
+              console.log(`[LangGraph] Tool result: ${toolName}, output:`, JSON.stringify(output).slice(0, 200));
               if (
                 (toolName === "write_file" || toolName === "edit_file") &&
                 output.success &&
                 output.path
               ) {
+                console.log(`[LangGraph] Broadcasting file change: ${output.path} to candidate ${options.candidateId}`);
                 const isCreate = toolName === "write_file";
                 const filePath = output.path.startsWith("/workspace")
                   ? output.path
@@ -477,8 +479,9 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
                 }
 
                 // Broadcast file change event for real-time updates
+                // IMPORTANT: Use candidateId (not sessionId) because frontend connects via /api/interview/[candidateId]/file-updates
                 fileStreamManager.broadcastFileChange({
-                  sessionId: options.sessionId,
+                  sessionId: options.candidateId,
                   type: isCreate ? "create" : "update",
                   path: filePath,
                   fileType: "file",

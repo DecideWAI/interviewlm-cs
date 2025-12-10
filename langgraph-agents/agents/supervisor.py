@@ -221,7 +221,7 @@ def _create_anthropic_model(model_name: str) -> ChatAnthropic:
 
     return ChatAnthropic(
         model_name=model_name,
-        max_tokens=2048,
+        max_tokens=32000,
         betas=beta_versions,
         default_headers=default_headers,
         api_key=settings.anthropic_api_key,
