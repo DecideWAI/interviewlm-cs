@@ -12,3 +12,4 @@ export * from './experiment-service';
 export * from './agent-router';
 export * from './metrics-collector';
 export * from './agent-assignment-service';
+export * from './question-assignment-service';

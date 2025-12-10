@@ -28,6 +28,17 @@ class Settings(BaseSettings):
         default="claude-haiku-4-5-20251001",
         env="INTERVIEW_AGENT_MODEL"
     )
+    # Question Generation Models
+    question_generation_model_fast: str = Field(
+        default="claude-haiku-4-5-20251001",
+        env="QUESTION_GENERATION_MODEL_FAST",
+        description="Fast model for dynamic question generation (~13s)"
+    )
+    question_generation_model_adaptive: str = Field(
+        default="claude-sonnet-4-20250514",
+        env="QUESTION_GENERATION_MODEL_ADAPTIVE",
+        description="Adaptive model for incremental question generation (better reasoning)"
+    )
 
     # Modal Service URLs (deployed endpoints)
     modal_execute_url: str | None = Field(

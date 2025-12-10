@@ -29,6 +29,11 @@ from .supervisor import (
     SupervisorGraph,
     clear_agent_cache,
 )
+from .question_generation_agent import (
+    create_question_generation_agent,
+    QuestionGenerationAgent,
+    get_question_generation_agent,
+)
 
 __all__ = [
     # Interview Agent
@@ -55,4 +60,8 @@ __all__ = [
     "create_supervisor",
     "SupervisorGraph",
     "clear_agent_cache",
+    # Question Generation Agent
+    "create_question_generation_agent",
+    "QuestionGenerationAgent",
+    "get_question_generation_agent",
 ]

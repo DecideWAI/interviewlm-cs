@@ -603,6 +603,198 @@ async def evaluate_question(request: QuestionEvaluationRequest):
 
 
 # =============================================================================
+# Question Generation Endpoints
+# =============================================================================
+
+class GenerateQuestionRequest(BaseModel):
+    """Request for dynamic question generation."""
+    role: str = Field(description="e.g., 'backend', 'frontend', 'fullstack'")
+    seniority: str = Field(description="e.g., 'junior', 'mid', 'senior', 'staff'")
+    assessment_type: str = Field(default="REAL_WORLD")
+    tech_stack: list[str] = Field(default_factory=list)
+    organization_id: Optional[str] = None
+
+
+class GenerateNextQuestionRequest(BaseModel):
+    """Request for incremental/adaptive question generation."""
+    session_id: str
+    candidate_id: str
+    seed_id: str
+    seniority: str
+    previous_questions: list[dict]
+    previous_performance: list[dict]
+    time_remaining: int = Field(description="Remaining time in seconds")
+    current_code_snapshot: Optional[str] = None
+    assessment_type: Optional[str] = None
+
+
+class GeneratedQuestionResponse(BaseModel):
+    """Generated question content."""
+    title: str
+    description: str
+    requirements: list[str]
+    estimated_time: int
+    starter_code: str
+    difficulty: Optional[str] = None
+    domain: Optional[str] = None
+    skills: Optional[list[str]] = None
+    difficulty_assessment: Optional[dict] = None
+
+
+class IRTDataResponse(BaseModel):
+    """IRT analysis data."""
+    ability_estimate: dict
+    difficulty_targeting: dict
+    difficulty_visibility: dict
+    should_continue: dict
+
+
+class GenerateNextQuestionResponse(BaseModel):
+    """Response for incremental question generation."""
+    question: GeneratedQuestionResponse
+    irt_data: Optional[IRTDataResponse] = None
+    strategy: dict
+
+
+class QuestionPoolStatsResponse(BaseModel):
+    """Question pool statistics."""
+    seed_id: str
+    total_generated: int
+    unique_questions: int
+    avg_reuse_count: float
+    threshold: int
+    last_generated_at: Optional[str] = None
+    total_candidates_served: int
+    avg_uniqueness_score: float
+
+
+@app.post("/api/question-generation/generate", response_model=GeneratedQuestionResponse, dependencies=[Depends(verify_api_key)])
+async def generate_question(request: GenerateQuestionRequest):
+    """
+    Generate a dynamic question using complexity profiles.
+
+    Uses Claude Haiku for fast generation (~13s).
+    All LLM calls are automatically traced to LangSmith.
+
+    Complexity is determined by role + seniority + assessment type.
+    """
+    from agents.question_generation_agent import get_question_generation_agent
+
+    try:
+        agent = await get_question_generation_agent()
+
+        question = await agent.generate_dynamic(
+            role=request.role,
+            seniority=request.seniority,
+            assessment_type=request.assessment_type,
+            tech_stack=request.tech_stack,
+            organization_id=request.organization_id,
+        )
+
+        return GeneratedQuestionResponse(
+            title=question.get("title", ""),
+            description=question.get("description", ""),
+            requirements=question.get("requirements", []),
+            estimated_time=question.get("estimated_time", 45),
+            starter_code=question.get("starter_code", ""),
+            difficulty=question.get("difficulty"),
+            domain=question.get("domain"),
+            skills=question.get("skills"),
+            difficulty_assessment=question.get("difficulty_assessment"),
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/question-generation/generate-next", response_model=GenerateNextQuestionResponse, dependencies=[Depends(verify_api_key)])
+async def generate_next_question(request: GenerateNextQuestionRequest):
+    """
+    Generate next question using IRT-based adaptive difficulty.
+
+    Analyzes candidate performance and targets optimal difficulty.
+    Uses Claude Sonnet for better reasoning on adaptive generation.
+
+    Returns question with IRT analysis and strategy used.
+    """
+    from agents.question_generation_agent import get_question_generation_agent
+
+    try:
+        agent = await get_question_generation_agent()
+
+        result = await agent.generate_incremental(
+            session_id=request.session_id,
+            candidate_id=request.candidate_id,
+            seed_id=request.seed_id,
+            seniority=request.seniority,
+            previous_questions=request.previous_questions,
+            previous_performance=request.previous_performance,
+            time_remaining=request.time_remaining,
+            assessment_type=request.assessment_type,
+            current_code_snapshot=request.current_code_snapshot,
+        )
+
+        question = result["question"]
+        irt_data = result.get("irt_data")
+        strategy = result.get("strategy", {"type": "generate", "reason": "incremental"})
+
+        return GenerateNextQuestionResponse(
+            question=GeneratedQuestionResponse(
+                title=question.get("title", ""),
+                description=question.get("description", ""),
+                requirements=question.get("requirements", []),
+                estimated_time=question.get("estimated_time", 45),
+                starter_code=question.get("starter_code", ""),
+                difficulty=question.get("difficulty"),
+                difficulty_assessment=question.get("difficulty_assessment"),
+            ),
+            irt_data=IRTDataResponse(
+                ability_estimate=irt_data["ability_estimate"],
+                difficulty_targeting=irt_data["difficulty_targeting"],
+                difficulty_visibility=irt_data["difficulty_visibility"],
+                should_continue=irt_data["should_continue"],
+            ) if irt_data else None,
+            strategy=strategy,
+        )
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/question-generation/pool-stats/{seed_id}", response_model=QuestionPoolStatsResponse, dependencies=[Depends(verify_api_key)])
+async def get_question_pool_stats(seed_id: str):
+    """
+    Get question pool statistics for a seed.
+
+    Used by smart reuse strategy to determine when to reuse vs generate.
+    """
+    from services.database import get_question_generation_database
+
+    try:
+        db = await get_question_generation_database()
+        stats = await db.get_question_pool_stats(seed_id)
+
+        if not stats:
+            raise HTTPException(status_code=404, detail="Seed not found or no questions generated")
+
+        return QuestionPoolStatsResponse(
+            seed_id=stats["seed_id"],
+            total_generated=stats["total_generated"],
+            unique_questions=stats["unique_questions"],
+            avg_reuse_count=stats["avg_reuse_count"],
+            threshold=stats["threshold"],
+            last_generated_at=stats.get("last_generated_at"),
+            total_candidates_served=stats["total_candidates_served"],
+            avg_uniqueness_score=stats["avg_uniqueness_score"],
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # Supervisor Endpoints
 # =============================================================================
 
