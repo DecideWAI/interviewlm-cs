@@ -123,15 +123,12 @@ async def anthropic_caching_middleware(
         logger.info(f"[AnthropicCaching] ✓ Tools: added cache_control to {len(tools_with_cache)} tools")
 
     # =========================================================================
-    # 3. Add cache_control to messages - cache ALL messages (entire history)
+    # 3. Add cache_control to LAST message to cache EVERYTHING
     # =========================================================================
-    # Place breakpoint on second-to-last message to cache everything except new user input
-    # This ensures growing conversations remain cached: [msg0, msg1, ..., msgN-2(cached), msgN-1(new)]
-    if request.messages and len(request.messages) > 1:
-        # Cache up to second-to-last message (leaves only the latest user message uncached)
-        cache_up_to_idx = len(request.messages) - 2
-
-        message = request.messages[cache_up_to_idx]
+    # Anthropic caches all content up to and including the message with cache_control
+    # By marking the last message, we cache: system prompt + tools + ALL messages
+    if request.messages and len(request.messages) > 0:
+        message = request.messages[-1]
 
         # Add cache_control to this message's content
         if isinstance(message.content, str):
@@ -144,8 +141,7 @@ async def anthropic_caching_middleware(
                 }
             ]
             logger.info(
-                f"[AnthropicCaching] ✓ Messages: caching ALL {cache_up_to_idx + 1} messages "
-                f"(breakpoint at message {cache_up_to_idx}/{len(request.messages)-1})"
+                f"[AnthropicCaching] ✓ Messages: caching ALL {len(request.messages)} messages"
             )
 
         elif isinstance(message.content, list) and len(message.content) > 0:
@@ -160,8 +156,7 @@ async def anthropic_caching_middleware(
                     "cache_control": cache_control,
                 }
             logger.info(
-                f"[AnthropicCaching] ✓ Messages: caching ALL {cache_up_to_idx + 1} messages "
-                f"(breakpoint at message {cache_up_to_idx}/{len(request.messages)-1})"
+                f"[AnthropicCaching] ✓ Messages: caching ALL {len(request.messages)} messages"
             )
 
     # Pass to handler
