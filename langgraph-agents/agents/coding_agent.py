@@ -297,19 +297,25 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
 
 @wrap_model_call
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
-    """Add cache_control to system prompt, tools, and messages.
-
-    This middleware runs LAST to add cache breakpoints:
-    - Breakpoint 1: LAST tool (caches all tools)
-    - Breakpoint 2: System prompt (caches prompt)
-    - Breakpoint 3: Nth message (caches conversation prefix)
+    """Add cache_control to system prompt and messages.
 
     IMPORTANT: Anthropic limits to 4 cache_control blocks maximum.
+    We use 2 strategically:
+    - Breakpoint 1: System prompt (caches prompt + tools as prefix)
+    - Breakpoint 2: Last message (caches entire conversation)
     """
     if not settings.enable_prompt_caching:
         return await handler(request)
 
     cache_control = {"type": "ephemeral"}
+
+    # First, REMOVE any existing cache_control from all messages to avoid accumulation
+    if request.messages:
+        for msg in request.messages:
+            if hasattr(msg, 'content') and isinstance(msg.content, list):
+                for block in msg.content:
+                    if isinstance(block, dict) and "cache_control" in block:
+                        del block["cache_control"]
 
     # 1. Add cache_control to system prompt's LAST block
     if request.system_prompt:
@@ -322,6 +328,11 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                 }
             ]
         elif isinstance(request.system_prompt, list) and len(request.system_prompt) > 0:
+            # Remove existing cache_control from all blocks first
+            for block in request.system_prompt:
+                if isinstance(block, dict) and "cache_control" in block:
+                    del block["cache_control"]
+            # Add to last block only
             last_block = request.system_prompt[-1]
             if isinstance(last_block, dict):
                 last_block["cache_control"] = cache_control
@@ -332,20 +343,10 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                     "cache_control": cache_control,
                 }
 
-    # 2. Add cache_control to LAST tool only (caches all tools as prefix)
-    if request.tools and len(request.tools) > 0:
-        last_tool = request.tools[-1]
-        if isinstance(last_tool, dict):
-            last_tool["cache_control"] = cache_control
-
-    # 3. Add cache_control to messages - cache ALL messages (entire conversation history)
-    # Place breakpoint on second-to-last message to cache everything except the new user input
-    # This ensures growing conversations remain cached: [msg0, msg1, ..., msgN-2(cached), msgN-1(new)]
-    if request.messages and len(request.messages) > 1:
-        # Cache up to second-to-last message (leaves only the latest user message uncached)
-        cache_idx = len(request.messages) - 2
-
-        message = request.messages[cache_idx]
+    # 2. Add cache_control to the LAST message ONLY to cache entire conversation
+    # Skip tools caching to stay under 4 block limit
+    if request.messages and len(request.messages) > 0:
+        message = request.messages[-1]
         if hasattr(message, 'content'):
             if isinstance(message.content, str):
                 message.content = [
@@ -359,6 +360,12 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                 last_block = message.content[-1]
                 if isinstance(last_block, dict):
                     last_block["cache_control"] = cache_control
+                elif isinstance(last_block, str):
+                    message.content[-1] = {
+                        "type": "text",
+                        "text": last_block,
+                        "cache_control": cache_control,
+                    }
 
     return await handler(request)
 

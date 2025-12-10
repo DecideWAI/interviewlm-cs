@@ -289,10 +289,9 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
         if isinstance(last_tool, dict):
             last_tool["cache_control"] = cache_control
 
-    # Cache ALL messages - place breakpoint on second-to-last message
-    if request.messages and len(request.messages) > 1:
-        cache_idx = len(request.messages) - 2
-        message = request.messages[cache_idx]
+    # Cache ALL messages - place cache_control on LAST message
+    if request.messages and len(request.messages) > 0:
+        message = request.messages[-1]
         if hasattr(message, 'content'):
             if isinstance(message.content, str):
                 message.content = [
@@ -302,6 +301,12 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                 last_block = message.content[-1]
                 if isinstance(last_block, dict):
                     last_block["cache_control"] = cache_control
+                elif isinstance(last_block, str):
+                    message.content[-1] = {
+                        "type": "text",
+                        "text": last_block,
+                        "cache_control": cache_control,
+                    }
 
     return await handler(request)
 
