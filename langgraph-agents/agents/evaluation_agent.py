@@ -25,6 +25,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
 
 # Workspace exploration tools (from coding agent)
+# These connect to the Modal sandbox via volume_id stored in database
 from tools.coding_tools import (
     list_files,
     read_file,
@@ -37,6 +38,7 @@ from tools.evaluation_tools import (
     get_session_metadata,
     get_claude_interactions,
     get_test_results,
+    get_code_snapshots,
     # Analysis tools
     analyze_code_quality,
     analyze_problem_solving,
@@ -66,6 +68,7 @@ WORKSPACE_TOOLS = [
 ]
 
 # All tools for the agentic evaluation agent (workspace + DB + analysis + storage)
+# Workspace tools reconnect to sandbox via volume_id, DB has get_code_snapshots as fallback
 AGENTIC_EVALUATION_TOOLS = WORKSPACE_TOOLS + DB_QUERY_TOOLS + ANALYSIS_TOOLS + STORAGE_TOOLS
 
 
@@ -411,7 +414,8 @@ Session ID: {session_id}
         config = {
             "configurable": {
                 "thread_id": f"eval-{session_id}",
-                "session_id": session_id,  # Used by workspace and DB tools
+                "session_id": session_id,  # Used by DB query tools
+                "candidate_id": candidate_id,  # Used by workspace tools (Modal sandbox key)
             }
         }
 

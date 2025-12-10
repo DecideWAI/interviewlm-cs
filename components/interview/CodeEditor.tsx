@@ -8,19 +8,9 @@ import { go } from "@codemirror/lang-go";
 import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { EditorView } from "@codemirror/view";
 import { Extension } from "@codemirror/state";
-import { Button } from "@/components/ui/button";
-import { Play, CheckCircle2, XCircle, Loader2, Radio } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Radio } from "lucide-react";
 import { useEventBatcher } from "@/lib/eventBatcher";
 import { useCodeStreaming } from "@/hooks/useCodeStreaming";
-
-interface TestResult {
-  passed: number;
-  failed: number;
-  total: number;
-  output: string;
-  error?: string;
-}
 
 interface CodeEditorProps {
   sessionId?: string;
@@ -50,15 +40,13 @@ export function CodeEditor({
   if (typeof value !== "string" && value !== undefined && value !== null) {
     console.warn("[CodeEditor] Received non-string value:", typeof value, value);
   }
-  const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [isRunningTests, setIsRunningTests] = useState(false);
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const lastSnapshotRef = useRef<string>(value);
   const snapshotIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isStreamingUpdateRef = useRef(false);
 
   // Initialize event batcher for efficient API calls
-  const { addEvent, flush } = useEventBatcher(sessionId || "");
+  const { addEvent } = useEventBatcher(sessionId || "");
 
   // Code streaming for real-time AI code generation
   const { isStreaming, currentFile, accumulatedContent } = useCodeStreaming({
@@ -160,59 +148,6 @@ export function CodeEditor({
     recordCodeChange(newValue);
   };
 
-  // Run tests
-  const runTests = async () => {
-    if (!sessionId || !questionId) {
-      console.error("Cannot run tests: sessionId or questionId is missing");
-      return;
-    }
-
-    setIsRunningTests(true);
-    setTestResult(null);
-
-    try {
-      const response = await fetch(`/api/interview/${sessionId}/run-tests`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          questionId,
-          code: value,
-          language,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to run tests");
-      }
-
-      const result = await response.json();
-      setTestResult(result);
-
-      // Record test run event using batcher
-      addEvent({
-        type: "test_run",
-        data: {
-          questionId,
-          result,
-        },
-      });
-
-      // Flush events to ensure test results are immediately saved
-      await flush();
-    } catch (err) {
-      console.error("Failed to run tests:", err);
-      setTestResult({
-        passed: 0,
-        failed: 0,
-        total: 0,
-        output: "",
-        error: "Failed to run tests. Please try again.",
-      });
-    } finally {
-      setIsRunningTests(false);
-    }
-  };
-
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -224,7 +159,7 @@ export function CodeEditor({
 
   return (
     <div className="h-full w-full flex flex-col bg-[#1e1e1e] overflow-hidden">
-      {/* Test Button Header */}
+      {/* Editor Header */}
       {showTestButton && (
         <div className="border-b border-border p-2 flex items-center justify-between bg-background">
           <div className="flex items-center gap-2 text-xs text-text-tertiary">
@@ -236,81 +171,6 @@ export function CodeEditor({
               </div>
             )}
           </div>
-          <Button
-            onClick={runTests}
-            disabled={isRunningTests || readOnly}
-            size="sm"
-            variant="primary"
-            className="gap-2"
-            aria-label={isRunningTests ? "Running tests..." : "Run tests for current code"}
-            aria-busy={isRunningTests}
-          >
-            {isRunningTests ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Running...
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4" />
-                Run Tests
-              </>
-            )}
-          </Button>
-        </div>
-      )}
-
-      {/* Test Results */}
-      {testResult && (
-        <div
-          className={cn(
-            "border-b border-border p-3 text-sm",
-            testResult.error || testResult.failed > 0
-              ? "bg-error/10 border-error/20"
-              : "bg-success/10 border-success/20"
-          )}
-          role="status"
-          aria-live="polite"
-          aria-label={`Test results: ${testResult.passed} of ${testResult.total} tests passed`}
-        >
-          <div className="flex items-center gap-2 mb-2">
-            {testResult.error || testResult.failed > 0 ? (
-              <>
-                <XCircle className="h-4 w-4 text-error" aria-hidden="true" />
-                <span className="font-semibold text-error">
-                  {testResult.error ? "Error Running Tests" : `${testResult.failed} Test${testResult.failed !== 1 ? 's' : ''} Failed`}
-                </span>
-              </>
-            ) : testResult.total === 0 ? (
-              <>
-                <XCircle className="h-4 w-4 text-warning" aria-hidden="true" />
-                <span className="font-semibold text-warning">No Tests Run</span>
-              </>
-            ) : (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-success" aria-hidden="true" />
-                <span className="font-semibold text-success">All Tests Passed!</span>
-              </>
-            )}
-            <span className="text-text-tertiary ml-auto">
-              {testResult.passed}/{testResult.total} passed
-            </span>
-          </div>
-          {testResult.error && (
-            <div className="text-xs text-error font-mono bg-background/50 p-2 rounded">
-              {testResult.error}
-            </div>
-          )}
-          {testResult.output && (
-            <details className="mt-2">
-              <summary className="text-xs text-text-tertiary cursor-pointer hover:text-text-primary">
-                View test output
-              </summary>
-              <pre className="text-xs font-mono bg-background/50 p-2 rounded mt-2 overflow-auto max-h-32 text-text-secondary">
-                {testResult.output}
-              </pre>
-            </details>
-          )}
         </div>
       )}
 

@@ -87,6 +87,18 @@ def sanitize_output(text: str, max_size: int = 50000) -> str:
     return text
 
 
+def get_sandbox_id(config: dict) -> str:
+    """
+    Get the sandbox ID from config.
+    Prefers candidate_id (used by TypeScript/Next.js) over session_id.
+    This ensures the evaluation agent accesses the same sandbox as the interview.
+    """
+    configurable = config.get("configurable", {})
+    # candidate_id is the primary key used by TypeScript for Modal sandboxes
+    # session_id (SessionRecording.id) is used for DB queries
+    return configurable.get("candidate_id") or configurable.get("session_id", "default")
+
+
 # =============================================================================
 # File Operation Tools
 # =============================================================================
@@ -112,13 +124,13 @@ def read_file(
     Returns:
         Dict with success status, content, and metadata
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     allowed, reason = is_path_allowed(file_path)
     if not allowed:
         return {"success": False, "error": reason}
 
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Ensure absolute path
         if not file_path.startswith("/"):
@@ -170,13 +182,13 @@ def write_file(
     Returns:
         Dict with success status and metadata
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     allowed, reason = is_path_allowed(file_path)
     if not allowed:
         return {"success": False, "error": reason}
 
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Ensure absolute path
         if not file_path.startswith("/"):
@@ -221,13 +233,13 @@ def edit_file(
     Returns:
         Dict with success status and replacement count
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     allowed, reason = is_path_allowed(file_path)
     if not allowed:
         return {"success": False, "error": reason}
 
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Ensure absolute path
         if not file_path.startswith("/"):
@@ -262,7 +274,7 @@ def edit_file(
 
 
 def _list_files_internal(
-    session_id: str,
+    sandbox_id: str,
     path: str,
 ) -> dict[str, Any]:
     """
@@ -272,7 +284,7 @@ def _list_files_internal(
     We must use trailing slash (ls -la /workspace/) to list contents,
     otherwise ls shows the symlink itself instead of directory contents.
     """
-    sb = sandbox_mgr.get_sandbox(session_id)
+    sb = sandbox_mgr.get_sandbox(sandbox_id)
 
     # Normalize path - remove double slashes, trailing slashes
     normalized_path = re.sub(r'/+', '/', path).rstrip('/') or '/workspace'
@@ -359,12 +371,12 @@ def list_files(
     Returns:
         Dict with list of files (name, path, type, size)
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     try:
         # Use timeout wrapper to prevent hanging (matches TypeScript implementation)
         return run_with_timeout(
             _list_files_internal,
-            session_id,
+            sandbox_id,
             path,
             timeout=TOOL_TIMEOUT_SECONDS,
         )
@@ -391,7 +403,7 @@ def grep_files(
     Returns:
         Dict with matches (file, line number, content)
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     try:
         # Validate regex
         try:
@@ -399,7 +411,7 @@ def grep_files(
         except re.error as e:
             return {"success": False, "error": f"Invalid regex: {e}", "matches": []}
 
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Escape pattern for shell
         safe_pattern = pattern.replace('"', '\\"').replace("'", "\\'")
@@ -451,9 +463,9 @@ def glob_files(
     Returns:
         Dict with list of matching file paths
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Convert glob to find pattern
         # Simple conversion for common patterns
@@ -504,13 +516,13 @@ def run_bash(
     Returns:
         Dict with stdout, stderr, exit code, and success status
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     allowed, reason = is_command_allowed(command)
     if not allowed:
         return {"success": False, "error": reason, "stdout": "", "stderr": "", "exit_code": 1}
 
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Build command with working directory
         full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {command}"
@@ -565,13 +577,13 @@ def run_tests(
     Returns:
         Dict with status, output, and test count
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     allowed, reason = is_command_allowed(test_cmd)
     if not allowed:
         return {"success": False, "error": reason, "passed": False}
 
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Build command with working directory
         full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {test_cmd}"
@@ -669,7 +681,7 @@ def install_packages(
     Returns:
         Dict with success status and output
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     if not packages:
         return {"success": True, "message": "No packages to install"}
 
@@ -679,7 +691,7 @@ def install_packages(
             return {"success": False, "error": f"Invalid package name: {pkg}"}
 
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Build install command
         if manager == "npm":
@@ -719,9 +731,9 @@ def get_environment_info(
     Returns:
         Dict with version info
     """
-    session_id = config.get("configurable", {}).get("session_id", "default")
+    sandbox_id = get_sandbox_id(config)
     try:
-        sb = sandbox_mgr.get_sandbox(session_id)
+        sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         env_info = {}
         version_checks = [

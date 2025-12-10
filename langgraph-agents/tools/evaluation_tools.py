@@ -196,6 +196,67 @@ async def get_test_results(
         }
 
 
+@tool
+async def get_code_snapshots(
+    session_id: str,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """
+    Fetch code snapshots for a session from the database.
+
+    IMPORTANT: Use this tool instead of workspace exploration (list_files, read_file)
+    because the interview sandbox may have expired. This tool reads saved code from
+    the database which is always available.
+
+    Args:
+        session_id: The session recording ID
+
+    Returns:
+        Dict with code_snapshots list containing file_name, language, content, timestamp
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                timestamp,
+                file_name,
+                language,
+                full_content,
+                lines_added,
+                lines_deleted
+            FROM code_snapshots
+            WHERE session_id = $1
+            ORDER BY timestamp DESC
+        """, session_id)
+
+        # Group by file_name, keeping only the latest snapshot per file
+        files: dict[str, dict] = {}
+        all_snapshots = []
+
+        for row in rows:
+            file_name = row["file_name"]
+            snapshot = {
+                "timestamp": row["timestamp"].isoformat() if row["timestamp"] else None,
+                "file_name": file_name,
+                "language": row["language"],
+                "content": row["full_content"],
+                "lines_added": row["lines_added"],
+                "lines_deleted": row["lines_deleted"],
+            }
+            all_snapshots.append(snapshot)
+
+            # Keep only latest per file
+            if file_name not in files:
+                files[file_name] = snapshot
+
+        return {
+            "success": True,
+            "count": len(all_snapshots),
+            "files": files,  # Latest snapshot per file
+            "all_snapshots": all_snapshots[:20],  # Limit to prevent token overflow
+        }
+
+
 # =============================================================================
 # Code Quality Analysis
 # =============================================================================
@@ -957,6 +1018,7 @@ DB_QUERY_TOOLS = [
     get_session_metadata,
     get_claude_interactions,
     get_test_results,
+    get_code_snapshots,  # Use this instead of workspace exploration (sandbox may have expired)
 ]
 
 # Analysis tools for scoring dimensions
