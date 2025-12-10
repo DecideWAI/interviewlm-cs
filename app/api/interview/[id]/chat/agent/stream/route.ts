@@ -118,6 +118,7 @@ export async function POST(
           },
         },
         sessionRecording: true,
+        assessment: true,
       },
     });
 
@@ -171,6 +172,11 @@ export async function POST(
     let problemStatement: string | undefined;
     if (currentQuestion) {
       problemStatement = `${currentQuestion.title}\n\n${currentQuestion.description}`;
+
+      // Append Tech Stack Constraints if available
+      if (candidate.assessment?.techStack && candidate.assessment.techStack.length > 0) {
+        problemStatement += `\n\n## Technology Constraints\nYou MUST use the following technologies for your solution:\n- ${candidate.assessment.techStack.join("\n- ")}\n\nYou should prioritize using these specific technologies over generic alternatives.`;
+      }
     }
 
     // Enhance message with code context if provided
@@ -328,7 +334,7 @@ export async function POST(
                     accumulatedResponse += delta;
                     sendEvent("content", { delta });
                     // Trigger checkpoint check (fire-and-forget to not block streaming)
-                    maybeCheckpoint().catch(() => {});
+                    maybeCheckpoint().catch(() => { });
                   },
                   onToolStart: (toolName: string, toolId: string, input: unknown) => {
                     accumulatedToolCalls.push({
@@ -375,7 +381,7 @@ export async function POST(
                   accumulatedResponse += delta;
                   sendEvent("content", { delta });
                   // Trigger checkpoint check (fire-and-forget to not block streaming)
-                  maybeCheckpoint().catch(() => {});
+                  maybeCheckpoint().catch(() => { });
                 },
                 onToolStart: (toolName: string, toolId: string, input: unknown) => {
                   accumulatedToolCalls.push({
@@ -437,14 +443,14 @@ export async function POST(
             timestamp: new Date(),
             candidateMessage: message,
             aiResponse: agentResponse.text,
-            toolsUsed: agentResponse.toolsUsed ?? [],
+            toolsUsed: (agentResponse.toolsUsed as any) ?? [],
             filesModified: agentResponse.filesModified ?? [],
           }).catch(console.error);
 
           // Send final done event
           sendEvent("done", {
             response: agentResponse.text,
-            toolsUsed: agentResponse.toolsUsed ?? [],
+            toolsUsed: (agentResponse.toolsUsed as any) ?? [],
             filesModified: agentResponse.filesModified ?? [],
             usage: {
               inputTokens: usage?.input_tokens ?? 0,
@@ -471,7 +477,7 @@ export async function POST(
           console.error("[AgentStream] Error:", error);
 
           // Save checkpoint with failed status for potential recovery
-          await saveCheckpoint('failed').catch(() => {});
+          await saveCheckpoint('failed').catch(() => { });
 
           const isOverloaded =
             (error as { status?: number })?.status === 529 ||
