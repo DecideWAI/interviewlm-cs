@@ -153,15 +153,26 @@ export async function POST(
 
     // Create SSE stream
     const encoder = new TextEncoder();
+    let isStreamClosed = false;
+
     const stream = new ReadableStream({
       async start(controller) {
         const sendEvent = (event: string, data: unknown) => {
+          // Don't try to send if stream is already closed
+          if (isStreamClosed) {
+            return;
+          }
           try {
             controller.enqueue(
               encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
             );
           } catch (error) {
-            console.error("[AgentStream] Failed to send event:", error);
+            // Mark stream as closed to prevent further attempts
+            isStreamClosed = true;
+            // Only log if it's not the expected "controller closed" error
+            if (error instanceof Error && !error.message.includes('closed')) {
+              console.error("[AgentStream] Failed to send event:", error);
+            }
           }
         };
 
@@ -308,6 +319,7 @@ export async function POST(
             },
           });
 
+          isStreamClosed = true;
           controller.close();
         } catch (error: unknown) {
           console.error("[AgentStream] Error:", error);
@@ -324,8 +336,14 @@ export async function POST(
             retryable: isOverloaded,
           });
 
+          isStreamClosed = true;
           controller.close();
         }
+      },
+      cancel() {
+        // Client disconnected - mark stream as closed
+        isStreamClosed = true;
+        console.log("[AgentStream] Client disconnected");
       },
     });
 

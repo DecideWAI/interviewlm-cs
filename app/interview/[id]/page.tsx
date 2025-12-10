@@ -785,6 +785,11 @@ export default function InterviewPage() {
     setIsEvaluating(true);
     setRightPanelTab("evaluation"); // Switch to evaluation tab
 
+    // Debug: Log what code is being sent for evaluation
+    console.log("[Evaluate Debug] Code length:", code.length);
+    console.log("[Evaluate Debug] Code preview (first 500 chars):", code.slice(0, 500));
+    console.log("[Evaluate Debug] Selected file:", selectedFile?.name);
+
     try {
       const response = await fetch(`/api/interview/${candidateId}/evaluate`, {
         method: "POST",

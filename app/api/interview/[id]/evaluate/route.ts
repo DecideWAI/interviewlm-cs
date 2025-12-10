@@ -267,6 +267,12 @@ export const POST = withErrorHandling(async (
   // Set USE_LANGGRAPH_AGENT=true to test the LangGraph Python agent
   if (USE_LANGGRAPH_AGENT) {
     try {
+      // Debug: Log the code being sent to LangGraph
+      logger.debug("[Evaluate] Code being sent to LangGraph", {
+        codeLength: code.length,
+        codePreview: code.slice(0, 300),
+      });
+
       logger.debug("[Evaluate] Calling LangGraph Question Evaluation Agent");
 
       const langGraphResult = await evaluateWithLangGraph({

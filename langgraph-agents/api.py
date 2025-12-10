@@ -549,6 +549,11 @@ async def evaluate_question(request: QuestionEvaluationRequest):
     Returns scores and feedback to determine if candidate can proceed.
     """
     try:
+        # Debug: Log the code being evaluated
+        code_preview = request.code[:500] if len(request.code) > 500 else request.code
+        print(f"[QuestionEvaluation] Evaluating code for question {request.question_id}")
+        print(f"[QuestionEvaluation] Code preview ({len(request.code)} chars):\n{code_preview}")
+
         agent = create_question_evaluation_agent(use_agent_mode=request.use_agent_mode)
 
         result = await agent.evaluate_question(
