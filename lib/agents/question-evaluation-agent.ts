@@ -474,6 +474,13 @@ export class QuestionEvaluationAgent {
    */
   private async _evaluateInternal(): Promise<EvaluationResult> {
     const startTime = Date.now();
+
+    // Debug: Log the code being evaluated
+    console.log('[QuestionEvaluationAgent] Starting evaluation');
+    console.log('[QuestionEvaluationAgent] Candidate ID:', this.config.candidateId);
+    console.log('[QuestionEvaluationAgent] Code length:', this.config.code.length);
+    console.log('[QuestionEvaluationAgent] Code preview (first 500 chars):', this.config.code.slice(0, 500));
+
     const evaluationPrompt = this.buildEvaluationPrompt();
 
     const conversation: Anthropic.Messages.MessageParam[] = [
@@ -746,7 +753,8 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
 
     try {
       const { readFile } = await import('../services/modal');
-      const result = await readFile(this.config.sessionId, normalizedPath);
+      // Use candidateId for Modal sandbox (not sessionId)
+      const result = await readFile(this.config.candidateId, normalizedPath);
 
       if (!result.success || !result.content) {
         throw new Error(result.error || 'Failed to read file');
@@ -781,7 +789,8 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
     try {
       const { getFileSystem } = await import('../services/modal');
       const targetPath = path || '/workspace';
-      const files = await getFileSystem(this.config.sessionId, targetPath);
+      // Use candidateId for Modal sandbox (not sessionId)
+      const files = await getFileSystem(this.config.candidateId, targetPath);
 
       const results = files.map(file => ({
         name: file.name,
@@ -819,14 +828,16 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
 
     try {
       const { getFileSystem, readFile } = await import('../services/modal');
-      const files = await getFileSystem(this.config.sessionId, path || '/workspace');
+      // Use candidateId for Modal sandbox (not sessionId)
+      const files = await getFileSystem(this.config.candidateId, path || '/workspace');
       const matches: Array<{ file: string; line: number; text: string }> = [];
       const regex = new RegExp(pattern);
 
       for (const file of files) {
         if (file.type === 'file') {
           try {
-            const readResult = await readFile(this.config.sessionId, file.path);
+            // Use candidateId for Modal sandbox (not sessionId)
+            const readResult = await readFile(this.config.candidateId, file.path);
             if (!readResult.success || !readResult.content) continue;
             const lines = readResult.content.split('\n');
 
@@ -862,7 +873,8 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
 
     try {
       const { getFileSystem } = await import('../services/modal');
-      const allFiles = await getFileSystem(this.config.sessionId, '/workspace');
+      // Use candidateId for Modal sandbox (not sessionId)
+      const allFiles = await getFileSystem(this.config.candidateId, '/workspace');
 
       const regex = new RegExp(
         '^' + pattern
@@ -887,6 +899,8 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
   }
 
   private async toolRunTests(): Promise<unknown> {
+    console.log('[QuestionEvaluationAgent] Running tests for candidate:', this.config.candidateId);
+
     try {
       const { executeRunTests } = await import('../agent-tools/run-tests');
 
@@ -897,6 +911,13 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
         {}
       );
 
+      console.log('[QuestionEvaluationAgent] Test results:', {
+        success: result.success,
+        passed: result.passed,
+        failed: result.failed,
+        total: result.total,
+      });
+
       return {
         success: result.success,
         passed: result.passed,
@@ -906,6 +927,7 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
         error: result.error,
       };
     } catch (error) {
+      console.log('[QuestionEvaluationAgent] Test execution error:', error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Failed to run tests',
@@ -962,8 +984,8 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
 
     try {
       const { runCommand } = await import('../services/modal');
-
-      const result = await runCommand(this.config.sessionId, command);
+      // Use candidateId for Modal sandbox (not sessionId)
+      const result = await runCommand(this.config.candidateId, command);
 
       return {
         success: result.exitCode === 0,
@@ -1013,7 +1035,7 @@ ${requirements}
 ${this.config.code}
 \`\`\`
 
-**Session ID for tools:** ${this.config.sessionId}
+**Candidate ID:** ${this.config.candidateId}
 
 Before evaluating, you MUST:
 1. Run tests using RunTests to verify the solution works

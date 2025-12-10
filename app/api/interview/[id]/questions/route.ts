@@ -155,6 +155,124 @@ async function generateIncrementalQuestionWithBackend(
 }
 
 /**
+ * Generate dynamic question using LangGraph Python
+ * Used when no seed is configured - calls /api/question-generation/generate
+ */
+async function generateDynamicQuestionWithLangGraph(params: {
+  role: string;
+  seniority: string;
+  assessmentType: string;
+  techStack: string[];
+  previousQuestions: any[];
+  questionNumber: number;
+}): Promise<{
+  title: string;
+  description: string;
+  requirements: string[];
+  difficulty: "EASY" | "MEDIUM" | "HARD";
+  estimatedTime: number;
+  language: string;
+  starterCode: any[];
+  testCases: any[];
+}> {
+  const langgraphUrl = process.env.LANGGRAPH_API_URL || 'http://localhost:8001';
+  const startTime = Date.now();
+
+  logger.info('[Questions] Using LangGraph for dynamic question generation', {
+    role: params.role,
+    seniority: params.seniority,
+    questionNumber: params.questionNumber,
+  });
+
+  try {
+    const response = await fetch(`${langgraphUrl}/api/question-generation/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        role: params.role,
+        seniority: params.seniority,
+        assessment_type: params.assessmentType,
+        tech_stack: params.techStack,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    const latencyMs = Date.now() - startTime;
+
+    logger.info('[Questions] LangGraph dynamic question generation complete', {
+      latencyMs,
+      title: result.title,
+    });
+
+    // Determine language from tech stack
+    const language = determineLanguageForGeneration(params.techStack);
+    const fileExt = language === 'python' ? 'py' : language === 'go' ? 'go' : 'ts';
+
+    // Map response to expected format
+    return {
+      title: result.title || `${params.role} Challenge`,
+      description: result.description || '',
+      requirements: result.requirements || [],
+      difficulty: (result.difficulty?.toUpperCase() || 'MEDIUM') as "EASY" | "MEDIUM" | "HARD",
+      estimatedTime: result.estimated_time || 30,
+      language: language,
+      starterCode: result.starter_code ? [{
+        fileName: `solution.${fileExt}`,
+        content: result.starter_code,
+      }] : [{
+        fileName: `solution.${fileExt}`,
+        content: getDefaultStarterCode(language),
+      }],
+      testCases: [{
+        name: "Test case 1",
+        input: "test input",
+        expectedOutput: "expected output",
+        hidden: false,
+      }],
+    };
+  } catch (error) {
+    logger.error('[Questions] LangGraph dynamic generation failed', error as Error);
+    throw error; // Let caller handle fallback
+  }
+}
+
+/**
+ * Helper to determine language from tech stack (for LangGraph generation)
+ */
+function determineLanguageForGeneration(techStack: string[]): string {
+  const lowerStack = techStack.map(t => t.toLowerCase());
+
+  if (lowerStack.some(t => ['python', 'fastapi', 'django', 'flask', 'pytest'].includes(t))) {
+    return 'python';
+  }
+  if (lowerStack.some(t => ['go', 'golang', 'gin', 'echo'].includes(t))) {
+    return 'go';
+  }
+  if (lowerStack.some(t => ['typescript', 'nestjs', 'ts-node'].includes(t))) {
+    return 'typescript';
+  }
+  return 'typescript';
+}
+
+/**
+ * Get default starter code for a language
+ */
+function getDefaultStarterCode(language: string): string {
+  if (language === 'python') {
+    return `# TODO: Implement your solution here\n\ndef solution():\n    # Your code here\n    pass\n`;
+  }
+  if (language === 'go') {
+    return `package main\n\n// TODO: Implement your solution here\nfunc solution() {\n\t// Your code here\n}\n`;
+  }
+  return `// TODO: Implement your solution here\n\nexport function solution() {\n  // Your code here\n}\n`;
+}
+
+/**
  * GET /api/interview/[id]/questions
  * Get current question for candidate
  */
@@ -518,23 +636,50 @@ export const POST = withErrorHandling(async (
         reason: irtResult.shouldContinue?.reason ?? 'unknown',
       });
     } else {
-      // Use legacy LLM generation
-      logger.info('[Questions POST] Using legacy question generator', { candidateId: id });
+      // Use LangGraph Python for dynamic question generation
+      logger.info('[Questions POST] Using LangGraph dynamic question generator', { candidateId: id });
 
       const nextQuestionOrder = candidate.generatedQuestions.length;
-      const difficulty = determineNextDifficulty(
-        candidate.generatedQuestions,
-        previousPerformance
-      );
+      const techStack = candidate.assessment.techStack || ['TypeScript'];
 
-      const generatedProblem = await generateProblemWithLLM(
-        candidate.assessment.role,
-        candidate.assessment.seniority,
-        difficulty,
-        candidate.generatedQuestions,
-        candidate.assessment.techStack || ['TypeScript'],
-        nextQuestionOrder + 1 // 1-indexed question number
-      );
+      let generatedProblem;
+      try {
+        // Try LangGraph Python first
+        generatedProblem = await generateDynamicQuestionWithLangGraph({
+          role: candidate.assessment.role,
+          seniority: candidate.assessment.seniority,
+          assessmentType: candidate.assessment.assessmentType,
+          techStack: techStack,
+          previousQuestions: candidate.generatedQuestions,
+          questionNumber: nextQuestionOrder + 1,
+        });
+      } catch (error) {
+        // Fallback to TypeScript generator if LangGraph fails
+        logger.warn('[Questions POST] LangGraph failed, falling back to TypeScript generator', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+
+        const difficulty = determineNextDifficulty(
+          candidate.generatedQuestions,
+          previousPerformance
+        );
+
+        generatedProblem = await generateProblemWithLLM(
+          candidate.assessment.role,
+          candidate.assessment.seniority,
+          difficulty,
+          candidate.generatedQuestions,
+          techStack,
+          nextQuestionOrder + 1
+        );
+      }
+
+      // Normalize difficulty to expected enum value
+      const normalizedDifficulty = (
+        typeof generatedProblem.difficulty === 'string'
+          ? generatedProblem.difficulty.toUpperCase()
+          : 'MEDIUM'
+      ) as "EASY" | "MEDIUM" | "HARD";
 
       // Save generated question
       newQuestion = await prisma.generatedQuestion.create({
@@ -543,7 +688,7 @@ export const POST = withErrorHandling(async (
           order: nextQuestionOrder,
           title: generatedProblem.title,
           description: generatedProblem.description,
-          difficulty,
+          difficulty: normalizedDifficulty,
           language: generatedProblem.language,
           requirements: generatedProblem.requirements,
           estimatedTime: generatedProblem.estimatedTime,
