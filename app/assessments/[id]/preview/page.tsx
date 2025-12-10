@@ -218,7 +218,15 @@ export default function AssessmentPreviewPage({ params }: PreviewPageProps) {
               </p>
             </div>
             <div className="bg-background-secondary">
-              <InterviewPreview />
+              <InterviewPreview
+                techStack={assessment.techStack}
+                question={assessment.questions?.[0] ? {
+                  title: assessment.questions[0].title,
+                  description: assessment.questions[0].description,
+                  difficulty: assessment.questions[0].difficulty as "easy" | "medium" | "hard",
+                  testCases: assessment.questions[0].testCases
+                } : undefined}
+              />
             </div>
           </div>
 

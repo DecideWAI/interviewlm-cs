@@ -15,6 +15,7 @@ import { QuestionCompletionCard } from "@/components/interview/QuestionCompletio
 import { NextQuestionLoading } from "@/components/interview/NextQuestionLoading";
 import { QuestionTransition } from "@/components/interview/QuestionTransition";
 import { EvaluationPanel, EvaluationResult } from "@/components/interview/EvaluationPanel";
+import { TechStackRequirements } from "@/types/assessment";
 import type { QuestionPerformance } from "@/components/interview/QuestionTransition";
 import { resetConversation } from "@/lib/chat-resilience";
 import { useSessionRecovery, SessionState } from "@/hooks/useSessionRecovery";
@@ -109,6 +110,7 @@ interface SessionData {
   timeLimit: number;
   timeRemaining: number;
   startedAt: string;
+  techStack?: TechStackRequirements;
 }
 
 export default function InterviewPage() {
@@ -384,6 +386,21 @@ export default function InterviewPage() {
         const responseJson = await response.json();
         // API returns { success: true, data: {...}, meta: {...} } format
         const data: SessionData = responseJson.data || responseJson;
+
+        // Transform techStack array to requirements object if needed
+        if (data.techStack && Array.isArray(data.techStack)) {
+          data.techStack = {
+            critical: data.techStack.map((t: string, i: number) => ({
+              id: `tech-${i}`,
+              name: t,
+              category: 'tool'
+            })),
+            required: [],
+            recommended: [],
+            optional: []
+          } as any;
+        }
+
         setSessionData(data);
         setTimeRemaining(data.timeRemaining);
 
@@ -1787,6 +1804,7 @@ export default function InterviewPage() {
                     description={sessionData.question.description}
                     difficulty={sessionData.question.difficulty.toLowerCase() as "easy" | "medium" | "hard"}
                     testCases={sessionData.question.testCases}
+                    techStack={sessionData.techStack}
                   />
                 ) : (
                   <FileTree
@@ -1949,11 +1967,10 @@ export default function InterviewPage() {
                   <div className="border-b border-border bg-background-secondary flex">
                     <button
                       onClick={() => setRightPanelTab("chat")}
-                      className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
-                        rightPanelTab === "chat"
-                          ? "text-primary border-b-2 border-primary bg-background"
-                          : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
-                      }`}
+                      className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${rightPanelTab === "chat"
+                        ? "text-primary border-b-2 border-primary bg-background"
+                        : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                        }`}
                     >
                       <div className="flex items-center justify-center gap-2">
                         <MessageSquare className="h-4 w-4" />
@@ -1962,11 +1979,10 @@ export default function InterviewPage() {
                     </button>
                     <button
                       onClick={() => setRightPanelTab("evaluation")}
-                      className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${
-                        rightPanelTab === "evaluation"
-                          ? "text-primary border-b-2 border-primary bg-background"
-                          : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
-                      }`}
+                      className={`flex-1 px-4 py-2.5 text-sm font-medium transition-colors ${rightPanelTab === "evaluation"
+                        ? "text-primary border-b-2 border-primary bg-background"
+                        : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                        }`}
                     >
                       <div className="flex items-center justify-center gap-2">
                         <ClipboardCheck className="h-4 w-4" />

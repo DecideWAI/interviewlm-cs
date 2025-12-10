@@ -139,14 +139,14 @@ export const POST = withErrorHandling(async (
 
   // Demo mode shortcut - return mock data (skip auth and rate limiting)
   if (candidateId === "demo") {
-      return NextResponse.json({
-        sessionId: "demo",
-        candidateId: "demo",
-        totalQuestions: 3, // Include total questions for progress tracking
-        question: {
-          id: "demo-question",
-          title: "Longest Palindromic Substring",
-          description: `Given a string \`s\`, return the longest palindromic substring in \`s\`.
+    return NextResponse.json({
+      sessionId: "demo",
+      candidateId: "demo",
+      totalQuestions: 3, // Include total questions for progress tracking
+      question: {
+        id: "demo-question",
+        title: "Longest Palindromic Substring",
+        description: `Given a string \`s\`, return the longest palindromic substring in \`s\`.
 
 A string is palindromic if it reads the same forward and backward.
 
@@ -163,66 +163,66 @@ A string is palindromic if it reads the same forward and backward.
 ## Constraints
 - \`1 <= s.length <= 1000\`
 - \`s\` consists of only digits and English letters`,
-          difficulty: "MEDIUM" as const,
-          language: "javascript" as const,
-          starterCode: `function longestPalindrome(s) {
+        difficulty: "MEDIUM" as const,
+        language: "javascript" as const,
+        starterCode: `function longestPalindrome(s) {
   // Implement your solution here
 
 }
 
 module.exports = longestPalindrome;`,
-          testCases: [
-            {
-              name: "Example 1",
-              input: "babad",
-              expectedOutput: "bab",
-              hidden: false,
-            },
-            {
-              name: "Example 2",
-              input: "cbbd",
-              expectedOutput: "bb",
-              hidden: false,
-            },
-            {
-              name: "Single character",
-              input: "a",
-              expectedOutput: "a",
-              hidden: true,
-            },
-          ],
-        },
-        sandbox: {
-          volumeId: "demo-volume",
-          workspaceDir: "/workspace",
-          status: "ready",
-        },
-        files: [
+        testCases: [
           {
-            id: "1",
-            name: "solution.js",
-            type: "file" as const,
-            path: "/workspace/solution.js",
-            language: "javascript",
+            name: "Example 1",
+            input: "babad",
+            expectedOutput: "bab",
+            hidden: false,
           },
           {
-            id: "2",
-            name: "solution.test.js",
-            type: "file" as const,
-            path: "/workspace/solution.test.js",
-            language: "javascript",
+            name: "Example 2",
+            input: "cbbd",
+            expectedOutput: "bb",
+            hidden: false,
           },
           {
-            id: "3",
-            name: "README.md",
-            type: "file" as const,
-            path: "/workspace/README.md",
-            language: "markdown",
+            name: "Single character",
+            input: "a",
+            expectedOutput: "a",
+            hidden: true,
           },
         ],
-        timeLimit: 3600, // 1 hour in seconds
-        startedAt: new Date().toISOString(),
-      });
+      },
+      sandbox: {
+        volumeId: "demo-volume",
+        workspaceDir: "/workspace",
+        status: "ready",
+      },
+      files: [
+        {
+          id: "1",
+          name: "solution.js",
+          type: "file" as const,
+          path: "/workspace/solution.js",
+          language: "javascript",
+        },
+        {
+          id: "2",
+          name: "solution.test.js",
+          type: "file" as const,
+          path: "/workspace/solution.test.js",
+          language: "javascript",
+        },
+        {
+          id: "3",
+          name: "README.md",
+          type: "file" as const,
+          path: "/workspace/README.md",
+          language: "markdown",
+        },
+      ],
+      timeLimit: 3600, // 1 hour in seconds
+      startedAt: new Date().toISOString(),
+    });
   }
 
   // Apply rate limiting (after demo check)
@@ -489,14 +489,14 @@ module.exports = longestPalindrome;`,
       // Transform test cases
       const transformedTestCases = Array.isArray(question.testCases)
         ? question.testCases.map((tc: any) => {
-            const expectedValue = tc.expectedOutput || tc.expected;
-            return {
-              name: tc.name || "",
-              input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
-              expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
-              hidden: tc.hidden || false,
-            };
-          })
+          const expectedValue = tc.expectedOutput || tc.expected;
+          return {
+            name: tc.name || "",
+            input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
+            expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
+            hidden: tc.hidden || false,
+          };
+        })
         : [];
 
       logger.info('[Initialize] FAST PATH - returning cached session data', {
@@ -627,47 +627,47 @@ module.exports = longestPalindrome;`,
   // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
   const files = await modal.getFileSystem(candidateId, "/workspace");
 
-    // Calculate time remaining (convert minutes to seconds)
-    const timeLimit = (candidate.assessment?.duration || 60) * 60; // Default 1 hour
-    const startedAt = sessionRecording.startTime || new Date();
+  // Calculate time remaining (convert minutes to seconds)
+  const timeLimit = (candidate.assessment?.duration || 60) * 60; // Default 1 hour
+  const startedAt = sessionRecording.startTime || new Date();
 
-    // Record session_start event (only if this is a new session)
-    if (!sessionRecording.startTime) {
-      await sessions.recordEvent(sessionRecording.id, {
-        type: "session_start",
-        data: {
-          questionId: question.id,
-          questionTitle: question.title,
-          difficulty: question.difficulty,
-          language: question.language,
-          timeLimit,
-          startTime: startedAt.toISOString(),
-        },
-        checkpoint: true, // Mark as checkpoint for replay seeking
-      });
-    }
-    const elapsedSeconds = Math.floor(
-      (Date.now() - startedAt.getTime()) / 1000
-    );
-    const timeRemaining = Math.max(0, timeLimit - elapsedSeconds);
+  // Record session_start event (only if this is a new session)
+  if (!sessionRecording.startTime) {
+    await sessions.recordEvent(sessionRecording.id, {
+      type: "session_start",
+      data: {
+        questionId: question.id,
+        questionTitle: question.title,
+        difficulty: question.difficulty,
+        language: question.language,
+        timeLimit,
+        startTime: startedAt.toISOString(),
+      },
+      checkpoint: true, // Mark as checkpoint for replay seeking
+    });
+  }
+  const elapsedSeconds = Math.floor(
+    (Date.now() - startedAt.getTime()) / 1000
+  );
+  const timeRemaining = Math.max(0, timeLimit - elapsedSeconds);
 
-    // Determine total questions for this assessment
-    // Default to 3 questions for adaptive assessments
-    const totalQuestions = 3;
+  // Determine total questions for this assessment
+  // Default to 3 questions for adaptive assessments
+  const totalQuestions = 3;
 
-    // Transform test cases to match ProblemPanel interface
-    const transformedTestCases = Array.isArray(question.testCases)
-      ? question.testCases.map((tc: any) => {
-        // Handle both 'expected' and 'expectedOutput' field names for backwards compatibility
-        const expectedValue = tc.expectedOutput || tc.expected;
-        return {
-          name: tc.name || "",
-          input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
-          expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
-          hidden: tc.hidden || false,
-        };
-      })
-      : [];
+  // Transform test cases to match ProblemPanel interface
+  const transformedTestCases = Array.isArray(question.testCases)
+    ? question.testCases.map((tc: any) => {
+      // Handle both 'expected' and 'expectedOutput' field names for backwards compatibility
+      const expectedValue = tc.expectedOutput || tc.expected;
+      return {
+        name: tc.name || "",
+        input: typeof tc.input === 'object' ? JSON.stringify(tc.input) : String(tc.input),
+        expectedOutput: typeof expectedValue === 'object' ? JSON.stringify(expectedValue) : String(expectedValue),
+        hidden: tc.hidden || false,
+      };
+    })
+    : [];
 
   // Log successful initialization
   logger.info('Interview initialized', {
@@ -703,6 +703,7 @@ module.exports = longestPalindrome;`,
     })(),
     timeLimit,
     timeRemaining,
+    techStack: assessment.techStack || [],
     startedAt: startedAt.toISOString(),
   });
 });
