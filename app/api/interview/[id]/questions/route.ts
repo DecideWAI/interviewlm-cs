@@ -11,6 +11,8 @@ import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError }
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
+import { questionAssignmentService } from "@/lib/experiments/question-assignment-service";
+import type { QuestionBackendType } from "@/lib/experiments/types";
 
 // Request validation schema for generating next question
 const generateQuestionSchema = z.object({
@@ -31,6 +33,126 @@ const anthropic = new Anthropic({
     "anthropic-beta": "prompt-caching-2024-07-31",
   },
 });
+
+/**
+ * Generate incremental question using selected backend
+ * Supports both TypeScript (existing) and LangGraph (Python) backends
+ */
+async function generateIncrementalQuestionWithBackend(
+  backend: QuestionBackendType,
+  params: {
+    candidateId: string;
+    seedId: string;
+    seniority: string;
+    previousQuestions: any[];
+    previousPerformance: any[];
+    timeRemaining: number;
+    assessmentType?: string;
+  }
+): Promise<any> {
+  if (backend === 'langgraph') {
+    // Call Python LangGraph API
+    const langgraphUrl = process.env.LANGGRAPH_API_URL || 'http://localhost:8001';
+    const startTime = Date.now();
+
+    logger.info('[Questions] Using LangGraph backend for incremental question generation', {
+      backend,
+      candidateId: params.candidateId,
+    });
+
+    try {
+      const response = await fetch(`${langgraphUrl}/api/question-generation/generate-next`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: params.candidateId, // Use candidateId as session identifier
+          candidate_id: params.candidateId,
+          seed_id: params.seedId,
+          seniority: params.seniority,
+          previous_questions: params.previousQuestions.map(q => ({
+            id: q.id,
+            title: q.title,
+            description: q.description,
+            difficulty: q.difficulty,
+            score: q.score,
+            started_at: q.startedAt?.toISOString(),
+            completed_at: q.completedAt?.toISOString(),
+            estimated_time: q.estimatedTime,
+          })),
+          previous_performance: params.previousPerformance.map(p => ({
+            question_id: p.questionId,
+            score: p.score,
+            time_spent: p.timeSpent,
+            tests_passed_ratio: p.testsPassedRatio,
+          })),
+          time_remaining: params.timeRemaining,
+          assessment_type: params.assessmentType,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      const latencyMs = Date.now() - startTime;
+
+      logger.info('[Questions] LangGraph incremental question generation complete', {
+        latencyMs,
+        title: result.question?.title,
+      });
+
+      // Map Python response to TypeScript format
+      return {
+        question: {
+          id: result.question?.id,
+          title: result.question?.title,
+          description: result.question?.description,
+          requirements: result.question?.requirements,
+          difficulty: result.question?.difficulty || 'MEDIUM',
+          estimatedTime: result.question?.estimated_time || 30,
+          starterCode: result.question?.starter_code,
+          difficultyAssessment: result.question?.difficulty_assessment,
+        },
+        abilityEstimate: result.irt_data?.ability_estimate ? {
+          theta: result.irt_data.ability_estimate.theta,
+          standardError: result.irt_data.ability_estimate.standard_error,
+          reliability: result.irt_data.ability_estimate.reliability,
+          questionsUsed: result.irt_data.ability_estimate.questions_used,
+        } : null,
+        difficultyTargeting: result.irt_data?.difficulty_targeting ? {
+          targetDifficulty: result.irt_data.difficulty_targeting.target_difficulty,
+          reasoning: result.irt_data.difficulty_targeting.reasoning,
+        } : null,
+        difficultyVisibility: result.irt_data?.difficulty_visibility || null,
+        shouldContinue: result.irt_data?.should_continue || { continue: true, reason: 'assessment_in_progress' },
+        strategy: result.strategy,
+      };
+    } catch (error) {
+      logger.error('[Questions] LangGraph backend failed, falling back to TypeScript', error as Error);
+      // Fallback to TypeScript generator
+      return incrementalQuestionGenerator.generateNextQuestionWithIRT({
+        candidateId: params.candidateId,
+        seedId: params.seedId,
+        seniority: params.seniority as any,
+        previousQuestions: params.previousQuestions,
+        previousPerformance: params.previousPerformance,
+        timeRemaining: params.timeRemaining,
+      });
+    }
+  }
+
+  // Default: Use TypeScript generator
+  return incrementalQuestionGenerator.generateNextQuestionWithIRT({
+    candidateId: params.candidateId,
+    seedId: params.seedId,
+    seniority: params.seniority as any,
+    previousQuestions: params.previousQuestions,
+    previousPerformance: params.previousPerformance,
+    timeRemaining: params.timeRemaining,
+  });
+}
 
 /**
  * GET /api/interview/[id]/questions
@@ -321,7 +443,26 @@ export const POST = withErrorHandling(async (
     let irtResult = null;
 
     if (seed && seed.seedType === 'incremental') {
-      logger.info(`[Questions POST] Using IRT-enhanced incremental generator`, { candidateId: id, seedId });
+      // Get question backend assignment for incremental generation
+      const sessionRecording = await prisma.sessionRecording.findUnique({
+        where: { candidateId: id },
+      });
+
+      const questionBackend = await questionAssignmentService.getBackendForSession({
+        sessionId: sessionRecording?.id || id,
+        candidateId: id,
+        organizationId: candidate.organizationId,
+        assessmentId: candidate.assessment.id,
+        seniority: candidate.assessment.seniority.toLowerCase(),
+        role: candidate.assessment.role,
+        assessmentType: candidate.assessment.assessmentType,
+      });
+
+      logger.info(`[Questions POST] Using IRT-enhanced incremental generator`, {
+        candidateId: id,
+        seedId,
+        questionBackend: questionBackend.backend,
+      });
 
       // Build performance metrics array
       const performanceMetrics = previousPerformance
@@ -354,14 +495,15 @@ export const POST = withErrorHandling(async (
         : 0;
       const timeRemaining = Math.max(0, (assessmentDuration - timeElapsed) * 60); // seconds
 
-      // Generate incremental question with full IRT analysis
-      irtResult = await incrementalQuestionGenerator.generateNextQuestionWithIRT({
+      // Generate incremental question with backend selection
+      irtResult = await generateIncrementalQuestionWithBackend(questionBackend.backend, {
         candidateId: id,
         seedId: seedId!,
-        seniority: candidate.assessment.seniority.toLowerCase() as any,
+        seniority: candidate.assessment.seniority.toLowerCase(),
         previousQuestions: candidate.generatedQuestions,
         previousPerformance: performanceMetrics,
         timeRemaining,
+        assessmentType: candidate.assessment.assessmentType,
       });
 
       newQuestion = irtResult.question;
@@ -369,10 +511,11 @@ export const POST = withErrorHandling(async (
       // Log IRT decision
       logger.info('[Questions POST] IRT decision', {
         candidateId: id,
-        abilityEstimate: irtResult.abilityEstimate.theta.toFixed(2),
-        targetDifficulty: irtResult.difficultyTargeting.targetDifficulty.toFixed(2),
-        shouldContinue: irtResult.shouldContinue.continue,
-        reason: irtResult.shouldContinue.reason,
+        backend: questionBackend.backend,
+        abilityEstimate: irtResult.abilityEstimate?.theta?.toFixed(2) ?? 'N/A',
+        targetDifficulty: irtResult.difficultyTargeting?.targetDifficulty?.toFixed(2) ?? 'N/A',
+        shouldContinue: irtResult.shouldContinue?.continue ?? true,
+        reason: irtResult.shouldContinue?.reason ?? 'unknown',
       });
     } else {
       // Use legacy LLM generation

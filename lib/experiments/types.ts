@@ -133,3 +133,31 @@ export interface AgentResponse {
   };
   metadata?: Record<string, unknown>;
 }
+
+// =====================================================
+// Question Generation Backend Types
+// =====================================================
+
+/**
+ * Question generation backend type
+ * - typescript: Uses DynamicQuestionGenerator (Anthropic SDK)
+ * - langgraph: Uses Python LangGraph API (for LangSmith tracing)
+ */
+export type QuestionBackendType = 'typescript' | 'langgraph';
+
+export interface QuestionAssignmentContext {
+  sessionId: string;
+  candidateId: string;
+  organizationId?: string;
+  assessmentId?: string;
+  seniority?: string;
+  role?: string;
+  assessmentType?: string;
+}
+
+export interface QuestionAssignmentResult {
+  backend: QuestionBackendType;
+  experimentId?: string;
+  variant?: 'control' | 'treatment';
+  source: 'session' | 'experiment' | 'config' | 'env' | 'default';
+}

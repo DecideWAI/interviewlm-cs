@@ -6,7 +6,10 @@ import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError }
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
+import { questionAssignmentService } from "@/lib/experiments/question-assignment-service";
+import type { QuestionBackendType } from "@/lib/experiments/types";
 import type { AssessmentType } from "@prisma/client";
+import type { GeneratedQuestionContent } from "@/lib/services/dynamic-question-generator";
 
 // GeneratedQuestionContent type is now imported from dynamic-question-generator service
 
@@ -53,6 +56,75 @@ func solution(input interface{}) interface{} {
   };
 
   return templates[language] || templates.javascript;
+}
+
+/**
+ * Generate question using selected backend
+ * Supports both TypeScript (existing) and LangGraph (Python) backends
+ */
+async function generateQuestionWithBackend(
+  backend: QuestionBackendType,
+  params: {
+    role: string;
+    seniority: string;
+    assessmentType: AssessmentType;
+    techStack: string[];
+    organizationId: string;
+  }
+): Promise<GeneratedQuestionContent> {
+  if (backend === 'langgraph') {
+    // Call Python LangGraph API
+    const langgraphUrl = process.env.LANGGRAPH_API_URL || 'http://localhost:8001';
+    const startTime = Date.now();
+
+    logger.info('[Initialize] Using LangGraph backend for question generation', {
+      backend,
+      url: langgraphUrl,
+    });
+
+    try {
+      const response = await fetch(`${langgraphUrl}/api/question-generation/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          role: params.role,
+          seniority: params.seniority,
+          assessment_type: params.assessmentType,
+          tech_stack: params.techStack,
+          organization_id: params.organizationId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
+      }
+
+      const result = await response.json();
+      const latencyMs = Date.now() - startTime;
+
+      logger.info('[Initialize] LangGraph question generation complete', {
+        latencyMs,
+        title: result.title,
+      });
+
+      // Map snake_case to camelCase for compatibility
+      return {
+        title: result.title,
+        description: result.description,
+        requirements: result.requirements,
+        estimatedTime: result.estimated_time,
+        starterCode: result.starter_code,
+      };
+    } catch (error) {
+      logger.error('[Initialize] LangGraph backend failed, falling back to TypeScript', error as Error);
+      // Fallback to TypeScript generator
+      return dynamicQuestionGenerator.generate(params);
+    }
+  }
+
+  // Default: Use TypeScript generator
+  return dynamicQuestionGenerator.generate(params);
 }
 
 /**
@@ -239,6 +311,26 @@ module.exports = longestPalindrome;`,
   let needsStarterFiles = false;
   let volumeId = candidate.volumeId;
 
+  // Determine question generation backend (only if we need to generate)
+  let questionBackendResult: { backend: QuestionBackendType; source: string } | null = null;
+  if (needsQuestion) {
+    questionBackendResult = await questionAssignmentService.getBackendForSession({
+      sessionId: sessionRecording.id,
+      candidateId,
+      organizationId: candidate.organizationId,
+      assessmentId: assessment.id,
+      seniority,
+      role,
+      assessmentType,
+    });
+
+    logger.info('[Initialize] Question generation backend selected', {
+      candidateId,
+      backend: questionBackendResult.backend,
+      source: questionBackendResult.source,
+    });
+  }
+
   // OPTIMIZATION: Run question generation and sandbox creation in parallel
   // These are independent operations that together take 47-56s + 13s sequentially
   // Running in parallel saves ~13s (the sandbox creation time)
@@ -248,20 +340,21 @@ module.exports = longestPalindrome;`,
       role,
       seniority,
       assessmentType,
+      questionBackend: questionBackendResult?.backend,
     });
 
     const [generatedContent, volume] = await Promise.all([
       // Question generation (~47-56s)
       logger.time(
-        'dynamicQuestionGenerator',
-        () => dynamicQuestionGenerator.generate({
+        'questionGeneration',
+        () => generateQuestionWithBackend(questionBackendResult!.backend, {
           role,
           seniority,
           assessmentType,
           techStack: assessment.techStack || [language],
           organizationId: candidate.organizationId,
         }),
-        { candidateId, role, seniority, assessmentType }
+        { candidateId, role, seniority, assessmentType, backend: questionBackendResult?.backend }
       ),
       // Sandbox creation (~13s)
       logger.time(
@@ -309,24 +402,25 @@ module.exports = longestPalindrome;`,
     });
   } else if (needsQuestion) {
     // Only need to generate question (sandbox already exists)
-    logger.info('[Initialize] Generating question with DynamicQuestionGenerator', {
+    logger.info('[Initialize] Generating question', {
       candidateId,
       role,
       seniority,
       assessmentType,
       techStack: assessment.techStack,
+      questionBackend: questionBackendResult?.backend,
     });
 
     const generatedContent = await logger.time(
-      'dynamicQuestionGenerator',
-      () => dynamicQuestionGenerator.generate({
+      'questionGeneration',
+      () => generateQuestionWithBackend(questionBackendResult!.backend, {
         role,
         seniority,
         assessmentType,
         techStack: assessment.techStack || [language],
         organizationId: candidate.organizationId,
       }),
-      { candidateId, role, seniority, assessmentType }
+      { candidateId, role, seniority, assessmentType, backend: questionBackendResult?.backend }
     );
 
     question = await prisma.generatedQuestion.create({
@@ -346,9 +440,10 @@ module.exports = longestPalindrome;`,
       },
     });
 
-    logger.info('[Initialize] Generated question with DynamicQuestionGenerator', {
+    logger.info('[Initialize] Generated question', {
       candidateId,
       questionId: question.id,
+      backend: questionBackendResult?.backend,
       questionTitle: generatedContent.title,
       assessmentType,
     });

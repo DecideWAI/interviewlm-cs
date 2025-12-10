@@ -313,3 +313,108 @@ class QuestionEvaluationAgentState(TypedDict):
 
     # Processing state
     evaluation_complete: bool
+
+
+# =============================================================================
+# Question Generation Types
+# =============================================================================
+
+class ComplexityProfileDict(TypedDict, total=False):
+    """Complexity profile for question generation."""
+    role: str
+    seniority: str
+    assessment_type: str
+    entity_count_min: int
+    entity_count_max: int
+    integration_points: int
+    business_logic: str  # simple, moderate, complex, strategic
+    ambiguity_level: str  # clear, some_decisions, open_ended, strategic
+    time_minutes: int
+    required_skills: list[str]
+    optional_skill_pool: list[str]
+    avoid_skills: list[str]
+    pick_optional_count: int
+    domain_pool: list[str]
+    constraints: dict  # { mustInclude, shouldConsider, bonus }
+
+
+class IRTAbilityEstimate(TypedDict):
+    """Estimated candidate ability from IRT."""
+    theta: float  # -3 to +3
+    standard_error: float
+    confidence_interval_lower: float
+    confidence_interval_upper: float
+    reliability: float  # 0-1
+    questions_used: int
+
+
+class IRTDifficultyTargeting(TypedDict):
+    """Optimal difficulty for next question."""
+    target_difficulty: float
+    target_range_min: float
+    target_range_max: float
+    reasoning: str
+    information_gain: float
+
+
+class GenerationStrategyDict(TypedDict):
+    """Strategy used to generate/select a question."""
+    type: Literal["generate", "reuse", "iterate"]
+    reason: str
+    source_question_id: str | None
+
+
+class GeneratedQuestionDict(TypedDict, total=False):
+    """Generated question content."""
+    title: str
+    description: str
+    requirements: list[str]
+    estimated_time: int  # minutes
+    starter_code: str
+    difficulty: str | None
+    difficulty_assessment: dict | None
+
+
+class QuestionGenerationAgentState(TypedDict, total=False):
+    """
+    State for the Question Generation Agent.
+
+    The Question Generation Agent creates unique coding questions
+    using complexity profiles, IRT-based difficulty targeting, and
+    smart reuse strategies.
+    """
+    # Message history (for LangGraph compatibility)
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+
+    # Request parameters
+    session_id: str
+    candidate_id: str
+    role: str
+    seniority: str
+    assessment_type: str  # REAL_WORLD or SYSTEM_DESIGN
+    tech_stack: list[str]
+    organization_id: str | None
+
+    # Incremental generation context
+    seed_id: str | None
+    previous_questions: list[dict] | None
+    previous_performance: list[dict] | None
+    time_remaining: int | None  # seconds
+    current_code_snapshot: str | None
+
+    # Loaded data
+    complexity_profile: ComplexityProfileDict | None
+    selected_domain: str | None
+    selected_skills: list[str] | None
+
+    # IRT data
+    irt_ability_estimate: IRTAbilityEstimate | None
+    irt_difficulty_targeting: IRTDifficultyTargeting | None
+
+    # Generation output
+    generated_question: GeneratedQuestionDict | None
+    generation_strategy: GenerationStrategyDict | None
+
+    # Processing state
+    generation_complete: bool
+    error: str | None
