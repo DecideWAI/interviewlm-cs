@@ -27,6 +27,36 @@ import { agentAssignmentService, type AgentBackendType } from "@/lib/experiments
 import { fileStreamManager } from "@/lib/services/file-streaming";
 import { sessionService } from "@/lib/services";
 
+// Stream checkpoint constants
+const CHECKPOINT_EVENT_TYPE = 'stream_checkpoint';
+const CHECKPOINT_INTERVAL_MS = 5000; // Save checkpoint every 5 seconds
+const MIN_CONTENT_FOR_CHECKPOINT = 50; // Minimum characters before checkpointing
+
+/**
+ * Stream checkpoint data structure
+ */
+interface StreamCheckpointData {
+  messageId: string;
+  userMessage: string;
+  partialResponse: string;
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    arguments: string;
+    result?: string;
+  }>;
+  status: 'streaming' | 'completed' | 'failed';
+  lastCheckpointAt: number;
+  questionId: string;
+}
+
+/**
+ * Generate a unique message ID for checkpoint tracking
+ */
+function generateMessageId(): string {
+  return `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
 // Request validation schema (passed as query params for GET/SSE)
 const chatRequestSchema = z.object({
   message: z.string().min(1, "Message is required"),
@@ -176,6 +206,92 @@ export async function POST(
           }
         };
 
+        // Stream checkpoint tracking for recovery
+        const messageId = generateMessageId();
+        let accumulatedResponse = '';
+        let accumulatedToolCalls: Array<{ id: string; name: string; arguments: string; result?: string }> = [];
+        let lastCheckpointTime = 0;
+        let checkpointId: string | null = null;
+
+        /**
+         * Save checkpoint to database for stream recovery
+         * Called periodically during streaming
+         */
+        const saveCheckpoint = async (status: 'streaming' | 'completed' | 'failed') => {
+          // Don't checkpoint if no content yet
+          if (accumulatedResponse.length < MIN_CONTENT_FOR_CHECKPOINT && status === 'streaming') {
+            return;
+          }
+
+          try {
+            const checkpointData: StreamCheckpointData = {
+              messageId,
+              userMessage: message,
+              partialResponse: accumulatedResponse,
+              toolCalls: accumulatedToolCalls,
+              status,
+              lastCheckpointAt: Date.now(),
+              questionId: currentQuestion?.id || '',
+            };
+
+            if (checkpointId) {
+              // Update existing checkpoint
+              await prisma.sessionEvent.update({
+                where: { id: checkpointId },
+                data: {
+                  timestamp: new Date(),
+                  data: checkpointData as any,
+                },
+              });
+            } else {
+              // Create new checkpoint
+              const checkpoint = await prisma.sessionEvent.create({
+                data: {
+                  sessionId: sessionRecording!.id,
+                  type: CHECKPOINT_EVENT_TYPE,
+                  data: checkpointData as any,
+                  checkpoint: true,
+                },
+              });
+              checkpointId = checkpoint.id;
+            }
+
+            lastCheckpointTime = Date.now();
+            console.log(`[AgentStream] Checkpoint saved: ${status}, ${accumulatedResponse.length} chars`);
+          } catch (error) {
+            console.error('[AgentStream] Failed to save checkpoint:', error);
+          }
+        };
+
+        /**
+         * Maybe save checkpoint if enough time has passed
+         */
+        const maybeCheckpoint = async () => {
+          const now = Date.now();
+          if (now - lastCheckpointTime >= CHECKPOINT_INTERVAL_MS) {
+            await saveCheckpoint('streaming');
+          }
+        };
+
+        /**
+         * Clear checkpoint after successful completion
+         */
+        const clearCheckpoint = async () => {
+          if (checkpointId) {
+            try {
+              await prisma.sessionEvent.delete({
+                where: { id: checkpointId },
+              });
+              console.log('[AgentStream] Checkpoint cleared');
+            } catch (error) {
+              console.error('[AgentStream] Failed to clear checkpoint:', error);
+            }
+          }
+        };
+
+        // Send messageId to client for queue tracking
+        sendEvent("stream_start", { messageId });
+
         try {
           // Wrap the entire agent interaction with LangSmith trace
           // This groups all LLM calls and tool executions under a single "user message" run
@@ -209,12 +325,25 @@ export async function POST(
                     content: i.content,
                   })),
                   onTextDelta: (delta: string) => {
+                    accumulatedResponse += delta;
                     sendEvent("content", { delta });
+                    // Trigger checkpoint check (fire-and-forget to not block streaming)
+                    maybeCheckpoint().catch(() => {});
                   },
                   onToolStart: (toolName: string, toolId: string, input: unknown) => {
+                    accumulatedToolCalls.push({
+                      id: toolId,
+                      name: toolName,
+                      arguments: typeof input === 'string' ? input : JSON.stringify(input),
+                    });
                     sendEvent("tool_use_start", { toolName, toolId, input });
                   },
                   onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
+                    // Update tool call with result
+                    const toolCall = accumulatedToolCalls.find(tc => tc.id === toolId);
+                    if (toolCall) {
+                      toolCall.result = typeof result === 'string' ? result : JSON.stringify(result);
+                    }
                     sendEvent("tool_result", { toolName, toolId, output: result, isError });
                   },
                 });
@@ -243,12 +372,25 @@ export async function POST(
               // Send message with streaming callbacks
               return agent.sendMessageStreaming(enhancedMessage, {
                 onTextDelta: (delta: string) => {
+                  accumulatedResponse += delta;
                   sendEvent("content", { delta });
+                  // Trigger checkpoint check (fire-and-forget to not block streaming)
+                  maybeCheckpoint().catch(() => {});
                 },
                 onToolStart: (toolName: string, toolId: string, input: unknown) => {
+                  accumulatedToolCalls.push({
+                    id: toolId,
+                    name: toolName,
+                    arguments: typeof input === 'string' ? input : JSON.stringify(input),
+                  });
                   sendEvent("tool_use_start", { toolName, toolId, input });
                 },
                 onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
+                  // Update tool call with result
+                  const toolCall = accumulatedToolCalls.find(tc => tc.id === toolId);
+                  if (toolCall) {
+                    toolCall.result = typeof result === 'string' ? result : JSON.stringify(result);
+                  }
                   sendEvent("tool_result", { toolName, toolId, output: result, isError });
                 },
               });
@@ -316,13 +458,20 @@ export async function POST(
               agentBackend: agentAssignment.backend,
               agentSource: agentAssignment.source,
               experimentId: agentAssignment.experimentId,
+              messageId, // Include for client-side queue tracking
             },
           });
+
+          // Clear checkpoint on successful completion
+          await clearCheckpoint();
 
           isStreamClosed = true;
           controller.close();
         } catch (error: unknown) {
           console.error("[AgentStream] Error:", error);
+
+          // Save checkpoint with failed status for potential recovery
+          await saveCheckpoint('failed').catch(() => {});
 
           const isOverloaded =
             (error as { status?: number })?.status === 529 ||
@@ -334,6 +483,7 @@ export async function POST(
               : "Failed to process message",
             message: error instanceof Error ? error.message : "Unknown error",
             retryable: isOverloaded,
+            messageId, // Include for client-side queue tracking
           });
 
           isStreamClosed = true;

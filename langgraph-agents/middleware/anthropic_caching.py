@@ -123,48 +123,46 @@ async def anthropic_caching_middleware(
         logger.info(f"[AnthropicCaching] ✓ Tools: added cache_control to {len(tools_with_cache)} tools")
 
     # =========================================================================
-    # 3. Add cache_control to messages (cache first N messages)
+    # 3. Add cache_control to messages - cache ALL messages (entire history)
     # =========================================================================
-    message_cache_count = getattr(settings, 'message_cache_count', 2)
+    # Place breakpoint on second-to-last message to cache everything except new user input
+    # This ensures growing conversations remain cached: [msg0, msg1, ..., msgN-2(cached), msgN-1(new)]
+    if request.messages and len(request.messages) > 1:
+        # Cache up to second-to-last message (leaves only the latest user message uncached)
+        cache_up_to_idx = len(request.messages) - 2
 
-    if request.messages and len(request.messages) > 0 and message_cache_count > 0:
-        # Cache up to index (N-1) to cache first N messages
-        # Anthropic caches everything UP TO AND INCLUDING the message with cache_control
-        cache_up_to_idx = min(message_cache_count - 1, len(request.messages) - 1)
+        message = request.messages[cache_up_to_idx]
 
-        if cache_up_to_idx >= 0:
-            message = request.messages[cache_up_to_idx]
+        # Add cache_control to this message's content
+        if isinstance(message.content, str):
+            # String content - wrap in array with cache_control
+            message.content = [
+                {
+                    "type": "text",
+                    "text": message.content,
+                    "cache_control": cache_control,
+                }
+            ]
+            logger.info(
+                f"[AnthropicCaching] ✓ Messages: caching ALL {cache_up_to_idx + 1} messages "
+                f"(breakpoint at message {cache_up_to_idx}/{len(request.messages)-1})"
+            )
 
-            # Add cache_control to this message's content
-            if isinstance(message.content, str):
-                # String content - wrap in array with cache_control
-                message.content = [
-                    {
-                        "type": "text",
-                        "text": message.content,
-                        "cache_control": cache_control,
-                    }
-                ]
-                logger.info(
-                    f"[AnthropicCaching] ✓ Messages: added cache_control to message "
-                    f"{cache_up_to_idx}/{len(request.messages)-1} (caching {cache_up_to_idx + 1} messages)"
-                )
-
-            elif isinstance(message.content, list) and len(message.content) > 0:
-                # List content - add cache_control to last block
-                last_block = message.content[-1]
-                if isinstance(last_block, dict):
-                    last_block["cache_control"] = cache_control
-                elif isinstance(last_block, str):
-                    message.content[-1] = {
-                        "type": "text",
-                        "text": last_block,
-                        "cache_control": cache_control,
-                    }
-                logger.info(
-                    f"[AnthropicCaching] ✓ Messages: added cache_control to message "
-                    f"{cache_up_to_idx}/{len(request.messages)-1}"
-                )
+        elif isinstance(message.content, list) and len(message.content) > 0:
+            # List content - add cache_control to last block
+            last_block = message.content[-1]
+            if isinstance(last_block, dict):
+                last_block["cache_control"] = cache_control
+            elif isinstance(last_block, str):
+                message.content[-1] = {
+                    "type": "text",
+                    "text": last_block,
+                    "cache_control": cache_control,
+                }
+            logger.info(
+                f"[AnthropicCaching] ✓ Messages: caching ALL {cache_up_to_idx + 1} messages "
+                f"(breakpoint at message {cache_up_to_idx}/{len(request.messages)-1})"
+            )
 
     # Pass to handler
     return await handler(request)

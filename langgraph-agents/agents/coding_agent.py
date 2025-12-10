@@ -22,6 +22,7 @@ from typing_extensions import TypedDict
 
 from tools.coding_tools import CODING_TOOLS
 from config import settings
+from middleware.summarization import summarization_middleware
 
 
 # =============================================================================
@@ -337,27 +338,27 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
         if isinstance(last_tool, dict):
             last_tool["cache_control"] = cache_control
 
-    # 3. Add cache_control to messages (cache first N messages)
-    message_cache_count = getattr(settings, 'message_cache_count', 2)
+    # 3. Add cache_control to messages - cache ALL messages (entire conversation history)
+    # Place breakpoint on second-to-last message to cache everything except the new user input
+    # This ensures growing conversations remain cached: [msg0, msg1, ..., msgN-2(cached), msgN-1(new)]
+    if request.messages and len(request.messages) > 1:
+        # Cache up to second-to-last message (leaves only the latest user message uncached)
+        cache_idx = len(request.messages) - 2
 
-    if request.messages and len(request.messages) > 0 and message_cache_count > 0:
-        cache_idx = min(message_cache_count - 1, len(request.messages) - 1)
-
-        if cache_idx >= 0:
-            message = request.messages[cache_idx]
-            if hasattr(message, 'content'):
-                if isinstance(message.content, str):
-                    message.content = [
-                        {
-                            "type": "text",
-                            "text": message.content,
-                            "cache_control": cache_control,
-                        }
-                    ]
-                elif isinstance(message.content, list) and len(message.content) > 0:
-                    last_block = message.content[-1]
-                    if isinstance(last_block, dict):
-                        last_block["cache_control"] = cache_control
+        message = request.messages[cache_idx]
+        if hasattr(message, 'content'):
+            if isinstance(message.content, str):
+                message.content = [
+                    {
+                        "type": "text",
+                        "text": message.content,
+                        "cache_control": cache_control,
+                    }
+                ]
+            elif isinstance(message.content, list) and len(message.content) > 0:
+                last_block = message.content[-1]
+                if isinstance(last_block, dict):
+                    last_block["cache_control"] = cache_control
 
     return await handler(request)
 
@@ -385,9 +386,11 @@ def create_coding_agent_graph(
     model = _create_anthropic_model(settings.coding_agent_model)
 
     # Build middleware list
+    # Order matters: summarization -> model_selection -> caching (caching MUST be last)
     middleware = [
-        model_selection_middleware,
-        anthropic_caching_middleware,  # MUST run LAST
+        summarization_middleware,      # Summarize long conversations first
+        model_selection_middleware,    # Select model and convert tools
+        anthropic_caching_middleware,  # Add cache_control (MUST run LAST)
     ]
 
     # Agent configuration

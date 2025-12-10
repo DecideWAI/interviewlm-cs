@@ -1,11 +1,16 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { Send, Bot, User, Copy, Check, AlertCircle, Wifi, WifiOff, Wrench, CheckCircle2, XCircle } from "lucide-react";
+import { Send, Bot, User, Copy, Check, AlertCircle, Wifi, WifiOff, Wrench, CheckCircle2, XCircle, RefreshCw, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
-import { fetchWithRetry } from "@/lib/chat-resilience";
+import {
+  useChatMessageQueue,
+  type RecoveryState,
+  initialRecoveryState,
+} from "@/hooks/useChatMessageQueue";
+import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 
 export interface Message {
   id: string;
@@ -28,6 +33,7 @@ export interface AIChatHandle {
 
 interface AIChatProps {
   sessionId: string;
+  questionId?: string;
   className?: string;
   onFileModified?: (path: string) => void;
   onTestResultsUpdated?: (results: any) => void;
@@ -39,6 +45,7 @@ interface AIChatProps {
 
 export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
   sessionId,
+  questionId,
   className,
   onFileModified,
   onTestResultsUpdated,
@@ -60,6 +67,23 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationHistory = useRef<any[]>([]);
   const messageIdCounter = useRef(0);
+
+  // Recovery state
+  const [recoveryState, setRecoveryState] = useState<RecoveryState>(initialRecoveryState);
+  const currentMessageIdRef = useRef<string | null>(null);
+
+  // Message queue for recovery
+  const {
+    enqueue,
+    markSending,
+    markComplete,
+    markFailed,
+    getPendingMessages,
+    hasQueuedMessages,
+  } = useChatMessageQueue({ candidateId: sessionId });
+
+  // Online status for reconnection handling
+  const { isOnline, wasOffline, resetWasOffline } = useOnlineStatus();
 
   const generateMessageId = (prefix: string) => {
     messageIdCounter.current += 1;
@@ -171,31 +195,100 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     loadChatHistory();
   }, [sessionId]);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  // Check for active checkpoint on mount (recovery scenario)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const checkRecovery = async () => {
+      try {
+        const response = await fetch(`/api/interview/${sessionId}/chat/checkpoint`);
+        if (!response.ok) return;
 
-    const userMessage: Message = {
-      id: generateMessageId("user"),
-      role: "user",
-      content: input.trim(),
-      timestamp: new Date(),
+        const result = await response.json();
+        const checkpoint = result.data?.checkpoint || result.checkpoint;
+
+        if (checkpoint?.status === 'streaming') {
+          console.log('[AIChat] Found active checkpoint, initiating recovery');
+          setRecoveryState({
+            isRecovering: true,
+            partialResponse: checkpoint.partialResponse,
+            userMessage: checkpoint.userMessage,
+            checkpoint,
+          });
+
+          // Show partial response while recovering
+          if (checkpoint.partialResponse) {
+            setCurrentStreamingMessage(checkpoint.partialResponse);
+          }
+
+          // Auto-retry after a brief delay
+          setTimeout(() => {
+            sendMessageInternal(checkpoint.userMessage, true);
+          }, 1500);
+        }
+      } catch (err) {
+        console.error('[AIChat] Recovery check failed:', err);
+      }
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    checkRecovery();
+  }, [sessionId]);
+
+  // Handle online/offline transitions
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (isOnline && wasOffline) {
+      console.log('[AIChat] Back online, checking for pending messages');
+      resetWasOffline();
+
+      // Process any queued messages
+      const pendingMessages = getPendingMessages();
+      if (pendingMessages.length > 0) {
+        console.log(`[AIChat] Retrying ${pendingMessages.length} pending messages`);
+        const nextMessage = pendingMessages[0];
+        sendMessageInternal(nextMessage.message, false, nextMessage.id);
+      }
+    }
+  }, [isOnline, wasOffline, resetWasOffline, getPendingMessages]);
+
+  /**
+   * Internal message sending function used by both normal sends and recovery
+   */
+  const sendMessageInternal = async (
+    messageContent: string,
+    isRecovery: boolean = false,
+    queuedMessageId?: string
+  ) => {
+    if (!messageContent.trim() || isLoading) return;
+
+    // Create or use existing queued message ID
+    const msgId = queuedMessageId || enqueue(messageContent, sessionId, questionId || '');
+    currentMessageIdRef.current = msgId;
+    markSending(msgId);
+
+    // Add user message to UI (skip if recovering - message already shown)
+    if (!isRecovery) {
+      const userMessage: Message = {
+        id: generateMessageId("user"),
+        role: "user",
+        content: messageContent.trim(),
+        timestamp: new Date(),
+      };
+      setMessages((prev) => [...prev, userMessage]);
+      conversationHistory.current.push({
+        role: "user",
+        content: userMessage.content,
+      });
+    }
+
     setInput("");
     setIsLoading(true);
     setError(null);
-    setCurrentStreamingMessage("");
+    if (!isRecovery) {
+      setCurrentStreamingMessage("");
+    }
     setCurrentToolUse(null);
 
-    // Add to conversation history
-    conversationHistory.current.push({
-      role: "user",
-      content: userMessage.content,
-    });
-
     try {
-      // Use streaming POST endpoint for real-time updates
       const response = await fetch(`/api/interview/${sessionId}/chat/agent/stream`, {
         method: "POST",
         headers: {
@@ -203,7 +296,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
           "Accept": "text/event-stream",
         },
         body: JSON.stringify({
-          message: userMessage.content,
+          message: messageContent,
         }),
       });
 
@@ -216,11 +309,17 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       const decoder = new TextDecoder();
 
       let assistantMessageId = generateMessageId("assistant");
-      let fullHistoryContent = ""; // Accumulates ALL content for conversation history
-      let pendingContent = ""; // Content pending to be shown (reset when flushed to messages)
+      let fullHistoryContent = "";
+      let pendingContent = isRecovery ? currentStreamingMessage : "";
       let tokenUsage: { inputTokens: number; outputTokens: number } | undefined;
-      let buffer = ""; // Buffer for incomplete SSE messages
-      let currentEventType = ""; // Track event type across chunks - MUST be outside while loop
+      let buffer = "";
+      let currentEventType = "";
+      let serverMessageId: string | null = null;
+
+      // Clear recovery state once stream starts
+      if (isRecovery) {
+        setRecoveryState(initialRecoveryState);
+      }
 
       while (true) {
         const { done, value } = await reader.read();
@@ -229,7 +328,6 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");
 
-        // Keep the last line in buffer if it doesn't end with newline (incomplete)
         buffer = lines.pop() || "";
         for (const line of lines) {
           if (line.startsWith("event:")) {
@@ -239,6 +337,12 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
               const data = JSON.parse(line.substring(5).trim());
 
               switch (currentEventType) {
+                case "stream_start":
+                  // Track server-assigned message ID for queue management
+                  serverMessageId = data.messageId;
+                  console.log(`[AIChat] Stream started with messageId: ${serverMessageId}`);
+                  break;
+
                 case "content":
                   fullHistoryContent += data.delta;
                   pendingContent += data.delta;
@@ -246,7 +350,6 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   break;
 
                 case "tool_use_start":
-                  // If there's accumulated text content, add it as a message BEFORE the tool call
                   if (pendingContent.trim()) {
                     const preToolMessage: Message = {
                       id: generateMessageId("assistant_pre_tool"),
@@ -255,12 +358,10 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                       timestamp: new Date(),
                     };
                     setMessages((prev) => [...prev, preToolMessage]);
-                    // Reset pending content and streaming display (history is preserved)
                     pendingContent = "";
                     setCurrentStreamingMessage("");
                   }
 
-                  // Show tool as running (only show the indicator, not the raw input)
                   setCurrentToolUse({
                     toolName: data.toolName,
                     toolId: data.toolId,
@@ -283,7 +384,6 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   setMessages((prev) => [...prev, toolResultMessage]);
 
                   // Handle side effects
-                  // Support both TypeScript (Write/Edit) and Python (write_file/edit_file) tool names
                   const toolNameLower = data.toolName?.toLowerCase() || "";
                   if ((toolNameLower === "write" || toolNameLower === "write_file" ||
                        toolNameLower === "edit" || toolNameLower === "edit_file") && !data.isError) {
@@ -306,7 +406,6 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   break;
 
                 case "iteration":
-                  // Optional: could show "Thinking... (iteration X)" for complex requests
                   console.log(`[AIChat] Agent iteration ${data.iteration}`);
                   break;
 
@@ -318,7 +417,6 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   break;
 
                 case "done":
-                  // Only add a message if there's remaining content that wasn't flushed before tools
                   if (pendingContent.trim()) {
                     const assistantMessage: Message = {
                       id: assistantMessageId,
@@ -333,7 +431,14 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   setIsLoading(false);
                   setIsConnected(true);
 
-                  // Add complete response to conversation history (includes ALL content from this turn)
+                  // Mark message as complete in queue
+                  markComplete(msgId);
+                  currentMessageIdRef.current = null;
+
+                  // Clear checkpoint on server
+                  fetch(`/api/interview/${sessionId}/chat/checkpoint`, { method: 'DELETE' })
+                    .catch(err => console.error('[AIChat] Failed to clear checkpoint:', err));
+
                   if (fullHistoryContent) {
                     conversationHistory.current.push({
                       role: "assistant",
@@ -348,14 +453,17 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   setIsConnected(false);
                   setCurrentStreamingMessage("");
 
-                  // If retryable, show a more helpful message
+                  // Mark message as failed for potential retry
+                  markFailed(msgId);
+                  currentMessageIdRef.current = null;
+
                   if (data.retryable) {
                     setIsReconnecting(true);
                     setTimeout(() => setIsReconnecting(false), 3000);
                   }
                   break;
               }
-              currentEventType = ""; // Reset after processing
+              currentEventType = "";
             } catch (parseErr) {
               console.error("[AIChat] Failed to parse SSE data:", parseErr);
             }
@@ -365,7 +473,10 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     } catch (err: any) {
       console.error("Failed to send message:", err);
 
-      // Check if it's an overload error
+      // Mark as failed for retry
+      markFailed(msgId);
+      currentMessageIdRef.current = null;
+
       const errorMessage = err?.message || String(err);
       const isOverloaded = errorMessage.includes('overloaded') ||
         errorMessage.includes('Overloaded') ||
@@ -380,6 +491,20 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       setIsLoading(false);
       setIsConnected(false);
       setCurrentStreamingMessage("");
+    }
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+    sendMessageInternal(input.trim());
+  };
+
+  // Retry a failed message from the queue
+  const handleRetry = () => {
+    const pendingMessages = getPendingMessages();
+    if (pendingMessages.length > 0) {
+      const nextMessage = pendingMessages[0];
+      sendMessageInternal(nextMessage.message, false, nextMessage.id);
     }
   };
 
@@ -431,6 +556,30 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
           <div className="mt-2 flex items-center gap-2 text-xs text-error bg-error/10 p-2 rounded">
             <AlertCircle className="h-3 w-3 flex-shrink-0" />
             <span>{error}</span>
+            {hasQueuedMessages() && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRetry}
+                disabled={isLoading}
+                className="ml-auto text-xs h-6 px-2"
+              >
+                <RefreshCw className="h-3 w-3 mr-1" />
+                Retry
+              </Button>
+            )}
+          </div>
+        )}
+        {recoveryState.isRecovering && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-info bg-info/10 p-2 rounded">
+            <Loader2 className="h-3 w-3 flex-shrink-0 animate-spin" />
+            <span>Resuming interrupted conversation...</span>
+          </div>
+        )}
+        {!isOnline && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-warning bg-warning/10 p-2 rounded">
+            <WifiOff className="h-3 w-3 flex-shrink-0" />
+            <span>You're offline. Messages will be queued and sent when you reconnect.</span>
           </div>
         )}
       </div>

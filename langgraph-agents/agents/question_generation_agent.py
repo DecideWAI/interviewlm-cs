@@ -75,6 +75,53 @@ def _create_model(use_fast: bool = True) -> ChatAnthropic:
 
 
 # =============================================================================
+# System Prompts for Caching
+# =============================================================================
+
+QUESTION_GENERATION_SYSTEM_PROMPT = """You are a senior technical interviewer creating unique coding questions.
+
+Your expertise includes:
+- Data structures: arrays, linked lists, trees, graphs, hash maps, heaps, tries
+- Algorithms: sorting, searching, dynamic programming, recursion, BFS/DFS, backtracking
+- System design: APIs, databases, caching, distributed systems, microservices
+- Best practices: clean code, testing, error handling, performance optimization
+
+When creating questions, you must:
+1. Test real-world problem-solving skills relevant to the role and seniority
+2. Provide clear requirements with specific expected outcomes
+3. Scope appropriately for the given time limit
+4. Include meaningful test cases that cover edge cases
+5. Allow for creative solutions while having a clear correct approach
+
+Always respond with valid JSON containing: title, description, requirements, estimatedTime, starterCode, difficulty.
+Do not include any text outside the JSON object."""
+
+
+def _create_cached_messages(prompt: str) -> list:
+    """Create messages with cache_control for Anthropic prompt caching.
+
+    Uses a system message with cache_control to cache the static system prompt,
+    then adds the dynamic user prompt without caching.
+    """
+    if settings.enable_prompt_caching:
+        return [
+            SystemMessage(content=[
+                {
+                    "type": "text",
+                    "text": QUESTION_GENERATION_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"}
+                }
+            ]),
+            HumanMessage(content=prompt)
+        ]
+    else:
+        return [
+            SystemMessage(content=QUESTION_GENERATION_SYSTEM_PROMPT),
+            HumanMessage(content=prompt)
+        ]
+
+
+# =============================================================================
 # Question Generation Agent Class
 # =============================================================================
 
@@ -184,9 +231,10 @@ class QuestionGenerationAgent:
             time_minutes=time_minutes,
         )
 
-        # 5. Call LLM (Haiku for speed)
+        # 5. Call LLM (Haiku for speed) with cached system prompt
         model = _create_model(use_fast=True)
-        response = await model.ainvoke([HumanMessage(content=prompt)])
+        messages = _create_cached_messages(prompt)
+        response = await model.ainvoke(messages)
 
         # 6. Parse JSON response
         content = response.content if isinstance(response.content, str) else str(response.content)
@@ -288,9 +336,10 @@ class QuestionGenerationAgent:
             question_number=question_number,
         )
 
-        # 5. Call LLM (Sonnet for better reasoning on adaptive generation)
+        # 5. Call LLM (Sonnet for better reasoning) with cached system prompt
         model = _create_model(use_fast=False)
-        response = await model.ainvoke([HumanMessage(content=prompt)])
+        messages = _create_cached_messages(prompt)
+        response = await model.ainvoke(messages)
 
         # 6. Parse response
         content = response.content if isinstance(response.content, str) else str(response.content)
