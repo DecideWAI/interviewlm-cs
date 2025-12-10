@@ -196,7 +196,7 @@ class SmartQuestionService:
         # Call LLM
         model = ChatAnthropic(
             model_name=settings.question_generation_model_fast,
-            max_tokens=2048,
+            max_tokens=32000,
             temperature=0.8,  # Higher temperature for variation
             api_key=settings.anthropic_api_key,
         )

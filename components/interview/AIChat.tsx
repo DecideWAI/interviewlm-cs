@@ -260,23 +260,12 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                     setCurrentStreamingMessage("");
                   }
 
-                  // Show tool as running
+                  // Show tool as running (only show the indicator, not the raw input)
                   setCurrentToolUse({
                     toolName: data.toolName,
                     toolId: data.toolId,
                     status: "running",
                   });
-                  // Add tool use message to show input
-                  const toolUseMsg: Message = {
-                    id: generateMessageId(`tool_use_${data.toolId || "unknown"}`),
-                    role: "system",
-                    content: formatToolUse(data.toolName, data.input),
-                    timestamp: new Date(),
-                    type: "tool_use",
-                    toolName: data.toolName,
-                    toolInput: data.input,
-                  };
-                  setMessages((prev) => [...prev, toolUseMsg]);
                   break;
 
                 case "tool_result":
@@ -294,7 +283,10 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   setMessages((prev) => [...prev, toolResultMessage]);
 
                   // Handle side effects
-                  if ((data.toolName === "Write" || data.toolName === "Edit") && !data.isError) {
+                  // Support both TypeScript (Write/Edit) and Python (write_file/edit_file) tool names
+                  const toolNameLower = data.toolName?.toLowerCase() || "";
+                  if ((toolNameLower === "write" || toolNameLower === "write_file" ||
+                       toolNameLower === "edit" || toolNameLower === "edit_file") && !data.isError) {
                     const filePath = data.output?.path;
                     if (filePath) {
                       onFileModified?.(filePath);
@@ -464,12 +456,10 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
           <>
             {messages.map((message) => (
               <div key={message.id}>
-                {message.type === "tool_use" || message.type === "tool_result" || message.type === "tool_error" ? (
+                {/* Skip tool_use messages - only show results and errors */}
+                {message.type === "tool_use" ? null : message.type === "tool_result" || message.type === "tool_error" ? (
                   <div className="flex items-start gap-2 my-2">
                     <div className="flex-shrink-0 mt-1">
-                      {message.type === "tool_use" && (
-                        <Wrench className="h-4 w-4 text-primary animate-pulse" />
-                      )}
                       {message.type === "tool_result" && (
                         <CheckCircle2 className="h-4 w-4 text-success" />
                       )}
@@ -640,14 +630,6 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
 });
 
 /**
- * Format tool use for display
- */
-function formatToolUse(toolName: string, input: any): string {
-  const inputStr = JSON.stringify(input, null, 2);
-  return `🔧 ${toolName}(${inputStr})`;
-}
-
-/**
  * Format tool result for display
  */
 function formatToolResult(toolName: string, output: any): string {
@@ -662,9 +644,11 @@ function formatToolResult(toolName: string, output: any): string {
 
     case "Write":
     case "write_file":
-      return `✅ Wrote ${output.path} (${output.bytesWritten || 0} bytes)`;
+      // Support both camelCase (TypeScript) and snake_case (Python) formats
+      return `✅ Wrote ${output.path} (${output.bytesWritten || output.bytes_written || 0} bytes)`;
 
     case "Edit":
+    case "edit_file":
       return `✅ Edited ${output.path} (${output.replacements || 1} replacement${output.replacements !== 1 ? 's' : ''})`;
 
     case "run_tests":
@@ -725,7 +709,8 @@ function formatToolResultFromHistory(
       return `✅ Wrote ${path} (${bytes} bytes)`;
     }
 
-    case "Edit": {
+    case "Edit":
+    case "edit_file": {
       const path = out?.path || input?.file_path || input?.path || '?';
       const replacements = out?.replacements || 1;
       return `✅ Edited ${path} (${replacements} replacement${replacements !== 1 ? 's' : ''})`;

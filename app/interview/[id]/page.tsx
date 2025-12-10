@@ -511,8 +511,15 @@ export default function InterviewPage() {
       console.log('[FileUpdates] SSE connected');
     });
 
-    eventSource.onerror = () => {
-      console.error('[FileUpdates] SSE error');
+    eventSource.onerror = (error) => {
+      // EventSource errors are common and often just mean the connection was closed
+      // readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
+      const state = eventSource.readyState;
+      if (state === EventSource.CLOSED) {
+        console.log('[FileUpdates] SSE connection closed');
+      } else {
+        console.warn('[FileUpdates] SSE error (readyState:', state, ')');
+      }
     };
 
     return () => {

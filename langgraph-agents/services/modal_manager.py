@@ -457,14 +457,14 @@ class SandboxManager:
         """
         Single reconnection attempt with timeout.
 
-        Returns sandbox if successful, None if sandbox is terminated.
+        Returns sandbox if successful, None if sandbox is terminated/inaccessible.
         Raises TimeoutError if attempt times out.
         """
         start_time = time.time()
 
         def do_reconnect():
             sandbox = modal.Sandbox.from_id(sandbox_id)
-            # Verify sandbox is alive
+            # Verify sandbox is alive by running a simple command
             proc = run_in_sandbox(sandbox, "echo", "alive")
             if proc.returncode == 0:
                 return sandbox
@@ -478,9 +478,13 @@ class SandboxManager:
         except TimeoutError:
             raise
         except Exception as e:
-            error_msg = str(e)
-            if 'terminated' in error_msg or 'finished' in error_msg:
-                print(f"[SandboxManager] Sandbox {sandbox_id} is terminated")
+            error_msg = str(e).lower()
+            # Handle all cases where sandbox is no longer accessible:
+            # - terminated/finished: sandbox lifecycle ended
+            # - permission_denied: sandbox created by different app/credentials or expired
+            # - not found: sandbox ID doesn't exist
+            if any(x in error_msg for x in ['terminated', 'finished', 'permission_denied', 'permission denied', 'not found']):
+                print(f"[SandboxManager] Sandbox {sandbox_id} is inaccessible: {e}")
                 return None
             raise
 
@@ -507,8 +511,8 @@ class SandboxManager:
                         print(f"[SandboxManager] Reconnect succeeded on attempt {attempt_num} (sandbox was cold)")
                     return sandbox
 
-                # _attempt_reconnect returned None (sandbox terminated)
-                print(f"[SandboxManager] Sandbox {sandbox_id} is terminated, no retry needed")
+                # _attempt_reconnect returned None (sandbox inaccessible/terminated)
+                print(f"[SandboxManager] Sandbox {sandbox_id} is inaccessible, no retry needed")
                 return None
 
             except TimeoutError as e:
@@ -537,13 +541,27 @@ class SandboxManager:
     @classmethod
     def _create_new_sandbox(cls, session_id: str, language: Optional[str] = None) -> Any:
         """Create a new sandbox for a session."""
+        import os
+
+        # CRITICAL: Verify Modal credentials are available
+        # This prevents cryptic "PERMISSION_DENIED" errors later
+        if not os.getenv("MODAL_TOKEN_ID") or not os.getenv("MODAL_TOKEN_SECRET"):
+            raise ValueError(
+                "Modal credentials not found in environment. "
+                "Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET environment variables. "
+                "Check that load_dotenv() is loading the .env file."
+            )
+
         # Get image based on language
         if language:
             image = cls._get_image_for_language(language)
         else:
             image = cls._get_default_image()
 
+        # Create sandbox with keep-alive command (matching reference implementation)
+        # The "tail -f /dev/null" keeps the sandbox alive without consuming resources
         sandbox = modal.Sandbox.create(
+            "tail", "-f", "/dev/null",  # Keep-alive command
             app=cls._get_app(),
             image=image,
             timeout=SANDBOX_TIMEOUT_S,

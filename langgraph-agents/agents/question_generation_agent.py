@@ -65,7 +65,7 @@ def _create_model(use_fast: bool = True) -> ChatAnthropic:
 
     return ChatAnthropic(
         model_name=model_name,
-        max_tokens=2048 if use_fast else 4096,
+        max_tokens=32000,
         temperature=0.7,  # Some creativity for unique questions
         betas=beta_versions,
         streaming=False,  # Question generation doesn't need streaming

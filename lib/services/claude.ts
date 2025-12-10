@@ -17,7 +17,7 @@ import { addMessageCacheBreakpoints } from "@/lib/utils/agent-utils";
 // Configuration
 const CLAUDE_MODEL = "claude-sonnet-4-5-20250929";
 const HAIKU_MODEL = "claude-haiku-4-5-20251001";
-const MAX_TOKENS = 4096;
+const MAX_TOKENS = 32000;
 const TEMPERATURE = 0.7;
 
 // Validation schemas
@@ -359,7 +359,7 @@ export async function generateQuestionFast(prompt: string): Promise<{
 
     const response = await client.messages.create({
       model: HAIKU_MODEL,
-      max_tokens: 2048,
+      max_tokens: 32000,
       temperature: TEMPERATURE,
       messages: [{ role: "user", content: prompt }],
     });
