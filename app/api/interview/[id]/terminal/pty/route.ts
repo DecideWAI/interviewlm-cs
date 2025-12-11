@@ -87,12 +87,13 @@ export async function GET(
           }
         };
 
-        // Start keepalive ping every 15 seconds to prevent connection timeout
+        // Start keepalive ping every 10 seconds to prevent proxy/load balancer timeouts
+        // Many proxies have 30-60s idle timeouts, so 10s gives us good margin
         keepAliveInterval = setInterval(() => {
           if (!isClosed) {
             safeEnqueue(encoder.encode(`: ping\n\n`));
           }
-        }, 15000);
+        }, 10000);
 
         try {
           // Send connection established event
@@ -147,22 +148,38 @@ export async function GET(
             }
           }
 
-          // Stream ended
+          // Stream ended - this could be shell exit or connection issue
+          // Signal client to reconnect rather than showing "done"
+          console.log(`[PTY] Stdout stream ended for ${id}, signaling reconnect`);
           safeEnqueue(
-            encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`)
+            encoder.encode(`data: ${JSON.stringify({ reconnect: true, reason: "stream_ended" })}\n\n`)
           );
           safeClose();
         } catch (error) {
           console.error(`[PTY] Stream error for ${id}:`, error);
-          const errorMsg = `\x1b[31mError: ${
-            error instanceof Error ? error.message : "Stream failed"
-          }\x1b[0m\r\n`;
-          safeEnqueue(
-            encoder.encode(`data: ${JSON.stringify({ output: errorMsg })}\n\n`)
-          );
-          safeEnqueue(
-            encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`)
-          );
+          const errorMessage = error instanceof Error ? error.message : "Stream failed";
+
+          // Check if this is a recoverable error
+          const isRecoverable = errorMessage.includes('timeout') ||
+                                errorMessage.includes('ECONNRESET') ||
+                                errorMessage.includes('socket hang up');
+
+          if (isRecoverable) {
+            // Signal client to reconnect silently
+            console.log(`[PTY] Recoverable error for ${id}, signaling reconnect`);
+            safeEnqueue(
+              encoder.encode(`data: ${JSON.stringify({ reconnect: true, reason: "recoverable_error" })}\n\n`)
+            );
+          } else {
+            // Show error to user for non-recoverable errors
+            const errorMsg = `\x1b[31mError: ${errorMessage}\x1b[0m\r\n`;
+            safeEnqueue(
+              encoder.encode(`data: ${JSON.stringify({ output: errorMsg })}\n\n`)
+            );
+            safeEnqueue(
+              encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`)
+            );
+          }
           safeClose();
         }
       },
@@ -224,22 +241,34 @@ export async function POST(
       );
     }
 
-    // Check if shell session exists
-    const shellSession = getShellSession(id);
+    // Check if shell session exists, auto-create if needed
+    let shellSession = getShellSession(id);
+    let sessionRecreated = false;
     if (!shellSession) {
-      // Session doesn't exist - client needs to reconnect SSE stream
-      // Don't auto-recreate here because there's no one reading the output
-      console.log(`[PTY] Shell session not found for ${id}, client needs to reconnect`);
-      return NextResponse.json(
-        { error: "reconnect", message: "Shell session not found. Reconnecting..." },
-        { status: 410 } // 410 Gone - indicates resource no longer available
-      );
+      // Session doesn't exist on this worker - auto-create it
+      // This handles multi-worker scenarios where SSE is on a different worker
+      console.log(`[PTY] Shell session not found for ${id}, auto-creating...`);
+      try {
+        shellSession = await createShellSession(id);
+        sessionRecreated = true;
+        console.log(`[PTY] Auto-created shell session for ${id}`);
+      } catch (createError) {
+        console.error(`[PTY] Failed to auto-create shell session for ${id}:`, createError);
+        return NextResponse.json(
+          { error: "reconnect", message: "Shell session not found. Reconnecting..." },
+          { status: 410 }
+        );
+      }
     }
 
     // Write to stdin
     await writeToShell(id, data);
 
-    return NextResponse.json({ success: true });
+    // Return success, with flag if session was recreated (client should reconnect SSE)
+    return NextResponse.json({
+      success: true,
+      sessionRecreated, // Client should silently reconnect SSE stream if true
+    });
   } catch (error) {
     console.error(`[PTY] POST error for ${id}:`, error);
     return NextResponse.json(

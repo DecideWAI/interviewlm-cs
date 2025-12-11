@@ -87,6 +87,7 @@ class CodingChatRequest(BaseModel):
     message: str
     helpfulness_level: Literal["consultant", "pair-programming", "full-copilot"] = "pair-programming"
     problem_statement: Optional[str] = None
+    tech_stack: Optional[list[str]] = None  # Required technologies (e.g., ["Python", "FastAPI"])
     code_context: Optional[dict] = None
 
 
@@ -272,6 +273,7 @@ async def stream_coding_response(
     message: str,
     helpfulness_level: str,
     problem_statement: Optional[str],
+    tech_stack: Optional[list[str]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Generate SSE stream for coding agent response.
@@ -297,6 +299,7 @@ async def stream_coding_response(
                 candidate_id=candidate_id,
                 helpfulness_level=helpfulness_level,
                 problem_statement=problem_statement,
+                tech_stack=tech_stack,
             )
 
         agent = active_coding_agents[agent_key]
@@ -372,6 +375,7 @@ async def coding_chat_stream(request: CodingChatRequest):
             message=request.message,
             helpfulness_level=request.helpfulness_level,
             problem_statement=request.problem_statement,
+            tech_stack=request.tech_stack,
         ),
         media_type="text/event-stream",
         headers={
@@ -399,6 +403,7 @@ async def coding_chat_sync(request: CodingChatRequest):
                 candidate_id=request.candidate_id,
                 helpfulness_level=request.helpfulness_level,
                 problem_statement=request.problem_statement,
+                tech_stack=request.tech_stack,
             )
 
         agent = active_coding_agents[agent_key]

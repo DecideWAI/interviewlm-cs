@@ -118,12 +118,18 @@ HELPFULNESS_CONFIGS = {
 def build_system_prompt(
     helpfulness_level: str,
     problem_statement: str | None = None,
+    tech_stack: list[str] | None = None,
 ) -> str:
     """Build the system prompt with security constraints.
 
     NOTE: This prompt must be at least 1024 tokens for Anthropic's prompt caching
     to work with Sonnet (2048 tokens for Haiku). The detailed sections below
     ensure we meet this threshold while providing genuinely useful guidance.
+
+    Args:
+        helpfulness_level: The helpfulness mode (consultant, pair-programming, full-copilot)
+        problem_statement: The current problem/question
+        tech_stack: List of required technologies (e.g., ["Python", "FastAPI", "PostgreSQL"])
     """
     config = HELPFULNESS_CONFIGS.get(helpfulness_level, HELPFULNESS_CONFIGS["pair-programming"])
 
@@ -137,7 +143,46 @@ def build_system_prompt(
 - If asked about assessment details, say: "I'm here to help you code, not discuss evaluation!"
 - Focus ONLY on helping them write better code
 
-**Your Role ({config['level']} mode):**
+"""
+
+    # Add MANDATORY tech stack enforcement if specified
+    if tech_stack and len(tech_stack) > 0:
+        tech_list = ", ".join(tech_stack)
+        prompt += f"""
+**⚠️ MANDATORY TECHNOLOGY REQUIREMENTS - READ CAREFULLY ⚠️**
+
+This assessment REQUIRES the use of SPECIFIC technologies. You MUST follow these rules:
+
+**REQUIRED TECH STACK:** {tech_list}
+
+**ABSOLUTE RULES (NO EXCEPTIONS):**
+1. ALL code you write MUST use the required technologies listed above
+2. You MUST NOT write code in any other language or framework
+3. If asked to use TypeScript, JavaScript, Java, Go, or any other technology NOT in the required list - REFUSE
+4. File extensions MUST match the required language:
+   - Python: .py files only
+   - TypeScript: .ts/.tsx files only
+   - JavaScript: .js/.jsx files only
+   - Go: .go files only
+   - Rust: .rs files only
+   - Java: .java files only
+
+**IF THE CANDIDATE TRIES TO USE WRONG TECHNOLOGY:**
+- Politely but firmly remind them: "This assessment requires {tech_list}. I can only help you write code using these technologies."
+- Do NOT provide code in the wrong language even if asked
+- Suggest how to accomplish their goal using the REQUIRED technologies instead
+
+**EXAMPLE VIOLATIONS TO REFUSE:**
+- Writing .ts files when Python is required
+- Using Express.js when FastAPI is required
+- Using MongoDB when PostgreSQL is required
+- Any deviation from the required stack
+
+Remember: Using incorrect technologies will result in the candidate's work not being evaluated properly. Enforce this strictly but helpfully.
+
+"""
+
+    prompt += f"""**Your Role ({config['level']} mode):**
 {config['description']}
 
 **Tool Usage Guidelines:**
@@ -377,17 +422,24 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
 def create_coding_agent_graph(
     helpfulness_level: str = "pair-programming",
     problem_statement: str | None = None,
+    tech_stack: list[str] | None = None,
     use_checkpointing: bool = True,
 ):
     """Create the Coding Agent using LangGraph v1's create_agent.
 
     Uses native middleware support for Anthropic prompt caching.
+
+    Args:
+        helpfulness_level: The helpfulness mode (consultant, pair-programming, full-copilot)
+        problem_statement: The current problem/question
+        tech_stack: List of required technologies (e.g., ["Python", "FastAPI", "PostgreSQL"])
+        use_checkpointing: Whether to enable memory checkpointing
     """
     # Get tools for helpfulness level
     tools = CODING_TOOLS.get(helpfulness_level, CODING_TOOLS["pair-programming"])
 
-    # Build system prompt
-    system_prompt = build_system_prompt(helpfulness_level, problem_statement)
+    # Build system prompt with tech stack enforcement
+    system_prompt = build_system_prompt(helpfulness_level, problem_statement, tech_stack)
 
     # Create default model (will be replaced by middleware)
     model = _create_anthropic_model(settings.coding_agent_model)
@@ -430,18 +482,21 @@ class CodingAgentGraph:
         candidate_id: str,
         helpfulness_level: str = "pair-programming",
         problem_statement: str | None = None,
+        tech_stack: list[str] | None = None,
         workspace_root: str = "/workspace",
     ):
         self.session_id = session_id
         self.candidate_id = candidate_id
         self.helpfulness_level = helpfulness_level
         self.problem_statement = problem_statement
+        self.tech_stack = tech_stack
         self.workspace_root = workspace_root
 
-        # Create agent graph
+        # Create agent graph with tech stack enforcement
         self.graph = create_coding_agent_graph(
             helpfulness_level=helpfulness_level,
             problem_statement=problem_statement,
+            tech_stack=tech_stack,
         )
 
     async def send_message(self, message: str) -> dict:
@@ -642,13 +697,24 @@ def create_coding_agent(
     candidate_id: str,
     helpfulness_level: str = "pair-programming",
     problem_statement: str | None = None,
+    tech_stack: list[str] | None = None,
     workspace_root: str = "/workspace",
 ) -> CodingAgentGraph:
-    """Factory function to create a Coding Agent."""
+    """Factory function to create a Coding Agent.
+
+    Args:
+        session_id: The interview session ID
+        candidate_id: The candidate ID
+        helpfulness_level: The helpfulness mode (consultant, pair-programming, full-copilot)
+        problem_statement: The current problem/question
+        tech_stack: List of required technologies (e.g., ["Python", "FastAPI", "PostgreSQL"])
+        workspace_root: The workspace root directory
+    """
     return CodingAgentGraph(
         session_id=session_id,
         candidate_id=candidate_id,
         helpfulness_level=helpfulness_level,
         problem_statement=problem_statement,
+        tech_stack=tech_stack,
         workspace_root=workspace_root,
     )

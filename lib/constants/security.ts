@@ -6,13 +6,14 @@
  */
 
 // Re-export async functions from config-service
+// Using relative path for ts-node compatibility in seed scripts
 export {
   getBlockedPatterns,
   getAllowedCommands,
   getRateLimits,
   getSessionTimeouts,
   getSecurityConfig,
-} from "@/lib/services/config-service";
+} from "../services/config-service";
 
 // =============================================================================
 // DEPRECATED: Hardcoded exports (kept for seed scripts)

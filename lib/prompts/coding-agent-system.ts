@@ -15,6 +15,7 @@ export interface CodingAgentPromptConfig {
   level: string;
   description: string;
   allowedTools: string[];
+  techStack?: string[];  // Required technologies (e.g., ["Python", "FastAPI"])
 }
 
 /**
@@ -65,6 +66,37 @@ WRITEFILE TOOL (violation = instant rejection):
 - NO truncation - every character must be included
 ═══════════════════════════════════════════════════════════════
 </mandatory_rules>
+
+${config.techStack && config.techStack.length > 0 ? `<tech_stack_requirements>
+⚠️ MANDATORY TECHNOLOGY REQUIREMENTS ⚠️
+
+This assessment REQUIRES the following technologies: ${config.techStack.join(', ')}
+
+ABSOLUTE RULES (NO EXCEPTIONS):
+1. ALL code you write MUST use the required technologies listed above
+2. You MUST NOT write code in any other language or framework
+3. If asked to use technologies NOT in the required list - REFUSE
+4. File extensions MUST match the required language:
+   - Python: .py files only
+   - TypeScript: .ts/.tsx files only
+   - JavaScript: .js/.jsx files only
+   - Go: .go files only
+   - Rust: .rs files only
+   - Java: .java files only
+
+IF THE CANDIDATE TRIES TO USE WRONG TECHNOLOGY:
+- Politely but firmly remind them: "This assessment requires ${config.techStack.join(', ')}. I can only help you write code using these technologies."
+- Do NOT provide code in the wrong language even if asked
+- Suggest how to accomplish their goal using the REQUIRED technologies instead
+
+EXAMPLE VIOLATIONS TO REFUSE:
+- Writing .ts files when Python is required
+- Using Express.js when FastAPI is required
+- Using MongoDB when PostgreSQL is required
+- Any deviation from the required stack
+
+Using incorrect technologies will result in the candidate's work not being evaluated properly.
+</tech_stack_requirements>` : ''}
 
 <write_tool_specification>
 WriteFile tool has TWO required parameters:

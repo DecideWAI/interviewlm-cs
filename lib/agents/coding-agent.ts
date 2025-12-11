@@ -573,11 +573,12 @@ export class StreamingCodingAgent {
   private buildSystemPromptWithCaching(): Anthropic.Messages.TextBlockParam[] {
     const helpfulnessConfig = HELPFULNESS_CONFIGS[this.config.helpfulnessLevel];
 
-    // Use centralized system prompt from prompts folder
+    // Use centralized system prompt from prompts folder with tech stack enforcement
     const staticInstructions = buildCodingAgentSystemPrompt({
       level: helpfulnessConfig.level,
       description: helpfulnessConfig.description,
       allowedTools: helpfulnessConfig.allowedTools,
+      techStack: this.config.techStack,
     });
 
     const systemBlocks: Anthropic.Messages.TextBlockParam[] = [
@@ -770,6 +771,7 @@ export async function createStreamingCodingAgent(config: {
   helpfulnessLevel: HelpfulnessLevel;
   workspaceRoot: string;
   problemStatement?: string;
+  techStack?: string[];  // Required technologies for enforcement
   model?: string;
 }): Promise<StreamingCodingAgent> {
   // Use the provided model or default to recommendation
@@ -782,6 +784,7 @@ export async function createStreamingCodingAgent(config: {
     helpfulnessLevel: config.helpfulnessLevel,
     workspaceRoot: config.workspaceRoot,
     problemStatement: config.problemStatement,
+    techStack: config.techStack,
     model,
     // CodingAgentConfig requires these fields
     tools: HELPFULNESS_CONFIGS[config.helpfulnessLevel].allowedTools,
