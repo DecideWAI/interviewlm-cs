@@ -37,6 +37,43 @@ export interface ShellSession {
 const shellSessions = new Map<string, ShellSession>();
 
 /**
+ * Check if a shell session is still alive and healthy
+ * Returns true if the session can be reused
+ */
+async function isShellSessionHealthy(session: ShellSession): Promise<boolean> {
+  try {
+    // Check if the stdin writer is still usable
+    if (session.stdinWriter) {
+      // Try to check if writer is in a valid state
+      // Writers in error state will throw on desiredSize access
+      try {
+        const _ = session.stdinWriter.desiredSize;
+        if (_ === null) {
+          console.log(`[Modal] Shell session ${session.sessionId} stdin writer is closed`);
+          return false;
+        }
+      } catch {
+        console.log(`[Modal] Shell session ${session.sessionId} stdin writer is in error state`);
+        return false;
+      }
+    }
+
+    // Check session age - Modal shell sessions can become stale after extended periods
+    const sessionAge = Date.now() - session.createdAt.getTime();
+    const MAX_SESSION_AGE_MS = 30 * 60 * 1000; // 30 minutes
+    if (sessionAge > MAX_SESSION_AGE_MS) {
+      console.log(`[Modal] Shell session ${session.sessionId} is too old (${Math.round(sessionAge / 60000)}min)`);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.log(`[Modal] Shell session health check failed:`, error);
+    return false;
+  }
+}
+
+/**
  * Create or get an interactive shell session for a sandbox
  * Uses Modal's pty: true option for proper terminal emulation
  *
@@ -46,9 +83,25 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
   // Check for existing session
   const existing = shellSessions.get(sessionId);
   if (existing) {
-    existing.lastActivity = new Date();
-    console.log(`[Modal] Reusing existing shell session for ${sessionId}`);
-    return existing;
+    // Verify the session is still healthy before reusing
+    const isHealthy = await isShellSessionHealthy(existing);
+    if (isHealthy) {
+      existing.lastActivity = new Date();
+      console.log(`[Modal] Reusing existing healthy shell session for ${sessionId}`);
+      return existing;
+    } else {
+      // Session is unhealthy, remove it and create new one
+      console.log(`[Modal] Removing unhealthy shell session for ${sessionId}`);
+      shellSessions.delete(sessionId);
+      // Release writer if it exists
+      if (existing.stdinWriter) {
+        try {
+          existing.stdinWriter.releaseLock();
+        } catch {
+          // Ignore errors on release
+        }
+      }
+    }
   }
 
   console.log(`[Modal] Creating new shell session for ${sessionId}`);

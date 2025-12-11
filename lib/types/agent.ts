@@ -115,6 +115,7 @@ export interface CodingAgentConfig extends AgentConfig {
   helpfulnessLevel: HelpfulnessLevel;
   workspaceRoot: string;
   problemStatement?: string;
+  techStack?: string[]; // Required technologies (e.g., ["Python", "FastAPI", "PostgreSQL"])
   candidateId?: string; // Candidate UUID - required for test execution and DB lookups
   sessionRecordingId?: string; // SessionRecording UUID - required for saving test results to DB
 }

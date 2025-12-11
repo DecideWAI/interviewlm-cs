@@ -37,7 +37,7 @@ sandbox_mgr = SandboxManager
 
 
 # =============================================================================
-# Security Helpers (DB-backed, no fallbacks)
+# Security Helpers (DB-backed)
 # =============================================================================
 
 # =============================================================================
@@ -83,7 +83,7 @@ def _run_async(coro):
 
 
 def get_blocked_patterns_sync() -> List[str]:
-    """Get blocked command patterns from DB. Raises error if not available."""
+    """Get blocked command patterns from DB."""
     global _cached_blocked_patterns
     if _cached_blocked_patterns is not None:
         return _cached_blocked_patterns
@@ -102,7 +102,7 @@ def get_blocked_patterns_sync() -> List[str]:
 
 
 def get_workspace_restrictions_sync() -> List[str]:
-    """Get workspace path restrictions from DB. Raises error if not available."""
+    """Get workspace path restrictions from DB."""
     global _cached_workspace_restrictions
     if _cached_workspace_restrictions is not None:
         return _cached_workspace_restrictions
@@ -113,7 +113,6 @@ def get_workspace_restrictions_sync() -> List[str]:
 
     restrictions = _run_async(config_service.get_security_config("workspace_restrictions"))
     if restrictions and isinstance(restrictions, dict):
-        # workspace_restrictions is a dict with blockedPaths array
         blocked_paths = restrictions.get("blockedPaths", [])
         if blocked_paths:
             _cached_workspace_restrictions = blocked_paths

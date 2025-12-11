@@ -41,8 +41,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const reconnectAttemptsRef = useRef<number>(0);
     const onCommandRef = useRef(onCommand);
     const onDataDisposableRef = useRef<{ dispose: () => void } | null>(null);
+    const lastDataTimeRef = useRef<number>(Date.now());
+    const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+    const silentReconnectRef = useRef<boolean>(false);
     const MAX_TUNNEL_RECONNECT_ATTEMPTS = 3;
     const MAX_SSE_RECONNECT_ATTEMPTS = 5;
+    const HEARTBEAT_TIMEOUT_MS = 30000; // Consider connection dead if no data for 30s
 
     // Keep onCommand ref up to date without triggering effect re-runs
     useEffect(() => {
@@ -82,18 +86,47 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           try {
             const data = JSON.parse(event.data);
 
+            // Update last data timestamp for heartbeat monitoring
+            lastDataTimeRef.current = Date.now();
+
             if (data.connected && !isConnected) {
               isConnected = true;
               updateConnectionStatus("connected");
               setConnectionMode("pty");
               reconnectAttemptsRef.current = 0;
-              terminal.writeln("\x1b[32m✓ Connected via PTY bridge\x1b[0m");
-              terminal.writeln("\x1b[32m✓ Low-latency shell active\x1b[0m");
-              terminal.writeln("");
+
+              // Only show connection message if not a silent reconnect
+              if (!silentReconnectRef.current) {
+                terminal.writeln("\x1b[32m✓ Connected via PTY bridge\x1b[0m");
+                terminal.writeln("\x1b[32m✓ Low-latency shell active\x1b[0m");
+                terminal.writeln("");
+              }
+              silentReconnectRef.current = false;
+
+              // Start heartbeat monitoring to detect stale connections
+              if (heartbeatIntervalRef.current) {
+                clearInterval(heartbeatIntervalRef.current);
+              }
+              heartbeatIntervalRef.current = setInterval(() => {
+                const timeSinceLastData = Date.now() - lastDataTimeRef.current;
+                if (timeSinceLastData > HEARTBEAT_TIMEOUT_MS && connectionStatusRef.current === "connected") {
+                  console.log(`[PTY] No data received for ${timeSinceLastData}ms, reconnecting silently...`);
+                  silentReconnectRef.current = true;
+                  reconnectPTY();
+                }
+              }, 5000); // Check every 5 seconds
             }
 
             if (data.output) {
               terminal.write(data.output);
+            }
+
+            // Handle reconnect signal from server (stream ended or recoverable error)
+            if (data.reconnect) {
+              console.log(`[PTY] Server requested reconnect: ${data.reason}`);
+              silentReconnectRef.current = true;
+              reconnectPTY();
+              return;
             }
 
             if (data.done) {
@@ -110,11 +143,27 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           updateConnectionStatus("disconnected");
           eventSource.close();
 
+          // Clear heartbeat on disconnect
+          if (heartbeatIntervalRef.current) {
+            clearInterval(heartbeatIntervalRef.current);
+            heartbeatIntervalRef.current = null;
+          }
+
           // Retry PTY connection
           reconnectAttemptsRef.current++;
           if (reconnectAttemptsRef.current < MAX_SSE_RECONNECT_ATTEMPTS) {
-            const delay = Math.min(2000 * reconnectAttemptsRef.current, 10000);
-            terminal.writeln(`\x1b[33m[PTY connection failed, retrying in ${delay / 1000}s... (${reconnectAttemptsRef.current}/${MAX_SSE_RECONNECT_ATTEMPTS})]\x1b[0m`);
+            // First few retries are silent, then show message
+            const isSilentRetry = reconnectAttemptsRef.current <= 2;
+            const delay = isSilentRetry
+              ? Math.min(500 * reconnectAttemptsRef.current, 2000)  // Faster for silent retries
+              : Math.min(2000 * reconnectAttemptsRef.current, 10000);
+
+            if (!isSilentRetry) {
+              terminal.writeln(`\x1b[33m[PTY connection failed, retrying in ${delay / 1000}s... (${reconnectAttemptsRef.current}/${MAX_SSE_RECONNECT_ATTEMPTS})]\x1b[0m`);
+            } else {
+              console.log(`[PTY] Silent retry ${reconnectAttemptsRef.current}/${MAX_SSE_RECONNECT_ATTEMPTS} in ${delay}ms`);
+              silentReconnectRef.current = true;
+            }
             reconnectTimeoutRef.current = setTimeout(() => connectPTY(terminal), delay);
           } else {
             terminal.writeln(`\x1b[31m[PTY connection failed after ${MAX_SSE_RECONNECT_ATTEMPTS} attempts]\x1b[0m`);
@@ -133,11 +182,17 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         let isReconnecting = false;
 
         // Reconnect function - closes current connection and reconnects
+        // Supports silent reconnection to avoid disrupting user experience
         const reconnectPTY = () => {
           if (isReconnecting) return;
           isReconnecting = true;
 
-          terminal.writeln("\r\n\x1b[33m[Reconnecting terminal...]\x1b[0m");
+          // Only show reconnection message if not a silent reconnect
+          if (!silentReconnectRef.current) {
+            terminal.writeln("\r\n\x1b[33m[Reconnecting terminal...]\x1b[0m");
+          } else {
+            console.log("[PTY] Silent reconnection in progress...");
+          }
           updateConnectionStatus("connecting");
 
           // Close existing SSE connection
@@ -146,14 +201,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             eventSourceRef.current = null;
           }
 
-          // Wait a moment then reconnect
+          // Wait a moment then reconnect (shorter delay for silent reconnects)
+          const delay = silentReconnectRef.current ? 200 : 500;
           setTimeout(() => {
             isReconnecting = false;
             connectPTY(terminal);
-          }, 500);
+          }, delay);
         };
 
-        // Send input with retry logic and reconnect on 410
+        // Send input with retry logic and reconnect on 410 or sessionRecreated
         const sendInput = (data: string, retries = 2) => {
           fetch(`/api/interview/${sessionId}/terminal/pty`, {
             method: "POST",
@@ -162,12 +218,21 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           })
             .then(async (res) => {
               if (res.status === 410) {
-                // Session lost - need to reconnect
-                console.log("[PTY] Session lost (410), reconnecting...");
+                // Session lost - need to reconnect silently
+                console.log("[PTY] Session lost (410), reconnecting silently...");
+                silentReconnectRef.current = true;
                 reconnectPTY();
                 return;
               }
-              if (!res.ok && retries > 0) {
+              if (res.ok) {
+                const json = await res.json();
+                // If session was recreated on server, silently reconnect SSE stream
+                if (json.sessionRecreated) {
+                  console.log("[PTY] Session recreated on server, reconnecting SSE silently...");
+                  silentReconnectRef.current = true;
+                  reconnectPTY();
+                }
+              } else if (retries > 0) {
                 setTimeout(() => sendInput(data, retries - 1), 50);
               }
             })
@@ -495,6 +560,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         }
         if (reconnectTimeoutRef.current) {
           clearTimeout(reconnectTimeoutRef.current);
+        }
+        if (heartbeatIntervalRef.current) {
+          clearInterval(heartbeatIntervalRef.current);
         }
         terminal.dispose();
       };

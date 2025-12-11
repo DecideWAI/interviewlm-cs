@@ -7,15 +7,16 @@ import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { strictRateLimit } from "@/lib/middleware/rate-limit";
 import { createQuestionEvaluationAgent, EvaluationResult as AgentEvaluationResult } from "@/lib/agents/question-evaluation-agent";
+import { modalService } from "@/lib/services";
 
 // LangGraph API configuration (for separate testing)
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:8080";
 const LANGGRAPH_API_KEY = process.env.LANGGRAPH_API_KEY || "";
 const USE_LANGGRAPH_AGENT = process.env.USE_LANGGRAPH_AGENT === "true"; // Default false - use TypeScript agent
 
-// Request validation schema
+// Request validation schema - code is now optional, will fetch from sandbox if empty
 const evaluateRequestSchema = z.object({
-  code: z.string().min(1, "Code is required"),
+  code: z.string().optional(),
   language: z.enum(["javascript", "typescript", "python", "go", "node.js"], {
     errorMap: () => ({ message: "Unsupported language" }),
   }),
@@ -178,7 +179,7 @@ export const POST = withErrorHandling(async (
     );
   }
 
-  const { code, language, questionId, fileName } = validationResult.data;
+  let { code, language, questionId, fileName } = validationResult.data;
 
   // Verify candidate exists and belongs to authorized organization
   const candidate = await prisma.candidate.findUnique({
@@ -205,6 +206,61 @@ export const POST = withErrorHandling(async (
 
   if (!isOrgMember && !isSelfInterview) {
     throw new AuthorizationError("Access denied to this interview session");
+  }
+
+  // If code not provided, fetch from Modal sandbox
+  if (!code || code.trim() === "") {
+    logger.info("[Evaluate] Code not provided, fetching from sandbox", { candidateId: id, fileName });
+
+    // Determine file path based on language and fileName
+    const languageExtensions: Record<string, string> = {
+      javascript: "js",
+      typescript: "ts",
+      python: "py",
+      go: "go",
+      "node.js": "js",
+    };
+    const ext = languageExtensions[language] || "js";
+    const filePath = fileName || `solution.${ext}`;
+
+    try {
+      const fileResult = await modalService.readFile(id, filePath);
+      if (fileResult.success && fileResult.content) {
+        code = fileResult.content;
+        logger.info("[Evaluate] Successfully fetched code from sandbox", {
+          candidateId: id,
+          filePath,
+          codeLength: code.length,
+        });
+      } else {
+        // Try to get any file from workspace
+        logger.warn("[Evaluate] Could not read specific file, trying to list workspace", {
+          candidateId: id,
+          filePath,
+          error: fileResult.error,
+        });
+
+        // Try common filenames
+        const commonFiles = [`index.${ext}`, `main.${ext}`, `app.${ext}`, `solution.${ext}`];
+        for (const commonFile of commonFiles) {
+          const result = await modalService.readFile(id, commonFile);
+          if (result.success && result.content && result.content.trim()) {
+            code = result.content;
+            logger.info("[Evaluate] Found code in alternative file", { candidateId: id, file: commonFile });
+            break;
+          }
+        }
+      }
+    } catch (error) {
+      logger.error("[Evaluate] Error fetching code from sandbox", error instanceof Error ? error : new Error("Unknown error"));
+    }
+
+    // Final check - if still no code, throw error
+    if (!code || code.trim() === "") {
+      throw new ValidationError(
+        "No code found to evaluate. Please write some code in the editor and try again."
+      );
+    }
   }
 
   // Fetch question details

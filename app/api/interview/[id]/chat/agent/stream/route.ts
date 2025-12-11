@@ -326,6 +326,7 @@ export async function POST(
                   message: enhancedMessage,
                   helpfulnessLevel: helpfulnessLevel || "pair-programming",
                   problemStatement,
+                  techStack: candidate.assessment?.techStack || [],
                   conversationHistory: previousInteractions.map((i) => ({
                     role: i.role,
                     content: i.content,
@@ -364,6 +365,7 @@ export async function POST(
                 helpfulnessLevel: (helpfulnessLevel || "pair-programming") as HelpfulnessLevel,
                 workspaceRoot: "/workspace",
                 problemStatement,
+                techStack: candidate.assessment?.techStack || [],
               });
 
               if (previousInteractions.length > 0) {
@@ -531,6 +533,7 @@ interface LangGraphCallOptions {
   message: string;
   helpfulnessLevel: string;
   problemStatement?: string;
+  techStack?: string[];  // Required technologies for enforcement
   conversationHistory: Array<{ role: string; content: string }>;
   onTextDelta: (delta: string) => void;
   onToolStart: (toolName: string, toolId: string, input: unknown) => void;
@@ -559,6 +562,7 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
         message: options.message,
         helpfulness_level: options.helpfulnessLevel,
         problem_statement: options.problemStatement,
+        tech_stack: options.techStack,  // Pass tech stack for enforcement
         conversation_history: options.conversationHistory,
       }),
     });
@@ -711,6 +715,7 @@ async function callLangGraphAgentNonStreaming(options: LangGraphCallOptions): Pr
       message: options.message,
       helpfulness_level: options.helpfulnessLevel,
       problem_statement: options.problemStatement,
+      tech_stack: options.techStack,  // Pass tech stack for enforcement
       conversation_history: options.conversationHistory,
     }),
   });
