@@ -47,6 +47,44 @@ sandbox_mgr = SandboxManager
 _config_service = None
 _cached_blocked_patterns: List[str] = None
 _cached_workspace_restrictions: List[str] = None
+_initialized: bool = False
+
+
+async def initialize_security_config():
+    """
+    Initialize security config from DB. Call this at server startup.
+
+    This loads config in the async context so it's cached for sync tool calls.
+    """
+    global _cached_blocked_patterns, _cached_workspace_restrictions, _initialized
+
+    if _initialized:
+        return
+
+    try:
+        from services.config_service import get_config_service
+        config_service = get_config_service()
+
+        # Load blocked patterns
+        patterns = await config_service.get_blocked_patterns()
+        if patterns:
+            _cached_blocked_patterns = patterns
+            print(f"[CodingTools] Cached {len(patterns)} blocked patterns from DB")
+
+        # Load workspace restrictions
+        restrictions = await config_service.get_security_config("workspace_restrictions")
+        if restrictions and isinstance(restrictions, dict):
+            blocked_paths = restrictions.get("blockedPaths", [])
+            if blocked_paths:
+                _cached_workspace_restrictions = blocked_paths
+                print(f"[CodingTools] Cached {len(blocked_paths)} workspace restrictions from DB")
+
+        _initialized = True
+        print("[CodingTools] Security config initialized successfully")
+
+    except Exception as e:
+        print(f"[CodingTools] Failed to initialize security config: {e}")
+        raise RuntimeError(f"Failed to initialize security config: {e}")
 
 
 def _get_config_service():

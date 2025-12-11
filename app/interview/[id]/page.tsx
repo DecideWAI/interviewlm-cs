@@ -482,65 +482,126 @@ export default function InterviewPage() {
     // Skip for demo mode or if not initialized
     if (candidateId === 'demo' || !sessionData) return;
 
-    const eventSource = new EventSource(`/api/interview/${candidateId}/file-updates`);
+    let eventSource: EventSource | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let isCleanedUp = false;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 10;
+    const BASE_RECONNECT_DELAY = 1000; // 1 second
 
-    eventSource.addEventListener('file-change', (event) => {
-      try {
-        const change = JSON.parse(event.data);
-        console.log('[FileUpdates] Received:', change);
+    const connect = () => {
+      if (isCleanedUp) return;
 
-        setSessionData(prev => {
-          if (!prev) return prev;
+      console.log(`[FileUpdates] Connecting to SSE (attempt ${reconnectAttempts + 1})`);
+      eventSource = new EventSource(`/api/interview/${candidateId}/file-updates`);
+
+      eventSource.addEventListener('file-change', async (event) => {
+        try {
+          const change = JSON.parse(event.data);
+          console.log('[FileUpdates] Received:', change);
 
           if (change.type === 'create') {
-            // Create new file node
-            const newNode: FileNode = {
-              id: `file-${Date.now()}`,
-              name: change.name,
-              type: change.fileType === 'folder' ? 'folder' : 'file',
-              path: change.path,
-            };
+            setSessionData(prev => {
+              if (!prev) return prev;
 
-            // Determine parent path
-            const pathParts = change.path.split('/');
-            pathParts.pop(); // Remove the file/folder name
-            const parentPath = pathParts.join('/') || '/workspace';
+              // Create new file node
+              const newNode: FileNode = {
+                id: `file-${Date.now()}`,
+                name: change.name,
+                type: change.fileType === 'folder' ? 'folder' : 'file',
+                path: change.path,
+              };
 
-            return {
-              ...prev,
-              files: addToFileTree(prev.files, newNode, parentPath),
-            };
+              // Determine parent path
+              const pathParts = change.path.split('/');
+              pathParts.pop(); // Remove the file/folder name
+              const parentPath = pathParts.join('/') || '/workspace';
+
+              return {
+                ...prev,
+                files: addToFileTree(prev.files, newNode, parentPath),
+              };
+            });
           } else if (change.type === 'delete') {
-            return {
-              ...prev,
-              files: removeFromFileTree(prev.files, change.path),
-            };
+            setSessionData(prev => {
+              if (!prev) return prev;
+              return {
+                ...prev,
+                files: removeFromFileTree(prev.files, change.path),
+              };
+            });
+            // Remove from file cache
+            setFileCache(prev => {
+              const newCache = new Map(prev);
+              newCache.delete(change.path);
+              return newCache;
+            });
+          } else if (change.type === 'update') {
+            // Refresh the updated file content from the server
+            console.log('[FileUpdates] Refreshing content for:', change.path);
+            try {
+              const response = await fetch(`/api/interview/${candidateId}/files?path=${encodeURIComponent(change.path)}`);
+              if (response.ok) {
+                const { content } = await response.json();
+                setFileCache(prev => {
+                  const newCache = new Map(prev);
+                  newCache.set(change.path, content);
+                  return newCache;
+                });
+                console.log('[FileUpdates] Content refreshed for:', change.path);
+              }
+            } catch (fetchErr) {
+              console.error('[FileUpdates] Failed to refresh content:', fetchErr);
+            }
           }
-          // 'update' type doesn't need tree changes
-          return prev;
-        });
-      } catch (err) {
-        console.error('[FileUpdates] Parse error:', err);
-      }
-    });
+        } catch (err) {
+          console.error('[FileUpdates] Parse error:', err);
+        }
+      });
 
-    eventSource.addEventListener('connected', () => {
-      console.log('[FileUpdates] SSE connected');
-    });
+      eventSource.addEventListener('connected', () => {
+        console.log('[FileUpdates] SSE connected successfully');
+        reconnectAttempts = 0; // Reset on successful connection
+      });
 
-    eventSource.onerror = (error) => {
-      // EventSource errors are common and often just mean the connection was closed
-      // readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
-      const state = eventSource.readyState;
-      if (state === EventSource.CLOSED) {
-        console.log('[FileUpdates] SSE connection closed');
-      } else {
-        console.warn('[FileUpdates] SSE error (readyState:', state, ')');
-      }
+      eventSource.onerror = () => {
+        if (isCleanedUp) return;
+
+        // EventSource errors are common and often just mean the connection was closed
+        // readyState: 0=CONNECTING, 1=OPEN, 2=CLOSED
+        const state = eventSource?.readyState;
+
+        if (state === EventSource.CLOSED) {
+          console.log('[FileUpdates] SSE connection closed, will reconnect');
+          eventSource?.close();
+          eventSource = null;
+
+          // Reconnect with exponential backoff
+          if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            const delay = Math.min(BASE_RECONNECT_DELAY * Math.pow(2, reconnectAttempts), 30000);
+            reconnectAttempts++;
+            console.log(`[FileUpdates] Reconnecting in ${delay}ms...`);
+            reconnectTimeout = setTimeout(connect, delay);
+          } else {
+            console.warn('[FileUpdates] Max reconnect attempts reached, giving up');
+          }
+        } else {
+          console.warn('[FileUpdates] SSE error (readyState:', state, ')');
+        }
+      };
     };
 
+    // Initial connection
+    connect();
+
     return () => {
-      eventSource.close();
+      isCleanedUp = true;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      if (eventSource) {
+        eventSource.close();
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidateId, !!sessionData]); // Only re-run when candidateId changes or sessionData existence changes

@@ -5,6 +5,8 @@ import {
   createShellSession,
   writeToShell,
   getShellSession,
+  prepareShellSessionForReading,
+  releaseShellSessionReader,
 } from "@/lib/services/modal";
 
 /**
@@ -56,6 +58,18 @@ export async function GET(
     console.log(`[PTY] Creating/getting shell session for ${id}`);
     const shellSession = await createShellSession(id);
 
+    // Prepare session for reading - this marks stdout as locked
+    // If another connection tries to read, it will get a new session
+    const prepared = prepareShellSessionForReading(id);
+    if (!prepared) {
+      console.error(`[PTY] Failed to prepare shell session for reading: ${id}`);
+      return NextResponse.json(
+        { error: "Shell session not ready" },
+        { status: 500 }
+      );
+    }
+    const { abortSignal } = prepared;
+
     // Create SSE stream that reads from stdout
     const encoder = new TextEncoder();
 
@@ -63,6 +77,23 @@ export async function GET(
       async start(controller) {
         let isClosed = false;
         let keepAliveInterval: NodeJS.Timeout | null = null;
+
+        // Handle abort signal (another connection took over)
+        const handleAbort = () => {
+          console.log(`[PTY] Aborted by new connection for ${id}`);
+          isClosed = true;
+          if (keepAliveInterval) clearInterval(keepAliveInterval);
+          try {
+            // Send reconnect signal so client knows to reconnect
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ reconnect: true, reason: "new_connection" })}\n\n`)
+            );
+            controller.close();
+          } catch {
+            // Already closed
+          }
+        };
+        abortSignal.addEventListener('abort', handleAbort);
 
         const safeEnqueue = (data: Uint8Array) => {
           if (!isClosed) {
@@ -79,6 +110,10 @@ export async function GET(
           if (!isClosed) {
             isClosed = true;
             if (keepAliveInterval) clearInterval(keepAliveInterval);
+            // Release the shell session reader so future connections can reuse
+            releaseShellSessionReader(id);
+            // Remove abort listener
+            abortSignal.removeEventListener('abort', handleAbort);
             try {
               controller.close();
             } catch {

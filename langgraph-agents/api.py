@@ -35,6 +35,7 @@ from agents import (
     create_supervisor,
 )
 from config import settings
+from tools.coding_tools import initialize_security_config
 
 
 # =============================================================================
@@ -221,6 +222,14 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     print(f"[API] Starting LangGraph API server")
     print(f"[API] Using model: {settings.coding_agent_model}")
+
+    # Initialize security config from database
+    try:
+        await initialize_security_config()
+    except Exception as e:
+        print(f"[API] Warning: Failed to initialize security config: {e}")
+        # Continue startup - config will be loaded lazily if needed
+
     yield
     # Cleanup on shutdown
     active_coding_agents.clear()

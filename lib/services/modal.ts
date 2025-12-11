@@ -31,6 +31,8 @@ export interface ShellSession {
   createdAt: Date;
   lastActivity: Date;
   writeQueue: Promise<void>;  // Queue for serializing writes to stdin
+  stdoutLocked: boolean;  // Track if stdout is being read by an SSE connection
+  abortController?: AbortController;  // Used to abort the current stdout reader
 }
 
 // Active shell sessions (one per interview session)
@@ -83,22 +85,42 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
   // Check for existing session
   const existing = shellSessions.get(sessionId);
   if (existing) {
-    // Verify the session is still healthy before reusing
-    const isHealthy = await isShellSessionHealthy(existing);
-    if (isHealthy) {
-      existing.lastActivity = new Date();
-      console.log(`[Modal] Reusing existing healthy shell session for ${sessionId}`);
-      return existing;
-    } else {
-      // Session is unhealthy, remove it and create new one
-      console.log(`[Modal] Removing unhealthy shell session for ${sessionId}`);
+    // Check if stdout is locked (being read by another SSE connection)
+    // If locked, we must create a new session because ReadableStream can only have one reader
+    if (existing.stdoutLocked) {
+      console.log(`[Modal] Existing session stdout is locked, creating new shell session for ${sessionId}`);
+      // Abort the previous reader if it exists
+      if (existing.abortController) {
+        existing.abortController.abort();
+      }
+      // Clean up the existing session
       shellSessions.delete(sessionId);
-      // Release writer if it exists
       if (existing.stdinWriter) {
         try {
           existing.stdinWriter.releaseLock();
         } catch {
           // Ignore errors on release
+        }
+      }
+      // Fall through to create new session
+    } else {
+      // Verify the session is still healthy before reusing
+      const isHealthy = await isShellSessionHealthy(existing);
+      if (isHealthy) {
+        existing.lastActivity = new Date();
+        console.log(`[Modal] Reusing existing healthy shell session for ${sessionId}`);
+        return existing;
+      } else {
+        // Session is unhealthy, remove it and create new one
+        console.log(`[Modal] Removing unhealthy shell session for ${sessionId}`);
+        shellSessions.delete(sessionId);
+        // Release writer if it exists
+        if (existing.stdinWriter) {
+          try {
+            existing.stdinWriter.releaseLock();
+          } catch {
+            // Ignore errors on release
+          }
         }
       }
     }
@@ -139,6 +161,8 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
     createdAt: new Date(),
     lastActivity: new Date(),
     writeQueue: Promise.resolve(),  // Initialize empty queue
+    stdoutLocked: false,  // Not being read yet
+    abortController: undefined,  // Will be set when reading starts
   };
 
   shellSessions.set(sessionId, session);
@@ -207,6 +231,56 @@ export async function writeToShell(sessionId: string, data: string): Promise<voi
  */
 export function getShellSession(sessionId: string): ShellSession | null {
   return shellSessions.get(sessionId) || null;
+}
+
+/**
+ * Prepare a shell session for a new stdout reader
+ * If stdout is already being read, aborts the previous reader
+ * Returns an AbortSignal that the caller should check during reading
+ *
+ * @param sessionId - The session ID
+ * @returns Object with session and abortSignal, or null if no session
+ */
+export function prepareShellSessionForReading(sessionId: string): {
+  session: ShellSession;
+  abortSignal: AbortSignal;
+} | null {
+  const session = shellSessions.get(sessionId);
+  if (!session) {
+    return null;
+  }
+
+  // If stdout is already being read, abort the previous reader
+  if (session.stdoutLocked && session.abortController) {
+    console.log(`[Modal] Aborting previous stdout reader for ${sessionId}`);
+    session.abortController.abort();
+  }
+
+  // Create new abort controller for this reader
+  const abortController = new AbortController();
+  session.abortController = abortController;
+  session.stdoutLocked = true;
+  session.lastActivity = new Date();
+
+  console.log(`[Modal] Prepared shell session for new reader: ${sessionId}`);
+
+  return {
+    session,
+    abortSignal: abortController.signal,
+  };
+}
+
+/**
+ * Mark a shell session as no longer being read
+ * Call this when the SSE connection closes
+ */
+export function releaseShellSessionReader(sessionId: string): void {
+  const session = shellSessions.get(sessionId);
+  if (session) {
+    session.stdoutLocked = false;
+    session.abortController = undefined;
+    console.log(`[Modal] Released stdout reader for ${sessionId}`);
+  }
 }
 
 /**
@@ -514,26 +588,44 @@ async function createNewSandbox(sessionId: string, language?: string): Promise<{
 }
 
 // Timeout for fromId reconnection (per attempt)
-// Based on testing: fromId takes 2-4s for warm sandboxes, 2-5s+ for cold
-// With retry logic, we use shorter timeout per attempt (5s × 3 attempts = 15s+ total)
-const RECONNECT_TIMEOUT_MS = 5000;
+// Based on testing: warm sandboxes respond in 100-500ms, cold in 2-4s
+// Reduced from 5s to 2s - if it takes >2s, better to retry or create new
+const RECONNECT_TIMEOUT_MS = 2000;
 
 // Retry configuration for reconnection
-const RECONNECT_MAX_RETRIES = 2;  // Total attempts = 3 (1 initial + 2 retries)
-const RECONNECT_RETRY_DELAY_MS = 1000;  // Base delay between retries (doubles each retry)
+// Reduced from 3 total attempts to 2 - if sandbox is dead, fail fast
+const RECONNECT_MAX_RETRIES = 1;  // Total attempts = 2 (1 initial + 1 retry)
+const RECONNECT_RETRY_DELAY_MS = 500;  // Reduced from 1s - faster retry
 
 // Keep-alive configuration
-const KEEPALIVE_INTERVAL_MS = 30000;  // Send heartbeat every 30 seconds
+// Reduced from 30s to 10s - Modal suspends sandboxes after ~10-15s inactivity
+const KEEPALIVE_INTERVAL_MS = 10000;  // Send heartbeat every 10 seconds
 const KEEPALIVE_TIMEOUT_MS = 5000;    // Timeout for heartbeat command
 
 // Track keep-alive intervals per session
 const keepAliveIntervals = new Map<string, NodeJS.Timeout>();
 
 /**
+ * Options for attemptReconnect
+ */
+interface ReconnectOptions {
+  /** Skip tunnel verification - use for file operations that don't need tunnels */
+  skipVerification?: boolean;
+}
+
+/**
  * Try to reconnect to an existing sandbox by ID using fromId (single attempt)
  * Returns sandbox if successful, null if failed
+ *
+ * @param sandboxId - The Modal sandbox ID
+ * @param timeoutMs - Timeout for the fromId call
+ * @param options - Optional settings (skipVerification for faster file ops)
  */
-async function attemptReconnect(sandboxId: string, timeoutMs: number): Promise<any | null> {
+async function attemptReconnect(
+  sandboxId: string,
+  timeoutMs: number,
+  options: ReconnectOptions = {}
+): Promise<any | null> {
   const modal = getModalClient();
   const startTime = Date.now();
 
@@ -545,6 +637,13 @@ async function attemptReconnect(sandboxId: string, timeoutMs: number): Promise<a
   ]);
 
   const elapsed = Date.now() - startTime;
+
+  // Skip verification for file operations - they'll fail-fast if sandbox is dead
+  if (options.skipVerification) {
+    console.log(`[Modal] fromId completed in ${elapsed}ms (verification skipped)`);
+    return sandbox;
+  }
+
   console.log(`[Modal] fromId completed in ${elapsed}ms, verifying sandbox is alive...`);
 
   // Verify the sandbox is actually alive by calling tunnels()
@@ -578,9 +677,13 @@ async function attemptReconnect(sandboxId: string, timeoutMs: number): Promise<a
  * increasing delays often succeed as the sandbox finishes waking up.
  *
  * @param sandboxId - The Modal sandbox ID to reconnect to
+ * @param options - Optional settings (skipVerification for faster file ops)
  * @returns The sandbox instance if successful, null if all retries failed
  */
-async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
+async function reconnectToSandbox(
+  sandboxId: string,
+  options: ReconnectOptions = {}
+): Promise<any | null> {
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= RECONNECT_MAX_RETRIES; attempt++) {
@@ -589,7 +692,7 @@ async function reconnectToSandbox(sandboxId: string): Promise<any | null> {
       const totalAttempts = RECONNECT_MAX_RETRIES + 1;
       console.log(`[Modal] Reconnect attempt ${attemptNum}/${totalAttempts} to ${sandboxId}...`);
 
-      const sandbox = await attemptReconnect(sandboxId, RECONNECT_TIMEOUT_MS);
+      const sandbox = await attemptReconnect(sandboxId, RECONNECT_TIMEOUT_MS, options);
 
       if (sandbox) {
         if (attempt > 0) {
@@ -737,6 +840,14 @@ export async function createSandbox(sessionId: string, language?: string): Promi
 }
 
 /**
+ * Options for getOrCreateSandbox
+ */
+interface GetOrCreateSandboxOptions {
+  /** Skip tunnel verification during reconnection (faster for file operations) */
+  skipVerification?: boolean;
+}
+
+/**
  * Get or create sandbox for a session
  *
  * IMPORTANT: Uses persistent volumes so files survive sandbox restarts.
@@ -746,8 +857,16 @@ export async function createSandbox(sessionId: string, language?: string): Promi
  *
  * Uses Redis distributed lock to prevent race conditions across server instances.
  * All sandbox creation MUST go through this function to ensure single sandbox per session.
+ *
+ * @param sessionId - The session ID
+ * @param language - Optional language for the sandbox
+ * @param options - Optional settings (skipVerification for faster file ops)
  */
-export async function getOrCreateSandbox(sessionId: string, language?: string): Promise<any> {
+export async function getOrCreateSandbox(
+  sessionId: string,
+  language?: string,
+  options: GetOrCreateSandboxOptions = {}
+): Promise<any> {
   // 1. Check in-memory cache first (fast path)
   const cached = sandboxes.get(sessionId);
   if (cached) {
@@ -820,7 +939,10 @@ export async function getOrCreateSandbox(sessionId: string, language?: string): 
           } else {
             // Try fromId reconnection with retry logic
             // Cold sandboxes may need multiple attempts as they wake up
-            sandbox = await reconnectToSandbox(candidate.volumeId);
+            // Pass skipVerification option for faster file operations
+            sandbox = await reconnectToSandbox(candidate.volumeId, {
+              skipVerification: options.skipVerification
+            });
             if (sandbox) {
               // Success! Store in cache and return
               sandboxes.set(sessionId, {
@@ -1755,6 +1877,8 @@ export const modalService = {
   createShellSession,
   writeToShell,
   getShellSession,
+  prepareShellSessionForReading,
+  releaseShellSessionReader,
   closeShellSession,
   hasShellSession,
   // Testing utilities
