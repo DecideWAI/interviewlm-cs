@@ -97,6 +97,16 @@ Given a string s, return the longest palindromic substring in s.`,
       });
     }
 
+    // Start sandbox warming in parallel with auth/DB checks
+    // This prevents cold sandbox delays - by the time we need the sandbox,
+    // reconnection is likely already complete
+    const sandboxWarmPromise = modal.getOrCreateSandbox(candidateId, undefined, {
+      skipVerification: true  // Skip tunnel check for file operations
+    }).catch((err) => {
+      console.log(`[Files] Background sandbox warm failed (will retry later): ${err.message}`);
+      return null;
+    });
+
     // Check authentication
     const session = await getSession();
     if (!session?.user) {
@@ -146,6 +156,10 @@ Given a string s, return the longest palindromic substring in s.`,
         { status: 400 }
       );
     }
+
+    // Wait for sandbox warming to complete before file operations
+    // This was started in parallel with auth/DB checks above
+    await sandboxWarmPromise;
 
     // Bulk mode - fetch all tracked file contents at once
     if (bulk) {

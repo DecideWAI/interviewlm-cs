@@ -623,6 +623,14 @@ module.exports = longestPalindrome;`,
     }
   }
 
+  // Pre-warm sandbox to prevent cold start on first file read
+  // This is non-blocking - runs in background while response is being prepared
+  // Keeps sandbox warm during the ~100-500ms gap until client requests files
+  modal.runCommand(candidateId, 'true').catch((err) => {
+    // Non-critical - sandbox will be warmed on first file request anyway
+    console.log(`[Initialize] Pre-warm failed (non-critical): ${err.message}`);
+  });
+
   // Get file structure from Modal volume
   // IMPORTANT: List /workspace, not root "/" to avoid showing system directories
   const files = await modal.getFileSystem(candidateId, "/workspace");

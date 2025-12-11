@@ -7,7 +7,7 @@ import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { strictRateLimit } from "@/lib/middleware/rate-limit";
 import { createQuestionEvaluationAgent, EvaluationResult as AgentEvaluationResult } from "@/lib/agents/question-evaluation-agent";
-import { modalService } from "@/lib/services";
+// Note: modalService is no longer used here - the agent discovers code via tools
 
 // LangGraph API configuration (for separate testing)
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:8080";
@@ -208,59 +208,22 @@ export const POST = withErrorHandling(async (
     throw new AuthorizationError("Access denied to this interview session");
   }
 
-  // If code not provided, fetch from Modal sandbox
+  // Code is now optional - agent can discover it via tools from the Modal sandbox
+  // If code is provided (from request body), it will be included in the prompt
+  // If not provided, the agent will use ListFiles + Read tools to discover it
   if (!code || code.trim() === "") {
-    logger.info("[Evaluate] Code not provided, fetching from sandbox", { candidateId: id, fileName });
-
-    // Determine file path based on language and fileName
-    const languageExtensions: Record<string, string> = {
-      javascript: "js",
-      typescript: "ts",
-      python: "py",
-      go: "go",
-      "node.js": "js",
-    };
-    const ext = languageExtensions[language] || "js";
-    const filePath = fileName || `solution.${ext}`;
-
-    try {
-      const fileResult = await modalService.readFile(id, filePath);
-      if (fileResult.success && fileResult.content) {
-        code = fileResult.content;
-        logger.info("[Evaluate] Successfully fetched code from sandbox", {
-          candidateId: id,
-          filePath,
-          codeLength: code.length,
-        });
-      } else {
-        // Try to get any file from workspace
-        logger.warn("[Evaluate] Could not read specific file, trying to list workspace", {
-          candidateId: id,
-          filePath,
-          error: fileResult.error,
-        });
-
-        // Try common filenames
-        const commonFiles = [`index.${ext}`, `main.${ext}`, `app.${ext}`, `solution.${ext}`];
-        for (const commonFile of commonFiles) {
-          const result = await modalService.readFile(id, commonFile);
-          if (result.success && result.content && result.content.trim()) {
-            code = result.content;
-            logger.info("[Evaluate] Found code in alternative file", { candidateId: id, file: commonFile });
-            break;
-          }
-        }
-      }
-    } catch (error) {
-      logger.error("[Evaluate] Error fetching code from sandbox", error instanceof Error ? error : new Error("Unknown error"));
-    }
-
-    // Final check - if still no code, throw error
-    if (!code || code.trim() === "") {
-      throw new ValidationError(
-        "No code found to evaluate. Please write some code in the editor and try again."
-      );
-    }
+    logger.info("[Evaluate] Code not provided in request, agent will discover via tools", {
+      candidateId: id,
+      fileName,
+      language,
+    });
+    // Set code to empty string - agent will use tools to read from sandbox
+    code = "";
+  } else {
+    logger.info("[Evaluate] Code provided in request", {
+      candidateId: id,
+      codeLength: code.length,
+    });
   }
 
   // Fetch question details

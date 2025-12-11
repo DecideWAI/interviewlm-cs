@@ -102,8 +102,14 @@ export interface QuestionEvaluationConfig {
   questionDescription: string;
   questionDifficulty: string;
   questionRequirements: string[] | null;
-  code: string;
+  /**
+   * Code to evaluate. Optional - if not provided, agent will discover code
+   * from the Modal sandbox using tools (Read, ListFiles, etc.)
+   * When provided, code is included in prompt for backwards compatibility.
+   */
+  code?: string;
   language: string;
+  /** Hint for the primary solution file name */
   fileName?: string;
   passingThreshold?: number;
   workspaceRoot?: string;
@@ -180,11 +186,14 @@ The candidate is expected to write functional code, tests, and handle edge cases
 ${SHARED_TOOL_INSTRUCTIONS}
 
 ## Workflow
-1. First, run tests using RunTests to verify the solution works
-2. Read test files to assess test coverage and quality
-3. Read additional files for context (configs, related modules) if needed
-4. List files to understand project structure if needed
-5. After gathering context, call SubmitEvaluation to submit your final evaluation
+**IMPORTANT:** Code may NOT be provided inline in the prompt. You MUST use tools to discover and read it.
+
+1. First, use **ListFiles** to explore /workspace/ and understand the project structure
+2. Use **Read** to read the solution file(s) - look for common names like solution.*, main.*, index.*, app.*
+3. Use **RunTests** to verify the solution works
+4. Read test files to assess test coverage and quality
+5. Read additional files for context (configs, related modules) if needed
+6. After gathering context, call **SubmitEvaluation** to submit your final evaluation
 
 ## CRITICAL: Submitting Your Evaluation
 You MUST use the **SubmitEvaluation** tool to submit your final evaluation.
@@ -231,11 +240,14 @@ This is a system design assessment with a hybrid format:
 ${SHARED_TOOL_INSTRUCTIONS}
 
 ## Workflow
-1. First, read the DESIGN.md or design document to understand the proposed architecture
-2. Run tests using RunTests to verify the implementation works
-3. Read implementation files to assess how well code matches the design
-4. Read API contracts or interface definitions
-5. After gathering context, call SubmitEvaluation to submit your final evaluation
+**IMPORTANT:** Code may NOT be provided inline in the prompt. You MUST use tools to discover and read it.
+
+1. First, use **ListFiles** to explore /workspace/ and understand the project structure
+2. Use **Read** to read the DESIGN.md or design document to understand the proposed architecture
+3. Use **Read** to read implementation files to assess how well code matches the design
+4. Use **RunTests** to verify the implementation works
+5. Read API contracts or interface definitions
+6. After gathering context, call **SubmitEvaluation** to submit your final evaluation
 
 ## CRITICAL: Submitting Your Evaluation
 You MUST use the **SubmitEvaluation** tool to submit your final evaluation.
@@ -475,11 +487,14 @@ export class QuestionEvaluationAgent {
   private async _evaluateInternal(): Promise<EvaluationResult> {
     const startTime = Date.now();
 
-    // Debug: Log the code being evaluated
+    // Debug: Log the evaluation context
     console.log('[QuestionEvaluationAgent] Starting evaluation');
     console.log('[QuestionEvaluationAgent] Candidate ID:', this.config.candidateId);
-    console.log('[QuestionEvaluationAgent] Code length:', this.config.code.length);
-    console.log('[QuestionEvaluationAgent] Code preview (first 500 chars):', this.config.code.slice(0, 500));
+    if (this.config.code?.trim()) {
+      console.log('[QuestionEvaluationAgent] Code provided inline, length:', this.config.code.length);
+    } else {
+      console.log('[QuestionEvaluationAgent] Code will be discovered via tools from sandbox');
+    }
 
     const evaluationPrompt = this.buildEvaluationPrompt();
 
@@ -1021,6 +1036,32 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
       ? '\n- ' + this.config.questionRequirements.join('\n- ')
       : 'Complete the given task';
 
+    // Determine file extension for hints
+    const languageExtensions: Record<string, string> = {
+      javascript: 'js',
+      typescript: 'ts',
+      python: 'py',
+      go: 'go',
+      'node.js': 'js',
+    };
+    const ext = languageExtensions[this.config.language] || 'js';
+
+    // If code is provided inline (backwards compatibility), include it
+    // Otherwise, instruct agent to discover via tools
+    const codeSection = this.config.code?.trim()
+      ? `**Candidate's Code (provided inline for reference):**
+\`\`\`${this.config.language}
+${this.config.code}
+\`\`\`
+
+Note: The code is also available in the workspace. Use tools to explore additional files.`
+      : `**Workspace:** The candidate's solution is in the Modal sandbox at /workspace/
+**Language:** ${this.config.language}
+**Expected Files:** Look for solution files (e.g., solution.${ext}, main.${ext}, index.${ext}, app.${ext}, or *.${ext})
+${this.config.fileName ? `**Primary File:** ${this.config.fileName}` : ''}
+
+The code is NOT provided inline - you MUST use tools to read it.`;
+
     return `Evaluate this code solution for a technical interview.
 
 **Question:** ${this.config.questionTitle}
@@ -1030,19 +1071,17 @@ Call SubmitEvaluation with your assessment now. This is required to complete the
 **Requirements:**
 ${requirements}
 
-**Candidate's Code (${this.config.language}):**
-\`\`\`${this.config.language}
-${this.config.code}
-\`\`\`
+${codeSection}
 
 **Candidate ID:** ${this.config.candidateId}
 
 Before evaluating, you MUST:
-1. Run tests using RunTests to verify the solution works
-2. List files to understand the project structure
-3. Read test files or other relevant files for context if needed
+1. Use ListFiles to explore /workspace/ and understand the project structure
+2. Use Read to read the solution file(s) - start with the primary file or common names like solution.${ext}, main.${ext}
+3. Use RunTests to verify the solution works
+4. Read test files or other relevant files for additional context
 
-After gathering information, provide your FINAL_EVALUATION with JSON.
+After gathering information, call SubmitEvaluation with your final scores.
 `;
   }
 

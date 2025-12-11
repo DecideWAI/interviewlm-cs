@@ -84,7 +84,8 @@ class QuestionEvaluationAgentState(TypedDict, total=False):
     question_description: str
     question_requirements: list[str] | None
     question_difficulty: str
-    code: str
+    # Code is optional - agent will discover via tools if not provided
+    code: str | None
     language: str
     file_name: str | None
     test_output: str | None
@@ -124,6 +125,21 @@ QUESTION_EVALUATION_PROMPT = """You are a senior software engineer evaluating co
 
 **Your Role:**
 Evaluate the candidate's code solution and provide fair, constructive feedback.
+
+**IMPORTANT: Code Discovery**
+Code may NOT be provided inline in the prompt. You have access to tools to discover and read the code:
+- `list_files`: Explore /workspace/ to see project structure
+- `read_file`: Read solution files (look for solution.*, main.*, index.*, app.*)
+- `run_tests`: Execute the test suite
+- `grep_files`: Search for patterns in files
+- `glob_files`: Find files by pattern
+
+**Workflow:**
+1. First, use `list_files` to explore /workspace/
+2. Use `read_file` to read the solution file(s)
+3. Use `run_tests` to verify the solution works
+4. Read test files for additional context
+5. Evaluate and return JSON result
 
 **Evaluation Criteria (20 points each, 100 total):**
 
@@ -408,8 +424,9 @@ class QuestionEvaluationAgentGraph:
         question_description: str,
         question_difficulty: str,
         question_requirements: list[str] | None,
-        code: str,
+        code: str | None,
         language: str,
+        file_name: str | None = None,
         test_output: str | None = None,
         tests_passed: int | None = None,
         tests_failed: int | None = None,
@@ -434,6 +451,33 @@ Test Output:
 ```
 """
 
+        # Determine file extension for hints
+        language_extensions = {
+            "javascript": "js",
+            "typescript": "ts",
+            "python": "py",
+            "go": "go",
+            "node.js": "js",
+        }
+        ext = language_extensions.get(language, "js")
+
+        # If code is provided inline (backwards compatibility), include it
+        # Otherwise, instruct agent to discover via tools
+        if code and code.strip():
+            code_section = f"""**Candidate's Code (provided inline for reference):**
+```{language}
+{code}
+```
+
+Note: The code is also available in the workspace. Use tools to explore additional files."""
+        else:
+            file_hint = f"\n**Primary File:** {file_name}" if file_name else ""
+            code_section = f"""**Workspace:** The candidate's solution is in the Modal sandbox at /workspace/
+**Language:** {language}
+**Expected Files:** Look for solution files (e.g., solution.{ext}, main.{ext}, index.{ext}, app.{ext}, or *.{ext}){file_hint}
+
+The code is NOT provided inline - you MUST use tools to read it."""
+
         return f"""Evaluate this code solution for a technical interview.
 
 **Question:** {question_title}
@@ -443,11 +487,16 @@ Test Output:
 **Requirements:**
 {requirements_text}
 
-**Candidate's Code ({language}):**
-```{language}
-{code}
-```
+{code_section}
 {test_info}
+**IMPORTANT:** Code may NOT be provided inline. You MUST use tools to discover and read it.
+
+Before evaluating, you MUST:
+1. Use `list_files` to explore /workspace/ and understand the project structure
+2. Use `read_file` to read the solution file(s) - look for common names like solution.{ext}, main.{ext}
+3. Use `run_tests` to verify the solution works
+4. Read test files for additional context
+
 Evaluate the code on these 5 criteria (20 points each, 100 total):
 
 1. **Problem Completion (20 pts)**: Does the solution address all stated requirements?
@@ -481,8 +530,8 @@ Return ONLY valid JSON (no markdown code blocks):
         question_title: str,
         question_description: str,
         question_difficulty: str,
-        code: str,
         language: str,
+        code: str | None = None,
         question_requirements: list[str] | None = None,
         file_name: str | None = None,
         test_output: str | None = None,
@@ -500,10 +549,10 @@ Return ONLY valid JSON (no markdown code blocks):
             question_title: Title of the question
             question_description: Description of the question
             question_difficulty: Difficulty level
-            code: The candidate's code submission
             language: Programming language
+            code: Optional - The candidate's code. If not provided, agent discovers via tools.
             question_requirements: Optional list of requirements
-            file_name: Optional file name
+            file_name: Optional hint for primary solution file
             test_output: Optional test output
             tests_passed: Optional count of passed tests
             tests_failed: Optional count of failed tests
@@ -519,6 +568,7 @@ Return ONLY valid JSON (no markdown code blocks):
             question_requirements=question_requirements,
             code=code,
             language=language,
+            file_name=file_name,
             test_output=test_output,
             tests_passed=tests_passed,
             tests_failed=tests_failed,
