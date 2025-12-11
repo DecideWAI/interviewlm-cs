@@ -1,12 +1,13 @@
 "use client";
 
-import { AssessmentConfig, Role, SeniorityLevel, PricingTier, AssessmentType } from "@/types/assessment";
-import { ROLES, SENIORITY_LEVELS, isRoleAvailableForTier, getRecommendedDuration } from "@/lib/assessment-config";
+import { useState, useEffect } from "react";
+import { AssessmentConfig, Role, SeniorityLevel, PricingTier, AssessmentType, RoleMetadata, SeniorityMetadata } from "@/types/assessment";
+import { getRecommendedDuration } from "@/lib/assessment-config";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import * as Icons from "lucide-react";
-import { LucideIcon } from "lucide-react";
+import { LucideIcon, Loader2 } from "lucide-react";
 
 interface RoleAndSeniorityStepProps {
   config: Partial<AssessmentConfig>;
@@ -21,24 +22,50 @@ export function RoleAndSeniorityStep({
   errors,
   userTier,
 }: RoleAndSeniorityStepProps) {
-  const handleRoleSelect = (role: Role) => {
+  const [roles, setRoles] = useState<Record<string, RoleMetadata>>({});
+  const [seniorityLevels, setSeniorityLevels] = useState<Record<string, SeniorityMetadata>>({});
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Fetch roles and seniority levels from database
+  useEffect(() => {
+    async function fetchConfig() {
+      setIsLoading(true);
+      try {
+        const response = await fetch("/api/config?type=all");
+        if (response.ok) {
+          const data = await response.json();
+          setRoles(data.data?.roles || {});
+          setSeniorityLevels(data.data?.seniorityLevels || {});
+        } else {
+          console.error("Failed to fetch config");
+        }
+      } catch (error) {
+        console.error("Error fetching config:", error);
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    fetchConfig();
+  }, []);
+  const handleRoleSelect = async (role: Role) => {
     const updates: Partial<AssessmentConfig> = { role };
 
     // Auto-update duration if role and seniority are both selected
     if (config.seniority) {
-      const recommendedDuration = getRecommendedDuration(role, config.seniority);
+      const recommendedDuration = await getRecommendedDuration(role, config.seniority);
       updates.duration = recommendedDuration;
     }
 
     onUpdate(updates);
   };
 
-  const handleSenioritySelect = (seniority: SeniorityLevel) => {
+  const handleSenioritySelect = async (seniority: SeniorityLevel) => {
     const updates: Partial<AssessmentConfig> = { seniority };
 
     // Auto-update duration if role and seniority are both selected
     if (config.role) {
-      const recommendedDuration = getRecommendedDuration(config.role, seniority);
+      const recommendedDuration = await getRecommendedDuration(config.role, seniority);
       updates.duration = recommendedDuration;
     }
 
@@ -62,12 +89,18 @@ export function RoleAndSeniorityStep({
           <p className="text-sm text-error">{errors.role}</p>
         )}
 
+        {isLoading ? (
+          <div className="flex items-center justify-center p-8">
+            <Loader2 className="h-6 w-6 animate-spin text-text-tertiary" />
+            <span className="ml-2 text-text-secondary">Loading roles...</span>
+          </div>
+        ) : (
         <div className="grid grid-cols-2 gap-3">
-          {Object.values(ROLES).map((role) => {
-            const isAvailable = isRoleAvailableForTier(role.id, userTier);
+          {Object.values(roles).map((role) => {
+            const isAvailable = role.availableInTiers?.includes(userTier) ?? true;
             const isActive = role.status === "active";
             const isSelected = config.role === role.id;
-            const IconComponent = getIconComponent(role.icon);
+            const IconComponent = getIconComponent(role.icon || "Circle");
 
             return (
               <button
@@ -118,6 +151,7 @@ export function RoleAndSeniorityStep({
             );
           })}
         </div>
+        )}
 
         {config.role === "custom" && (
           <div className="mt-3">
@@ -139,8 +173,14 @@ export function RoleAndSeniorityStep({
           <p className="text-sm text-error">{errors.seniority}</p>
         )}
 
+        {isLoading ? (
+          <div className="flex items-center justify-center p-8">
+            <Loader2 className="h-6 w-6 animate-spin text-text-tertiary" />
+            <span className="ml-2 text-text-secondary">Loading seniority levels...</span>
+          </div>
+        ) : (
         <div className="space-y-2">
-          {Object.values(SENIORITY_LEVELS).map((level) => {
+          {Object.values(seniorityLevels).map((level) => {
             const isSelected = config.seniority === level.id;
 
             return (
@@ -204,6 +244,7 @@ export function RoleAndSeniorityStep({
             );
           })}
         </div>
+        )}
       </div>
 
       {/* Assessment Type Selection */}
@@ -344,8 +385,8 @@ export function RoleAndSeniorityStep({
               </h4>
               <p className="text-sm text-text-secondary mb-2">
                 Based on your selection of{" "}
-                <span className="font-medium">{SENIORITY_LEVELS[config.seniority].name}</span>{" "}
-                <span className="font-medium">{ROLES[config.role].name}</span>{" "}
+                <span className="font-medium">{seniorityLevels[config.seniority]?.name}</span>{" "}
+                <span className="font-medium">{roles[config.role]?.name}</span>{" "}
                 with{" "}
                 <span className="font-medium">
                   {config.assessmentType === "real_world" ? "Real World Problem" : "System Design"}
@@ -354,13 +395,13 @@ export function RoleAndSeniorityStep({
               <ul className="space-y-1 text-sm text-text-secondary">
                 <li>
                   • <span className="font-medium">Duration:</span>{" "}
-                  {getRecommendedDuration(config.role, config.seniority)} minutes
+                  {config.duration ?? seniorityLevels[config.seniority]?.defaultDuration ?? 60} minutes
                 </li>
                 <li>
                   • <span className="font-medium">Difficulty Mix:</span>{" "}
-                  {SENIORITY_LEVELS[config.seniority].difficultyMix.easy}% Easy,{" "}
-                  {SENIORITY_LEVELS[config.seniority].difficultyMix.medium}% Medium,{" "}
-                  {SENIORITY_LEVELS[config.seniority].difficultyMix.hard}% Hard
+                  {seniorityLevels[config.seniority]?.difficultyMix?.easy ?? 20}% Easy,{" "}
+                  {seniorityLevels[config.seniority]?.difficultyMix?.medium ?? 60}% Medium,{" "}
+                  {seniorityLevels[config.seniority]?.difficultyMix?.hard ?? 20}% Hard
                 </li>
                 <li>
                   • <span className="font-medium">Evaluation Focus:</span>{" "}
@@ -370,7 +411,7 @@ export function RoleAndSeniorityStep({
                 </li>
                 <li>
                   • <span className="font-medium">Role Focus:</span>{" "}
-                  {ROLES[config.role].description}
+                  {roles[config.role]?.description}
                 </li>
               </ul>
             </div>

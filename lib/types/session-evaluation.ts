@@ -114,7 +114,7 @@ export interface SessionData {
   interviewMetrics?: {
     aiDependencyScore?: number;
     irtTheta?: number;
-    strugglingIndicators?: string[];
+    strugglingIndicators?: import("@/lib/types/interview-agent").StrugglingIndicator[];
   };
 }
 

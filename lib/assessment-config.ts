@@ -1,5 +1,11 @@
 /**
- * Assessment Configuration Constants and Utilities
+ * Assessment Configuration
+ *
+ * This file provides type definitions and re-exports async functions
+ * that fetch configuration from the database.
+ *
+ * IMPORTANT: All config data now comes from the database.
+ * Use the async functions to fetch config values.
  */
 
 import {
@@ -12,8 +18,43 @@ import {
   AssessmentTemplate,
 } from "@/types/assessment";
 
+// Re-export async functions from config-service
+export {
+  getRoleConfigs,
+  getRoleConfig,
+  getAllSeniorityConfigs,
+  getSeniorityConfig,
+  getTierConfig,
+  getAllTierConfigs,
+  isRoleAvailableForTier,
+  getAllAssessmentTemplates,
+  getAssessmentTemplate,
+  getRecommendedDuration,
+  getScoringWeights,
+} from "@/lib/services/config-service";
+
+// Re-export types from config-service
+export type {
+  RoleConfigData,
+  SeniorityConfigData,
+  TierConfigData,
+  AssessmentTemplateData,
+  QuestionSeedData,
+} from "@/lib/services/config-service";
+
+// =============================================================================
+// Type Definitions (kept for backward compatibility)
+// =============================================================================
+
+export type { Role, RoleMetadata, SeniorityLevel, SeniorityMetadata, PricingTier, TierLimits, AssessmentTemplate };
+
+// =============================================================================
+// DEPRECATED: Hardcoded exports (will be removed)
+// These are kept temporarily for migration. Use the async functions instead.
+// =============================================================================
+
 /**
- * Role definitions with metadata
+ * @deprecated Use getRoleConfigs() from config-service instead
  */
 export const ROLES: Record<Role, RoleMetadata> = {
   backend: {
@@ -82,7 +123,7 @@ export const ROLES: Record<Role, RoleMetadata> = {
 };
 
 /**
- * Seniority level definitions with metadata
+ * @deprecated Use getAllSeniorityConfigs() from config-service instead
  */
 export const SENIORITY_LEVELS: Record<SeniorityLevel, SeniorityMetadata> = {
   junior: {
@@ -91,11 +132,7 @@ export const SENIORITY_LEVELS: Record<SeniorityLevel, SeniorityMetadata> = {
     description: "Early-career developers with 0-2 years of experience",
     experienceYears: "0-2 years",
     defaultDuration: 40,
-    difficultyMix: {
-      easy: 60,
-      medium: 30,
-      hard: 10,
-    },
+    difficultyMix: { easy: 60, medium: 30, hard: 10 },
   },
   mid: {
     id: "mid",
@@ -103,11 +140,7 @@ export const SENIORITY_LEVELS: Record<SeniorityLevel, SeniorityMetadata> = {
     description: "Developers with 2-5 years of solid experience",
     experienceYears: "2-5 years",
     defaultDuration: 60,
-    difficultyMix: {
-      easy: 20,
-      medium: 60,
-      hard: 20,
-    },
+    difficultyMix: { easy: 20, medium: 60, hard: 20 },
   },
   senior: {
     id: "senior",
@@ -115,11 +148,7 @@ export const SENIORITY_LEVELS: Record<SeniorityLevel, SeniorityMetadata> = {
     description: "Experienced engineers with 5-8 years of expertise",
     experienceYears: "5-8 years",
     defaultDuration: 75,
-    difficultyMix: {
-      easy: 10,
-      medium: 50,
-      hard: 40,
-    },
+    difficultyMix: { easy: 10, medium: 50, hard: 40 },
   },
   staff: {
     id: "staff",
@@ -127,11 +156,7 @@ export const SENIORITY_LEVELS: Record<SeniorityLevel, SeniorityMetadata> = {
     description: "Technical leaders with 8-12 years of experience",
     experienceYears: "8-12 years",
     defaultDuration: 90,
-    difficultyMix: {
-      easy: 5,
-      medium: 35,
-      hard: 60,
-    },
+    difficultyMix: { easy: 5, medium: 35, hard: 60 },
   },
   principal: {
     id: "principal",
@@ -139,16 +164,12 @@ export const SENIORITY_LEVELS: Record<SeniorityLevel, SeniorityMetadata> = {
     description: "Senior technical leaders with 12+ years of experience",
     experienceYears: "12+ years",
     defaultDuration: 90,
-    difficultyMix: {
-      easy: 0,
-      medium: 30,
-      hard: 70,
-    },
+    difficultyMix: { easy: 0, medium: 30, hard: 70 },
   },
 };
 
 /**
- * Tier-based feature limits
+ * @deprecated Use getTierConfig() from config-service instead
  */
 export const TIER_LIMITS: Record<PricingTier, TierLimits> = {
   payg: {
@@ -199,38 +220,18 @@ export const TIER_LIMITS: Record<PricingTier, TierLimits> = {
 };
 
 /**
- * Pricing tier display information
+ * @deprecated Use getTierConfig() from config-service instead
  */
 export const TIER_INFO = {
-  payg: {
-    name: "Pay-as-you-go",
-    price: 20,
-    description: "Perfect for trying out the platform",
-  },
-  small: {
-    name: "Small Pack",
-    price: 18,
-    description: "10 credits for $180",
-  },
-  medium: {
-    name: "Medium Pack",
-    price: 15,
-    description: "50 credits for $750",
-  },
-  large: {
-    name: "Large Pack",
-    price: 12,
-    description: "200 credits for $2,400",
-  },
-  enterprise: {
-    name: "Enterprise",
-    price: 10,
-    description: "500+ credits with volume discounts",
-  },
+  payg: { name: "Pay-as-you-go", price: 20, description: "Perfect for trying out the platform" },
+  small: { name: "Small Pack", price: 18, description: "10 credits for $180" },
+  medium: { name: "Medium Pack", price: 15, description: "50 credits for $750" },
+  large: { name: "Large Pack", price: 12, description: "200 credits for $2,400" },
+  enterprise: { name: "Enterprise", price: 10, description: "500+ credits with volume discounts" },
 };
 
 /**
- * Pre-built assessment templates
+ * @deprecated Use getAllAssessmentTemplates() from config-service instead
  */
 export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
   {
@@ -244,19 +245,9 @@ export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
     minTier: "payg",
     questionSeeds: [
       {
-        instructions: "Create simple REST API endpoints for a task management system. Focus on proper HTTP methods, status codes, and basic error handling.",
+        instructions: "Create simple REST API endpoints for a task management system.",
         topics: ["REST APIs", "HTTP Methods", "Error Handling"],
         difficultyDistribution: { easy: 60, medium: 30, hard: 10 },
-      },
-      {
-        instructions: "Implement a function to process a list of orders and calculate the total revenue by product category. Handle edge cases like missing data or invalid formats.",
-        topics: ["Data Processing", "Algorithms", "Error Handling"],
-        difficultyDistribution: { easy: 70, medium: 30, hard: 0 },
-      },
-      {
-        instructions: "Design a database schema for a simple blog application (users, posts, comments) and write SQL queries to fetch the latest posts with author details.",
-        topics: ["Database Design", "SQL", "Data Modeling"],
-        difficultyDistribution: { easy: 50, medium: 50, hard: 0 },
       },
     ],
   },
@@ -275,16 +266,6 @@ export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
         topics: ["Authentication", "Database Design", "API Security", "Performance"],
         difficultyDistribution: { easy: 20, medium: 60, hard: 20 },
       },
-      {
-        instructions: "Implement a caching layer for a high-traffic API endpoint using Redis. Handle cache invalidation and consistency strategies.",
-        topics: ["Caching", "Redis", "Performance Optimization"],
-        difficultyDistribution: { easy: 10, medium: 70, hard: 20 },
-      },
-      {
-        instructions: "Design a background job processing system for handling email notifications. Ensure reliability, retries, and failure handling.",
-        topics: ["Async Processing", "Message Queues", "System Design"],
-        difficultyDistribution: { easy: 10, medium: 60, hard: 30 },
-      },
     ],
   },
   {
@@ -301,16 +282,6 @@ export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
         instructions: "Design and implement a distributed system with message queues, caching, and database replication. Focus on scalability, reliability, and monitoring.",
         topics: ["System Design", "Microservices", "Caching", "Message Queues", "Monitoring"],
         difficultyDistribution: { easy: 10, medium: 50, hard: 40 },
-      },
-      {
-        instructions: "Optimize a slow database query involving multiple joins and millions of rows. Analyze the query plan and implement indexing or schema changes.",
-        topics: ["Database Optimization", "Performance Tuning", "SQL"],
-        difficultyDistribution: { easy: 0, medium: 40, hard: 60 },
-      },
-      {
-        instructions: "Architect a real-time chat application using WebSockets and a pub/sub system. Handle connection management, message persistence, and scalability.",
-        topics: ["Real-time Systems", "WebSockets", "System Architecture"],
-        difficultyDistribution: { easy: 0, medium: 50, hard: 50 },
       },
     ],
   },
@@ -384,22 +355,26 @@ export const ASSESSMENT_TEMPLATES: AssessmentTemplate[] = [
   },
 ];
 
+// =============================================================================
+// DEPRECATED: Helper functions (use async versions from config-service)
+// =============================================================================
+
 /**
- * Get tier limits for a specific tier
+ * @deprecated Use getTierConfig() from config-service instead
  */
 export function getTierLimits(tier: PricingTier): TierLimits {
   return TIER_LIMITS[tier];
 }
 
 /**
- * Check if a role is available for a tier
+ * @deprecated Use getDifficultyMix via getSeniorityConfig() instead
  */
-export function isRoleAvailableForTier(role: Role, tier: PricingTier): boolean {
-  return ROLES[role].availableInTiers.includes(tier);
+export function getDifficultyMix(seniority: SeniorityLevel) {
+  return SENIORITY_LEVELS[seniority].difficultyMix;
 }
 
 /**
- * Get templates filtered by role and seniority
+ * @deprecated Use getAllAssessmentTemplates() from config-service instead
  */
 export function getTemplates(
   role?: Role,
@@ -410,25 +385,4 @@ export function getTemplates(
     if (seniority && template.seniority !== seniority) return false;
     return true;
   });
-}
-
-/**
- * Calculate recommended duration based on role and seniority
- */
-export function getRecommendedDuration(
-  role: Role,
-  seniority: SeniorityLevel
-): number {
-  const roleDefault = ROLES[role].defaultDuration;
-  const seniorityDefault = SENIORITY_LEVELS[seniority].defaultDuration;
-
-  // Average the two recommendations
-  return Math.round((roleDefault + seniorityDefault) / 2);
-}
-
-/**
- * Get difficulty distribution for a seniority level
- */
-export function getDifficultyMix(seniority: SeniorityLevel) {
-  return SENIORITY_LEVELS[seniority].difficultyMix;
 }

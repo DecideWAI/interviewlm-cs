@@ -1,12 +1,30 @@
 /**
  * Technology Catalog
- * Comprehensive catalog of supported technologies with detection patterns
+ *
+ * Technology data is stored in the database (Technology table).
+ * Use getTechnologies() from config-service for runtime access.
  */
 
 import { Technology, Role } from "@/types/assessment";
 
+// Re-export async functions from config-service
+export {
+  getTechnologies,
+  getTechnology,
+} from "@/lib/services/config-service";
+
+// Re-export types
+export type { TechnologyData } from "@/lib/services/config-service";
+
+// =============================================================================
+// DEPRECATED: Hardcoded exports (kept for seed scripts)
+// These are used by prisma/seeds/tech-seeds.ts to populate the database.
+// Runtime code should use getTechnologies() from config-service.
+// =============================================================================
+
 /**
  * LANGUAGES
+ * @deprecated Use getTechnologies({ category: 'language' }) from config-service instead
  */
 export const LANGUAGES: Record<string, Technology> = {
   python: {
@@ -169,6 +187,7 @@ export const LANGUAGES: Record<string, Technology> = {
 
 /**
  * FRAMEWORKS
+ * @deprecated Use getTechnologies({ category: 'framework' }) from config-service instead
  */
 export const FRAMEWORKS: Record<string, Technology> = {
   // Python Frameworks
@@ -485,6 +504,7 @@ export const FRAMEWORKS: Record<string, Technology> = {
 
 /**
  * DATABASES
+ * @deprecated Use getTechnologies({ category: 'database' }) from config-service instead
  */
 export const DATABASES: Record<string, Technology> = {
   postgresql: {
@@ -624,6 +644,7 @@ export const DATABASES: Record<string, Technology> = {
 
 /**
  * TESTING FRAMEWORKS
+ * @deprecated Use getTechnologies({ category: 'testing' }) from config-service instead
  */
 export const TESTING: Record<string, Technology> = {
   pytest: {
@@ -727,6 +748,7 @@ export const TESTING: Record<string, Technology> = {
 
 /**
  * TOOLS & INFRASTRUCTURE
+ * @deprecated Use getTechnologies({ category: 'tool' }) from config-service instead
  */
 export const TOOLS: Record<string, Technology> = {
   docker: {
@@ -874,6 +896,7 @@ export const TOOLS: Record<string, Technology> = {
 
 /**
  * Combine all technologies into one catalog
+ * @deprecated Use getTechnologies() from config-service instead
  */
 export const TECH_CATALOG: Record<string, Technology> = {
   ...LANGUAGES,
@@ -885,6 +908,7 @@ export const TECH_CATALOG: Record<string, Technology> = {
 
 /**
  * Get all technologies by category
+ * @deprecated Use getTechnologies({ category }) from config-service instead
  */
 export function getTechnologiesByCategory(category: string): Technology[] {
   return Object.values(TECH_CATALOG).filter((tech) => tech.category === category);
@@ -892,6 +916,7 @@ export function getTechnologiesByCategory(category: string): Technology[] {
 
 /**
  * Get technology by ID
+ * @deprecated Use getTechnology(id) from config-service instead
  */
 export function getTechnologyById(id: string): Technology | undefined {
   return TECH_CATALOG[id];
@@ -899,6 +924,7 @@ export function getTechnologyById(id: string): Technology | undefined {
 
 /**
  * Smart suggestions based on role
+ * @deprecated Store role-tech associations in database
  */
 export function getTechSuggestionsForRole(role: Role): {
   critical: Technology[];
@@ -956,6 +982,7 @@ export function getTechSuggestionsForRole(role: Role): {
 
 /**
  * Get common tech stacks (presets)
+ * @deprecated Store tech stack presets in database
  */
 export const TECH_STACK_PRESETS = {
   "python-backend": {
