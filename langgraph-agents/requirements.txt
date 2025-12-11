@@ -18,6 +18,7 @@ sse-starlette>=2.0.0
 # Database and caching
 redis>=6.0.0
 asyncpg>=0.29.0
+sqlalchemy[asyncio]>=2.0.0  # Async SQLAlchemy for config service
 
 # Async HTTP client
 httpx>=0.28.0

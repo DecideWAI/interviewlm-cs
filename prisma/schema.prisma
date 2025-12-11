@@ -92,6 +92,13 @@ model Organization {
   complexityProfiles   ComplexityProfile[]
   agentConfigs         AgentConfig[]
 
+  // Config system relations
+  configOverrides      ConfigOverride[]
+  roleConfigs          RoleConfig[]
+  seniorityConfigs     SeniorityConfig[]
+  technologies         Technology[]
+  assessmentTemplates  AssessmentTemplateConfig[]
+
   @@map("organizations")
 }
 
@@ -525,22 +532,38 @@ enum AgentBackend {
 
 model Technology {
   id                String   @id @default(cuid())
-  slug              String   @unique // e.g., "python", "react"
+  slug              String   // e.g., "python", "react"
   name              String
   category          String   // "language", "framework", "database", "tool", "testing"
   icon              String?  // Lucide icon name
   description       String?
   color             String?  // Hex color code
-  detectionPatterns Json?    @default("[]") // JSON array of patterns
+
+  // Detection patterns (expanded from detectionPatterns JSON)
+  detectionPatterns Json?    @default("[]") @map("detection_patterns") // Legacy JSON format
+  fileExtensions    String[] @default([]) @map("file_extensions")    // [".py", ".pyi"]
+  importPatterns    String[] @default([]) @map("import_patterns")    // ["import ", "from "]
+  contentPatterns   String[] @default([]) @map("content_patterns")   // Additional detection patterns
 
   // Relationships
-  pairedWithIds     String[] @default([]) // Array of IDs this tech is commonly paired with
+  pairedWithIds     String[] @default([]) @map("paired_with_ids") // Array of IDs this tech is commonly paired with
 
-  // Metadata
-  isActive          Boolean  @default(true)
+  // Role-based relevance
+  suggestedForRoles Json?    @map("suggested_for_roles") // { backend: "critical", frontend: "optional" }
+
+  // Multi-tenancy
+  isActive          Boolean  @default(true) @map("is_active")
+  isSystem          Boolean  @default(true) @map("is_system") // System = cannot delete
+  organizationId    String?  @map("organization_id") // null = system-wide
+
+  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
+  @@unique([slug, organizationId])
+  @@index([category])
+  @@index([isSystem])
   @@map("technologies")
 }
 
@@ -919,4 +942,256 @@ model QuestionExperimentAssignment {
   @@index([experimentId, variant])
   @@index([candidateId])
   @@map("question_experiment_assignments")
+}
+
+// =====================================================
+// CENTRALIZED CONFIG SYSTEM
+// Database-driven configuration with layered overrides
+// =====================================================
+
+enum OverridePolicy {
+  SYSTEM_ONLY         // Cannot be overridden by organizations
+  BOUNDED             // Can be overridden within min/max constraints
+  FULLY_CUSTOMIZABLE  // Full organization control
+}
+
+model ConfigCategory {
+  id              String         @id @default(cuid())
+  name            String         @unique // e.g., "security", "models", "tech_catalog"
+  description     String?
+  overridePolicy  OverridePolicy @default(SYSTEM_ONLY)
+
+  configItems     ConfigItem[]
+
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@map("config_categories")
+}
+
+model ConfigItem {
+  id              String         @id @default(cuid())
+  categoryId      String         @map("category_id")
+  key             String         // e.g., "RATE_LIMITS.aiMessagesPerMinute"
+  value           Json           // Actual config value
+  valueType       String         // "number", "string", "array", "object"
+
+  // Constraints for BOUNDED configs
+  minValue        Float?         @map("min_value")
+  maxValue        Float?         @map("max_value")
+  allowedValues   Json?          @map("allowed_values") // For enum-like constraints
+
+  // Metadata
+  description     String?
+  isActive        Boolean        @default(true) @map("is_active")
+
+  category        ConfigCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  overrides       ConfigOverride[]
+
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+
+  @@unique([categoryId, key])
+  @@map("config_items")
+}
+
+model ConfigOverride {
+  id              String       @id @default(cuid())
+  configItemId    String       @map("config_item_id")
+  organizationId  String       @map("organization_id")
+  value           Json         // Override value
+
+  // Audit trail
+  createdBy       String?      @map("created_by")
+  approvedBy      String?      @map("approved_by") // For sensitive configs
+  approvedAt      DateTime?    @map("approved_at")
+  reason          String?
+
+  configItem      ConfigItem   @relation(fields: [configItemId], references: [id], onDelete: Cascade)
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  @@unique([configItemId, organizationId])
+  @@map("config_overrides")
+}
+
+// =====================================================
+// SECURITY CONFIG (SYSTEM_ONLY)
+// Blocked commands, allowed commands, rate limits
+// =====================================================
+
+model SecurityConfig {
+  id          String   @id @default(cuid())
+  configType  String   @unique @map("config_type") // "blocked_patterns", "allowed_commands", "rate_limits", "session_timeouts"
+  value       Json
+  description String?
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("security_configs")
+}
+
+// =====================================================
+// MODEL CONFIG
+// Claude model configurations with pricing
+// =====================================================
+
+model ModelConfig {
+  id                    String   @id @default(cuid())
+  modelId               String   @unique @map("model_id") // e.g., "claude-sonnet-4-5-20250929"
+  name                  String
+  inputPricePerMToken   Float    @map("input_price_per_m_token")
+  outputPricePerMToken  Float    @map("output_price_per_m_token")
+  maxTokens             Int      @map("max_tokens")
+  contextWindow         Int      @map("context_window")
+  description           String?
+  useCase               String?  @map("use_case")
+
+  // Agent recommendations
+  recommendedFor        String[] @default([]) @map("recommended_for") // ["codingAgent", "evaluationAgent"]
+
+  isActive              Boolean  @default(true) @map("is_active")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  @@map("model_configs")
+}
+
+// =====================================================
+// SANDBOX CONFIG
+// Per-language Docker images and resource limits
+// =====================================================
+
+model SandboxConfig {
+  id                  String   @id @default(cuid())
+  language            String   @unique // e.g., "python", "javascript", "default"
+  dockerImage         String   @map("docker_image")
+
+  // Resource limits
+  cpu                 Float    @default(2.0)
+  memoryMb            Int      @default(2048) @map("memory_mb")
+  timeoutSeconds      Int      @default(3600) @map("timeout_seconds")
+
+  // Constraints for BOUNDED org overrides
+  maxCpu              Float    @default(4.0) @map("max_cpu")
+  maxMemoryMb         Int      @default(4096) @map("max_memory_mb")
+  maxTimeoutSeconds   Int      @default(7200) @map("max_timeout_seconds")
+
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@map("sandbox_configs")
+}
+
+// =====================================================
+// ROLE CONFIG
+// Role definitions (Backend, Frontend, Full-Stack, etc.)
+// =====================================================
+
+model RoleConfig {
+  id                String        @id @default(cuid())
+  roleId            String        @map("role_id") // "backend", "frontend", "fullstack", etc.
+  name              String
+  description       String?
+  icon              String?       // Lucide icon name
+  defaultDuration   Int           @default(60) @map("default_duration")
+  availableInTiers  String[]      @default([]) @map("available_in_tiers")
+  status            String        @default("active") // "active", "coming_soon"
+
+  // Multi-tenancy
+  isSystem          Boolean       @default(true) @map("is_system")
+  organizationId    String?       @map("organization_id")
+
+  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@unique([roleId, organizationId])
+  @@index([isSystem])
+  @@map("role_configs")
+}
+
+// =====================================================
+// SENIORITY CONFIG
+// Seniority levels with scoring weights
+// =====================================================
+
+model SeniorityConfig {
+  id                String        @id @default(cuid())
+  seniorityId       String        @map("seniority_id") // "junior", "mid", "senior", "staff", "principal"
+  name              String
+  description       String?
+  experienceYears   String?       @map("experience_years")
+  defaultDuration   Int           @default(60) @map("default_duration")
+
+  // Difficulty distribution
+  difficultyMix     Json          @map("difficulty_mix") // { easy: 60, medium: 30, hard: 10 }
+
+  // Scoring weights (from scoring.ts)
+  scoringWeights    Json?         @map("scoring_weights") // { technical: 0.35, aiCollaboration: 0.30, ... }
+
+  // Multi-tenancy
+  isSystem          Boolean       @default(true) @map("is_system")
+  organizationId    String?       @map("organization_id")
+
+  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  @@unique([seniorityId, organizationId])
+  @@index([isSystem])
+  @@map("seniority_configs")
+}
+
+// Tier configuration - pricing tiers and their limits
+model TierConfig {
+  id                       String   @id @default(cuid())
+  tierId                   String   @unique @map("tier_id") // "payg", "small", "medium", "large", "enterprise"
+  name                     String
+  price                    Float // per assessment
+  description              String?
+  maxCustomQuestions       Int?     @map("max_custom_questions") // null = unlimited
+  maxTeamMembers           Int?     @map("max_team_members") // null = unlimited
+  customRolesAllowed       Boolean  @default(false) @map("custom_roles_allowed")
+  customInstructionsAllowed Boolean @default(false) @map("custom_instructions_allowed")
+  advancedAnalytics        Boolean  @default(false) @map("advanced_analytics")
+  previewTestRuns          Int?     @map("preview_test_runs") // null = unlimited
+  isActive                 Boolean  @default(true) @map("is_active")
+
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  @@map("tier_configs")
+}
+
+// Assessment templates - pre-built question templates
+model AssessmentTemplateConfig {
+  id                String   @id @default(cuid())
+  templateId        String   @unique @map("template_id") // "backend-junior", etc.
+  name              String
+  role              String // "backend", "frontend", etc.
+  seniority         String // "junior", "mid", "senior", etc.
+  description       String?
+  estimatedDuration Int      @map("estimated_duration")
+  problemCount      Int      @map("problem_count")
+  minTier           String   @map("min_tier") // minimum tier required
+  questionSeeds     Json     @map("question_seeds") // Array of question seed objects
+  isActive          Boolean  @default(true) @map("is_active")
+  isSystem          Boolean  @default(true) @map("is_system")
+  organizationId    String?  @map("organization_id")
+
+  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@index([role, seniority])
+  @@index([isSystem])
+  @@map("assessment_template_configs")
 }

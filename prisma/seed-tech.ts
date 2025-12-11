@@ -22,26 +22,39 @@ async function main() {
 
     // 1. Create all technologies first
     for (const tech of allTechs) {
-        await prisma.technology.upsert({
-            where: { slug: tech.id },
-            update: {
-                name: tech.name,
-                category: tech.category,
-                icon: tech.icon,
-                description: tech.description,
-                color: tech.color,
-                detectionPatterns: (tech.detectionPatterns as any) || [],
-            },
-            create: {
+        const existing = await prisma.technology.findFirst({
+            where: {
                 slug: tech.id,
-                name: tech.name,
-                category: tech.category,
-                icon: tech.icon,
-                description: tech.description,
-                color: tech.color,
-                detectionPatterns: (tech.detectionPatterns as any) || [],
+                organizationId: null,
             },
         });
+
+        if (existing) {
+            await prisma.technology.update({
+                where: { id: existing.id },
+                data: {
+                    name: tech.name,
+                    category: tech.category,
+                    icon: tech.icon,
+                    description: tech.description,
+                    color: tech.color,
+                    detectionPatterns: (tech.detectionPatterns as any) || [],
+                },
+            });
+        } else {
+            await prisma.technology.create({
+                data: {
+                    slug: tech.id,
+                    name: tech.name,
+                    category: tech.category,
+                    icon: tech.icon,
+                    description: tech.description,
+                    color: tech.color,
+                    detectionPatterns: (tech.detectionPatterns as any) || [],
+                    organizationId: null,
+                },
+            });
+        }
         console.log(`Upserted tech: ${tech.name}`);
     }
 
@@ -55,13 +68,23 @@ async function main() {
             );
 
             if (validPairedIds.length > 0) {
-                await prisma.technology.update({
-                    where: { slug: tech.id },
-                    data: {
-                        pairedWithIds: validPairedIds,
+                // Find the technology by slug and organizationId
+                const existingTech = await prisma.technology.findFirst({
+                    where: {
+                        slug: tech.id,
+                        organizationId: null,
                     },
                 });
-                console.log(`Updated pairs for: ${tech.name}`);
+
+                if (existingTech) {
+                    await prisma.technology.update({
+                        where: { id: existingTech.id },
+                        data: {
+                            pairedWithIds: validPairedIds,
+                        },
+                    });
+                    console.log(`Updated pairs for: ${tech.name}`);
+                }
             }
         }
     }

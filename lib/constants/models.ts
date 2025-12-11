@@ -2,28 +2,42 @@
  * Claude Model Constants
  *
  * Centralized configuration for Claude AI models used across InterviewLM.
- * Includes pricing, token limits, and recommended use cases.
+ * All config data now comes from the database via config-service.
  */
 
 import type { ClaudeModel } from '../types/agent';
 
-/**
- * Model configuration
- */
+// Re-export async functions from config-service
+export {
+  getModelConfig as getModelConfigFromDb,
+  getAllModelConfigs,
+  getRecommendedModel,
+} from "@/lib/services/config-service";
+
+// Re-export types
+export type { ModelConfigData } from "@/lib/services/config-service";
+
+// =============================================================================
+// Type Definitions
+// =============================================================================
+
 export interface ModelConfig {
   id: ClaudeModel;
   name: string;
-  inputPricePerMToken: number; // USD per million tokens
-  outputPricePerMToken: number; // USD per million tokens
+  inputPricePerMToken: number;
+  outputPricePerMToken: number;
   maxTokens: number;
   contextWindow: number;
   description: string;
   useCase: string;
 }
 
+// =============================================================================
+// DEPRECATED: Hardcoded exports (kept for seed scripts)
+// =============================================================================
+
 /**
- * Claude model configurations
- * Pricing as of November 2025
+ * @deprecated Use getAllModelConfigs() from config-service instead
  */
 export const CLAUDE_MODELS: Record<ClaudeModel, ModelConfig> = {
   'claude-sonnet-4-5-20250929': {
@@ -36,7 +50,6 @@ export const CLAUDE_MODELS: Record<ClaudeModel, ModelConfig> = {
     description: 'Our smartest model for complex agents and coding',
     useCase: 'Coding Agent, Evaluation Agent',
   },
-
   'claude-haiku-4-5-20251001': {
     id: 'claude-haiku-4-5-20251001',
     name: 'Claude Haiku 4.5',
@@ -47,7 +60,6 @@ export const CLAUDE_MODELS: Record<ClaudeModel, ModelConfig> = {
     description: 'Our fastest model with near-frontier intelligence',
     useCase: 'Coding Agent (fast responses), Interview Agent',
   },
-
   'claude-opus-4-1-20250805': {
     id: 'claude-opus-4-1-20250805',
     name: 'Claude Opus 4.1',
@@ -61,7 +73,7 @@ export const CLAUDE_MODELS: Record<ClaudeModel, ModelConfig> = {
 };
 
 /**
- * Recommended models for each agent type
+ * @deprecated Use getRecommendedModel() from config-service instead
  */
 export const AGENT_MODEL_RECOMMENDATIONS = {
   codingAgent: 'claude-haiku-4-5-20251001' as ClaudeModel,
@@ -69,9 +81,22 @@ export const AGENT_MODEL_RECOMMENDATIONS = {
   evaluationAgent: 'claude-sonnet-4-5-20250929' as ClaudeModel,
 } as const;
 
+// =============================================================================
+// Cost Calculation Functions
+// =============================================================================
+
+export const CACHE_COST_MULTIPLIERS = {
+  write: 1.25,
+  read: 0.1,
+} as const;
+
 /**
- * Calculate estimated cost for a conversation
+ * @deprecated Use async getModelConfigFromDb() instead
  */
+export function getModelConfig(model: ClaudeModel): ModelConfig {
+  return CLAUDE_MODELS[model];
+}
+
 export function estimateCost(
   model: ClaudeModel,
   inputTokens: number,
@@ -83,26 +108,6 @@ export function estimateCost(
   return inputCost + outputCost;
 }
 
-/**
- * Get model configuration
- */
-export function getModelConfig(model: ClaudeModel): ModelConfig {
-  return CLAUDE_MODELS[model];
-}
-
-/**
- * Prompt caching cost multipliers
- * - Write to cache: 1.25x input price
- * - Read from cache: 0.10x input price (90% savings)
- */
-export const CACHE_COST_MULTIPLIERS = {
-  write: 1.25,
-  read: 0.1,
-} as const;
-
-/**
- * Calculate cost with prompt caching
- */
 export function estimateCostWithCaching(
   model: ClaudeModel,
   inputTokens: number,
@@ -110,20 +115,9 @@ export function estimateCostWithCaching(
   cachedTokens: number = 0
 ): number {
   const config = CLAUDE_MODELS[model];
-
-  // Uncached tokens
   const uncachedInputTokens = inputTokens - cachedTokens;
-  const uncachedCost =
-    (uncachedInputTokens / 1_000_000) * config.inputPricePerMToken;
-
-  // Cached tokens (90% discount)
-  const cachedCost =
-    (cachedTokens / 1_000_000) *
-    config.inputPricePerMToken *
-    CACHE_COST_MULTIPLIERS.read;
-
-  // Output tokens (no caching)
+  const uncachedCost = (uncachedInputTokens / 1_000_000) * config.inputPricePerMToken;
+  const cachedCost = (cachedTokens / 1_000_000) * config.inputPricePerMToken * CACHE_COST_MULTIPLIERS.read;
   const outputCost = (outputTokens / 1_000_000) * config.outputPricePerMToken;
-
   return uncachedCost + cachedCost + outputCost;
 }

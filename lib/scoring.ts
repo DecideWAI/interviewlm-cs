@@ -1,5 +1,8 @@
 /**
  * Scoring and evaluation logic for candidate assessments
+ *
+ * Scoring weights are now stored in the database (SeniorityConfig).
+ * Use getScoringWeights() from config-service for DB-backed values.
  */
 
 import {
@@ -11,8 +14,12 @@ import {
 } from "@/types/analytics";
 import { SeniorityLevel } from "@/types/assessment";
 
+// Re-export async function from config-service
+export { getScoringWeights } from "@/lib/services/config-service";
+
 /**
  * Scoring weights by seniority level
+ * @deprecated Use getScoringWeights() from config-service instead
  */
 export const SCORING_WEIGHTS: Record<
   SeniorityLevel,

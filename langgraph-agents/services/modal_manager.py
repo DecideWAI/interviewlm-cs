@@ -20,20 +20,19 @@ import os
 import re
 import asyncio
 import time
+import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from config import settings
 
-# =============================================================================
-# Configuration Constants (matching TypeScript)
-# =============================================================================
+logger = logging.getLogger(__name__)
 
-# Sandbox configuration
-SANDBOX_TIMEOUT_S = 3600  # 1 hour
-SANDBOX_CPU = 2.0
-SANDBOX_MEMORY_MB = 2048
+# =============================================================================
+# Configuration Constants
+# NOTE: Sandbox and image configs now come from database only.
+# =============================================================================
 
 # Reconnection configuration (matching TypeScript)
 RECONNECT_TIMEOUT_S = 5  # 5 seconds per attempt
@@ -58,19 +57,81 @@ TOOL_TIMEOUT_SECONDS = 30
 # Universal image ID (set via environment)
 UNIVERSAL_IMAGE_ID = os.environ.get("MODAL_UNIVERSAL_IMAGE_ID")
 
-# Language-specific image map (matching TypeScript)
-IMAGE_MAP = {
-    'python': 'python:3.11-slim-bookworm',
-    'py': 'python:3.11-slim-bookworm',
-    'javascript': 'node:20-bookworm-slim',
-    'typescript': 'node:20-bookworm-slim',
-    'js': 'node:20-bookworm-slim',
-    'ts': 'node:20-bookworm-slim',
-    'go': 'golang:1.21-bookworm',
-    'golang': 'golang:1.21-bookworm',
-    'java': 'eclipse-temurin:21-jdk-jammy',
-    'rust': 'rust:1.75-slim-bookworm',
-}
+# =============================================================================
+# Config Service Integration (DB-backed configs - NO FALLBACKS)
+# =============================================================================
+
+# Config service import (lazy to avoid circular imports)
+_config_service = None
+
+def _get_config_service():
+    """Get config service instance (lazy initialization)."""
+    global _config_service
+    if _config_service is None:
+        try:
+            from services.config_service import get_config_service
+            _config_service = get_config_service()
+        except ImportError as e:
+            logger.error(f"Config service not available: {e}")
+            raise RuntimeError("Config service is required but not available") from e
+    return _config_service
+
+
+def _run_async(coro):
+    """Run async coroutine in sync context."""
+    try:
+        # Check if there's a running event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop, we can use asyncio.run directly
+            return asyncio.run(coro)
+
+        # Loop is running, need to run in a separate thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result(timeout=5)
+    except Exception as e:
+        logger.error(f"Failed to run async config call: {e}")
+        raise
+
+
+def get_sandbox_config_sync(language: str) -> Dict[str, Any]:
+    """
+    Get sandbox config from DB. Raises error if not available.
+
+    Returns dict with: cpu, memoryMb, timeoutSeconds, dockerImage
+    """
+    config_service = _get_config_service()
+    config = _run_async(config_service.get_sandbox_config(language))
+    if config:
+        logger.debug(f"Using DB sandbox config for {language}: {config}")
+        return config
+
+    raise RuntimeError(f"Sandbox config for '{language}' not found in database. Please run database seeds.")
+
+
+def get_image_map_sync() -> Dict[str, str]:
+    """Get image map from DB. Raises error if not available."""
+    config_service = _get_config_service()
+    image_map = _run_async(config_service.get_image_map())
+
+    if not image_map:
+        raise RuntimeError("Image map not found in database. Please run database seeds.")
+
+    # Add aliases pointing to same images
+    if 'python' in image_map:
+        image_map['py'] = image_map['python']
+    if 'javascript' in image_map:
+        image_map['js'] = image_map['javascript']
+    if 'typescript' in image_map:
+        image_map['ts'] = image_map['typescript']
+    if 'go' in image_map:
+        image_map['golang'] = image_map['go']
+
+    logger.debug(f"Using DB image map: {image_map}")
+    return image_map
 
 # =============================================================================
 # Optional Dependencies
@@ -294,7 +355,9 @@ class SandboxManager:
         if lang in cls._image_cache:
             return cls._image_cache[lang]
 
-        registry_image = IMAGE_MAP.get(lang, 'node:20-bookworm-slim')
+        # Get image from DB config (with fallback to defaults)
+        image_map = get_image_map_sync()
+        registry_image = image_map.get(lang, 'node:20-bookworm-slim')
         print(f"[SandboxManager] Using registry image for {lang}: {registry_image}")
 
         # Build image with common tools
@@ -558,16 +621,24 @@ class SandboxManager:
         else:
             image = cls._get_default_image()
 
+        # Get sandbox config from DB (with fallback to defaults)
+        sandbox_config = get_sandbox_config_sync(language or 'javascript')
+        sandbox_cpu = sandbox_config.get('cpu', DEFAULT_SANDBOX_CPU)
+        sandbox_memory = sandbox_config.get('memoryMb', DEFAULT_SANDBOX_MEMORY_MB)
+        sandbox_timeout = sandbox_config.get('timeoutSeconds', DEFAULT_SANDBOX_TIMEOUT_S)
+
+        print(f"[SandboxManager] Sandbox config: cpu={sandbox_cpu}, memory={sandbox_memory}MB, timeout={sandbox_timeout}s")
+
         # Create sandbox with keep-alive command (matching reference implementation)
         # The "tail -f /dev/null" keeps the sandbox alive without consuming resources
         sandbox = modal.Sandbox.create(
             "tail", "-f", "/dev/null",  # Keep-alive command
             app=cls._get_app(),
             image=image,
-            timeout=SANDBOX_TIMEOUT_S,
+            timeout=sandbox_timeout,
             workdir="/workspace",
-            cpu=SANDBOX_CPU,
-            memory=SANDBOX_MEMORY_MB,
+            cpu=sandbox_cpu,
+            memory=sandbox_memory,
         )
 
         # Initialize workspace

@@ -193,6 +193,7 @@ export function prepareMessagesForAPI(messages: MessageParam[]): MessageParam[] 
 
       // Prevent special token injection
       if (typeof msg.content === 'string') {
+        const content = msg.content;
         const dangerousTokens = [
           '<|im_start|>',
           '<|im_end|>',
@@ -200,7 +201,7 @@ export function prepareMessagesForAPI(messages: MessageParam[]): MessageParam[] 
           '\\n\\nHuman:',
           '\\n\\nAssistant:',
         ];
-        if (dangerousTokens.some((token) => msg.content.includes(token))) {
+        if (dangerousTokens.some((token) => content.includes(token))) {
           return false;
         }
       }

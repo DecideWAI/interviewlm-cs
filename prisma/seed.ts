@@ -1,5 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { seedAllConfigs } from "./seeds/config-seeds";
 
 const prisma = new PrismaClient();
 
@@ -18,7 +19,9 @@ async function main() {
 
   const user = await prisma.user.upsert({
     where: { email: "test@interviewlm.com" },
-    update: {},
+    update: {
+      password: hashedPassword, // Always update password on seed
+    },
     create: {
       email: "test@interviewlm.com",
       name: "Test User",
@@ -66,7 +69,9 @@ async function main() {
   // Create an admin user
   const adminUser = await prisma.user.upsert({
     where: { email: "admin@interviewlm.com" },
-    update: {},
+    update: {
+      password: hashedPassword, // Always update password on seed
+    },
     create: {
       email: "admin@interviewlm.com",
       name: "Admin User",
@@ -317,8 +322,12 @@ async function main() {
   let techSkipped = 0;
 
   for (const tech of technologies) {
-    const existing = await prisma.technology.findUnique({
-      where: { slug: tech.slug },
+    // Find existing system technology (organizationId is null)
+    const existing = await prisma.technology.findFirst({
+      where: {
+        slug: tech.slug,
+        organizationId: null,
+      },
     });
 
     if (existing) {
@@ -336,12 +345,17 @@ async function main() {
         color: tech.color,
         pairedWithIds: tech.pairedWithIds,
         isActive: true,
+        isSystem: true,
+        organizationId: null,
       },
     });
     techCreated++;
   }
 
   console.log(`✅ Created ${techCreated} technologies (${techSkipped} already existed)`);
+
+  // Seed configuration data (security, models, sandbox, roles, seniorities)
+  await seedAllConfigs();
 
   console.log("\n🎉 Seed completed successfully!");
   console.log("\nTest credentials:");

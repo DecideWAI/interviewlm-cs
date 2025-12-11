@@ -113,41 +113,56 @@ export async function POST(request: NextRequest) {
 
     const data = validationResult.data;
 
-    // Upsert config (create or update based on unique constraint)
-    const config = await prisma.agentConfig.upsert({
+    // Check if a config already exists with this organizationId/assessmentId combination
+    const existingConfig = await prisma.agentConfig.findFirst({
       where: {
-        organizationId_assessmentId: {
-          organizationId: data.organizationId ?? null,
-          assessmentId: data.assessmentId ?? null,
-        },
-      },
-      create: {
-        organizationId: data.organizationId,
-        assessmentId: data.assessmentId,
-        defaultBackend: data.defaultBackend,
-        enableExperiments: data.enableExperiments,
-        fallbackBackend: data.fallbackBackend,
-        langGraphWeight: data.langGraphWeight,
-        claudeSdkWeight: data.claudeSdkWeight,
-        description: data.description,
-        isActive: data.isActive,
-        createdBy: session.user.id,
-      },
-      update: {
-        defaultBackend: data.defaultBackend,
-        enableExperiments: data.enableExperiments,
-        fallbackBackend: data.fallbackBackend,
-        langGraphWeight: data.langGraphWeight,
-        claudeSdkWeight: data.claudeSdkWeight,
-        description: data.description,
-        isActive: data.isActive,
-      },
-      include: {
-        organization: {
-          select: { id: true, name: true, slug: true },
-        },
+        organizationId: data.organizationId ?? null,
+        assessmentId: data.assessmentId ?? null,
       },
     });
+
+    let config;
+    if (existingConfig) {
+      // Update existing config
+      config = await prisma.agentConfig.update({
+        where: { id: existingConfig.id },
+        data: {
+          defaultBackend: data.defaultBackend,
+          enableExperiments: data.enableExperiments,
+          fallbackBackend: data.fallbackBackend,
+          langGraphWeight: data.langGraphWeight,
+          claudeSdkWeight: data.claudeSdkWeight,
+          description: data.description,
+          isActive: data.isActive,
+        },
+        include: {
+          organization: {
+            select: { id: true, name: true, slug: true },
+          },
+        },
+      });
+    } else {
+      // Create new config
+      config = await prisma.agentConfig.create({
+        data: {
+          organizationId: data.organizationId ?? null,
+          assessmentId: data.assessmentId ?? null,
+          defaultBackend: data.defaultBackend,
+          enableExperiments: data.enableExperiments,
+          fallbackBackend: data.fallbackBackend,
+          langGraphWeight: data.langGraphWeight,
+          claudeSdkWeight: data.claudeSdkWeight,
+          description: data.description,
+          isActive: data.isActive,
+          createdBy: session.user.id,
+        },
+        include: {
+          organization: {
+            select: { id: true, name: true, slug: true },
+          },
+        },
+      });
+    }
 
     return NextResponse.json({ config });
   } catch (error) {

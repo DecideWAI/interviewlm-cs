@@ -12,7 +12,9 @@ SandboxManager has been extracted to services/modal_manager.py for better modula
 
 import re
 import base64
-from typing import Any
+import logging
+import asyncio
+from typing import Any, List
 from pathlib import Path
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
@@ -25,6 +27,8 @@ from services import (
     MODAL_AVAILABLE,
 )
 
+logger = logging.getLogger(__name__)
+
 # Timeout for tool operations (matches TypeScript implementation)
 TOOL_TIMEOUT_SECONDS = 30
 
@@ -33,48 +37,115 @@ sandbox_mgr = SandboxManager
 
 
 # =============================================================================
-# Security Helpers
+# Security Helpers (DB-backed, no fallbacks)
 # =============================================================================
 
-BLOCKED_COMMANDS = [
-    "rm -rf /",
-    "rm -rf /*",
-    "mkfs",
-    "dd if=",
-    ":(){:|:&};:",  # Fork bomb
-    "chmod 777 /",
-    "shutdown",
-    "reboot",
-    "halt",
-    "init 0",
-    "init 6",
-]
+# =============================================================================
+# Config Service Integration
+# =============================================================================
 
-BLOCKED_PATHS = [
-    "/etc/passwd",
-    "/etc/shadow",
-    "/etc/sudoers",
-    "/root/.ssh",
-    "~/.ssh",
-    ".env",
-    "credentials",
-    "secrets",
-]
+_config_service = None
+_cached_blocked_patterns: List[str] = None
+_cached_workspace_restrictions: List[str] = None
+
+
+def _get_config_service():
+    """Get config service instance (lazy initialization)."""
+    global _config_service
+    if _config_service is None:
+        try:
+            from services.config_service import get_config_service
+            _config_service = get_config_service()
+        except ImportError as e:
+            logger.warning(f"Config service not available: {e}")
+            return None
+    return _config_service
+
+
+def _run_async(coro):
+    """Run async coroutine in sync context."""
+    try:
+        # Check if there's a running event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop, we can use asyncio.run directly
+            return asyncio.run(coro)
+
+        # Loop is running, need to run in a separate thread
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, coro)
+            return future.result(timeout=5)
+    except Exception as e:
+        logger.warning(f"Failed to run async config call: {e}")
+        return None
+
+
+def get_blocked_patterns_sync() -> List[str]:
+    """Get blocked command patterns from DB. Raises error if not available."""
+    global _cached_blocked_patterns
+    if _cached_blocked_patterns is not None:
+        return _cached_blocked_patterns
+
+    config_service = _get_config_service()
+    if not config_service:
+        raise RuntimeError("Config service not available. Please ensure database is properly configured.")
+
+    patterns = _run_async(config_service.get_blocked_patterns())
+    if patterns:
+        _cached_blocked_patterns = patterns
+        logger.debug(f"Using DB blocked patterns: {len(patterns)} patterns")
+        return patterns
+
+    raise RuntimeError("Blocked patterns not found in database. Please run database seeds.")
+
+
+def get_workspace_restrictions_sync() -> List[str]:
+    """Get workspace path restrictions from DB. Raises error if not available."""
+    global _cached_workspace_restrictions
+    if _cached_workspace_restrictions is not None:
+        return _cached_workspace_restrictions
+
+    config_service = _get_config_service()
+    if not config_service:
+        raise RuntimeError("Config service not available. Please ensure database is properly configured.")
+
+    restrictions = _run_async(config_service.get_security_config("workspace_restrictions"))
+    if restrictions and isinstance(restrictions, dict):
+        # workspace_restrictions is a dict with blockedPaths array
+        blocked_paths = restrictions.get("blockedPaths", [])
+        if blocked_paths:
+            _cached_workspace_restrictions = blocked_paths
+            logger.debug(f"Using DB workspace restrictions: {len(blocked_paths)} paths")
+            return blocked_paths
+
+    raise RuntimeError("Workspace restrictions not found in database. Please run database seeds.")
 
 
 def is_command_allowed(command: str) -> tuple[bool, str]:
-    """Check if a bash command is allowed."""
+    """Check if a bash command is allowed using DB-backed patterns."""
     command_lower = command.lower()
-    for blocked in BLOCKED_COMMANDS:
-        if blocked.lower() in command_lower:
-            return False, f"Command contains blocked pattern: {blocked}"
+    blocked_patterns = get_blocked_patterns_sync()
+
+    for pattern in blocked_patterns:
+        # Try regex match first (DB stores regex patterns)
+        try:
+            if re.search(pattern, command_lower, re.IGNORECASE):
+                return False, f"Command blocked by security policy"
+        except re.error:
+            # If not valid regex, try simple string match
+            if pattern.lower() in command_lower:
+                return False, f"Command contains blocked pattern: {pattern}"
     return True, ""
 
 
 def is_path_allowed(path: str) -> tuple[bool, str]:
-    """Check if a file path is allowed."""
+    """Check if a file path is allowed using DB-backed restrictions."""
     normalized = path.replace("\\", "/")
-    for blocked in BLOCKED_PATHS:
+    blocked_paths = get_workspace_restrictions_sync()
+
+    for blocked in blocked_paths:
         if blocked in normalized:
             return False, f"Path contains blocked pattern: {blocked}"
     return True, ""

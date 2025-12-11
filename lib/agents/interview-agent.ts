@@ -308,14 +308,14 @@ export class InterviewAgent {
       case "session-started":
         metrics = handleSessionStarted(
           metrics,
-          eventData as SessionStartedEventData
+          eventData as unknown as SessionStartedEventData
         );
         break;
 
       case "ai-interaction":
         metrics = handleAIInteraction(
           metrics,
-          eventData as AIInteractionEventData
+          eventData as unknown as AIInteractionEventData
         );
         break;
 
@@ -324,13 +324,13 @@ export class InterviewAgent {
         break;
 
       case "test-run":
-        metrics = handleTestRun(metrics, eventData as TestRunEventData);
+        metrics = handleTestRun(metrics, eventData as unknown as TestRunEventData);
         break;
 
       case "question-answered":
         metrics = handleQuestionAnswered(
           metrics,
-          eventData as QuestionAnsweredEventData
+          eventData as unknown as QuestionAnsweredEventData
         );
         break;
 

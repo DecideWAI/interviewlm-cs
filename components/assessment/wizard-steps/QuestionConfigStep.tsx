@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { AssessmentConfig, QuestionSeed, PricingTier } from "@/types/assessment";
-import { ASSESSMENT_TEMPLATES, getTierLimits } from "@/lib/assessment-config";
+import { useState, useEffect } from "react";
+import { AssessmentConfig, QuestionSeed, PricingTier, AssessmentTemplate } from "@/types/assessment";
+import { getTierLimits } from "@/lib/assessment-config";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Plus, Trash2, Sparkles, Lock, Zap } from "lucide-react";
+import { FileText, Plus, Trash2, Sparkles, Lock, Zap, Loader2 } from "lucide-react";
 import { IncrementalSeedForm } from "../IncrementalSeedForm";
 
 interface QuestionConfigStepProps {
@@ -30,13 +30,36 @@ export function QuestionConfigStep({
   const [localSeeds, setLocalSeeds] = useState<QuestionSeed[]>(
     config.customQuestionSeeds || []
   );
+  const [availableTemplates, setAvailableTemplates] = useState<AssessmentTemplate[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
 
-  // Filter templates by role and seniority
-  const availableTemplates = ASSESSMENT_TEMPLATES.filter((template) => {
-    if (config.role && template.role !== config.role) return false;
-    if (config.seniority && template.seniority !== config.seniority) return false;
-    return true;
-  });
+  // Fetch templates from database when role or seniority changes
+  useEffect(() => {
+    async function fetchTemplates() {
+      setIsLoadingTemplates(true);
+      try {
+        const params = new URLSearchParams();
+        if (config.role) params.append("role", config.role);
+        if (config.seniority) params.append("seniority", config.seniority);
+
+        const response = await fetch(`/api/assessment-templates?${params.toString()}`);
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableTemplates(data.data || []);
+        } else {
+          console.error("Failed to fetch templates");
+          setAvailableTemplates([]);
+        }
+      } catch (error) {
+        console.error("Error fetching templates:", error);
+        setAvailableTemplates([]);
+      } finally {
+        setIsLoadingTemplates(false);
+      }
+    }
+
+    fetchTemplates();
+  }, [config.role, config.seniority]);
 
   const handleTemplateSelect = (templateId: string) => {
     onUpdate({ useTemplate: true, templateId });
@@ -111,7 +134,12 @@ export function QuestionConfigStep({
             <p className="text-sm text-error">{errors.template}</p>
           )}
 
-          {availableTemplates.length === 0 ? (
+          {isLoadingTemplates ? (
+            <div className="p-8 text-center border border-border rounded-lg bg-background-secondary">
+              <Loader2 className="h-12 w-12 mx-auto mb-3 text-text-tertiary animate-spin" />
+              <p className="text-text-secondary">Loading templates...</p>
+            </div>
+          ) : availableTemplates.length === 0 ? (
             <div className="p-8 text-center border border-border rounded-lg bg-background-secondary">
               <FileText className="h-12 w-12 mx-auto mb-3 text-text-tertiary" />
               <p className="text-text-secondary mb-1">No templates available</p>
