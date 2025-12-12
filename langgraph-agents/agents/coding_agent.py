@@ -21,7 +21,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
 
 from tools.coding_tools import CODING_TOOLS
-from config import settings
+from config import settings, generate_coding_thread_uuid
 from middleware.summarization import summarization_middleware
 
 
@@ -543,9 +543,11 @@ class CodingAgentGraph:
 
     async def send_message(self, message: str) -> dict:
         """Send a message to the coding agent."""
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_coding_thread_uuid(self.session_id)
         config = {
             "configurable": {
-                "thread_id": self.session_id,
+                "thread_id": thread_uuid,
                 "session_id": self.session_id,
             },
             "recursion_limit": 100,  # Increased from default 25 for complex tasks
@@ -616,9 +618,11 @@ class CodingAgentGraph:
         callbacks: Optional[StreamingCallbacks] = None,
     ) -> AsyncGenerator[dict, None]:
         """Send a message with streaming response."""
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_coding_thread_uuid(self.session_id)
         config = {
             "configurable": {
-                "thread_id": self.session_id,
+                "thread_id": thread_uuid,
                 "session_id": self.session_id,
             },
             "recursion_limit": 100,  # Increased from default 25 for complex tasks

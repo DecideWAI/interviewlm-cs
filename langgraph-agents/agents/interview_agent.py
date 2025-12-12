@@ -18,6 +18,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import BaseMessage
 from typing_extensions import TypedDict
 
+from config import generate_interview_thread_uuid
+
 
 # =============================================================================
 # State Schema (LangGraph v1 style)
@@ -342,14 +344,18 @@ class InterviewAgentGraph:
             "processing_complete": False,
         }
 
-        config = {"configurable": {"thread_id": session_id}}
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_interview_thread_uuid(session_id)
+        config = {"configurable": {"thread_id": thread_uuid}}
 
         result = await self.graph.ainvoke(initial_state, config)
         return result["metrics"]
 
     async def get_metrics(self, session_id: str) -> InterviewMetrics | None:
         """Get current metrics for a session."""
-        config = {"configurable": {"thread_id": session_id}}
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_interview_thread_uuid(session_id)
+        config = {"configurable": {"thread_id": thread_uuid}}
         state = await self.graph.aget_state(config)
         if state and state.values:
             return state.values.get("metrics")

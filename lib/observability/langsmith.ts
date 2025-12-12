@@ -11,7 +11,28 @@ import { wrapSDK } from "langsmith/wrappers";
 import { traceable } from "langsmith/traceable";
 import { Client } from "langsmith";
 import Anthropic from "@anthropic-ai/sdk";
+import { v5 as uuidv5 } from "uuid";
 import { logger } from "../utils/logger";
+
+// =============================================================================
+// Thread ID Generation (must match LangGraph SDK usage)
+// =============================================================================
+
+// Namespace UUID for generating deterministic thread IDs (DNS namespace - same as langgraph-client.ts)
+const LANGGRAPH_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
+/**
+ * Generate a deterministic UUID from session ID and agent type.
+ * This MUST match the logic in:
+ * - lib/services/langgraph-client.ts (generateThreadUUID)
+ * - app/api/interview/[id]/chat/agent/stream/route.ts (generateThreadUUID)
+ *
+ * This ensures all traces (LangSmith, LangGraph) use the same thread ID.
+ */
+function generateThreadUUID(sessionId: string, agentType: string = "coding_agent"): string {
+  const input = `${agentType}:${sessionId}`;
+  return uuidv5(input, LANGGRAPH_NAMESPACE);
+}
 
 // LangSmith client singleton
 let langsmithClient: Client | null = null;
@@ -63,23 +84,26 @@ function getBaseAnthropicClient(): Anthropic {
  * Get an Anthropic client with LangSmith tracing enabled
  * Falls back to regular client if LangSmith is not configured
  *
- * @param threadId - Optional thread ID to group traces (use sessionId)
+ * @param sessionId - Optional session ID to group traces (will be converted to deterministic UUID)
  */
-export function getTracedAnthropicClient(threadId?: string): Anthropic {
+export function getTracedAnthropicClient(sessionId?: string): Anthropic {
   const client = getBaseAnthropicClient();
 
   if (isLangSmithEnabled()) {
     try {
+      // Convert sessionId to deterministic UUID for consistent thread grouping
+      const threadUUID = sessionId ? generateThreadUUID(sessionId) : undefined;
+
       // Check if we already have a wrapped client for this thread
-      const cacheKey = threadId || "default";
+      const cacheKey = threadUUID || "default";
       let wrappedClient = wrappedClients.get(cacheKey);
 
       if (!wrappedClient) {
         // Wrap with SDK wrapper - this will pick up parent context from traceable
         wrappedClient = wrapSDK(client, {
           name: "anthropic",
-          runName: threadId ? `claude-${threadId.slice(0, 8)}` : "claude",
-          metadata: threadId ? { thread_id: threadId } : undefined,
+          runName: threadUUID ? `claude-${threadUUID.slice(0, 8)}` : "claude",
+          metadata: threadUUID ? { thread_id: threadUUID } : undefined,
         });
         wrappedClients.set(cacheKey, wrappedClient);
 
@@ -154,7 +178,10 @@ export async function withAgentTrace<T>(
   const previousThreadId = currentThreadId;
   const previousRunId = currentRunId;
 
-  currentThreadId = metadata.sessionId;
+  // Generate deterministic thread UUID to match LangGraph SDK
+  // This ensures all traces (LangSmith + LangGraph) share the same thread_id
+  const threadUUID = generateThreadUUID(metadata.sessionId);
+  currentThreadId = threadUUID;
   // Generate unique run ID for this message, or use provided messageId
   currentRunId = metadata.messageId || generateRunId(metadata.sessionId);
 
@@ -169,14 +196,14 @@ export async function withAgentTrace<T>(
         component: "CodingAgent",
         sessionId: metadata.sessionId,
         candidateId: metadata.candidateId,
-        thread_id: metadata.sessionId, // Group by session (thread)
+        thread_id: threadUUID, // Deterministic UUID matching LangGraph thread
         run_id: currentRunId, // Unique per message
         message_preview: metadata.message?.slice(0, 100), // First 100 chars of message
       },
       tags: [
         "agent",
         "interview",
-        `thread:${metadata.sessionId.slice(0, 8)}`,
+        `thread:${threadUUID.slice(0, 8)}`, // Use UUID prefix for consistency
         `run:${currentRunId.slice(0, 12)}`,
       ],
     });

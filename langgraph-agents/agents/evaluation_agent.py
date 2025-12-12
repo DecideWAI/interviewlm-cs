@@ -52,7 +52,7 @@ from tools.evaluation_tools import (
     ANALYSIS_TOOLS,
     STORAGE_TOOLS,
 )
-from config import settings
+from config import settings, generate_evaluation_thread_uuid
 
 
 # =============================================================================
@@ -421,9 +421,11 @@ and gather all relevant data before scoring.
 Session ID: {session_id}
 """
 
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_evaluation_thread_uuid(session_id)
         config = {
             "configurable": {
-                "thread_id": f"eval-{session_id}",
+                "thread_id": thread_uuid,
                 "session_id": session_id,  # Used by DB query tools
                 "candidate_id": candidate_id,  # Used by workspace tools (Modal sandbox key)
             }
@@ -554,9 +556,11 @@ and gather all relevant data before scoring.
 Session ID: {session_id}
 """
 
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_evaluation_thread_uuid(session_id)
         config = {
             "configurable": {
-                "thread_id": f"eval-{session_id}",
+                "thread_id": thread_uuid,
                 "session_id": session_id,
             }
         }
