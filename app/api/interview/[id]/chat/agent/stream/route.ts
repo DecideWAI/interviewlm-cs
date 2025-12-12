@@ -546,14 +546,28 @@ interface LangGraphCallOptions {
   onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => void;
 }
 
+import { v5 as uuidv5 } from 'uuid';
+
+// Namespace UUID for generating deterministic thread IDs
+const LANGGRAPH_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'; // DNS namespace
+
+/**
+ * Generate a deterministic UUID from session ID and agent type
+ * This ensures the same session always gets the same thread UUID
+ */
+function generateThreadUUID(sessionId: string, agentType: string): string {
+  const input = `${agentType}:${sessionId}`;
+  return uuidv5(input, LANGGRAPH_NAMESPACE);
+}
+
 /**
  * Get or create a LangGraph thread for a session
- * Uses deterministic thread ID format: {agentType}_{sessionId}
+ * Uses deterministic UUID v5 generated from agentType and sessionId
  * This ensures conversation history persists across requests
  */
 async function getOrCreateThread(sessionId: string, agentType: string = 'coding_agent'): Promise<string> {
-  // Use deterministic thread ID format for consistent history
-  const threadId = `${agentType}_${sessionId}`;
+  // Generate deterministic UUID for consistent history
+  const threadId = generateThreadUUID(sessionId, agentType);
 
   try {
     // Try to get existing thread
@@ -571,11 +585,11 @@ async function getOrCreateThread(sessionId: string, agentType: string = 'coding_
       threadId,
       metadata: { sessionId, agentType },
     });
-    console.log(`[LangGraph] Created thread ${threadId}`);
+    console.log(`[LangGraph] Created thread ${threadId} for session ${sessionId}`);
     return threadId;
   } catch (error) {
     // Thread may already exist (race condition) or creation failed
-    // Either way, use the deterministic ID
+    // Either way, use the deterministic UUID
     console.log(`[LangGraph] Using thread ${threadId}`);
     return threadId;
   }
@@ -700,8 +714,13 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
         const errorMessage = event.data?.message || 'Stream error';
         console.error('[LangGraph] Stream error:', event.data);
 
-        // Check if this is a corrupted thread state error (tool_use without tool_result)
-        if (errorMessage.includes('tool_use') && errorMessage.includes('tool_result') && retryCount < MAX_RETRIES) {
+        // Check if this is a recoverable error that requires clearing the thread
+        const isCorruptedThread =
+          (errorMessage.includes('tool_use') && errorMessage.includes('tool_result')) ||
+          errorMessage.includes('non-consecutive system messages') ||
+          errorMessage.includes('multiple non-consecutive');
+
+        if (isCorruptedThread && retryCount < MAX_RETRIES) {
           console.log('[LangGraph] Detected corrupted thread state, clearing and retrying...');
           // Delete the corrupted thread
           try {
@@ -729,8 +748,13 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[LangGraph] Streaming failed:', error);
 
-    // Check if this is a corrupted thread state error (tool_use without tool_result)
-    if (errorMessage.includes('tool_use') && errorMessage.includes('tool_result') && retryCount < MAX_RETRIES) {
+    // Check if this is a recoverable error that requires clearing the thread
+    const isCorruptedThread =
+      (errorMessage.includes('tool_use') && errorMessage.includes('tool_result')) ||
+      errorMessage.includes('non-consecutive system messages') ||
+      errorMessage.includes('multiple non-consecutive');
+
+    if (isCorruptedThread && retryCount < MAX_RETRIES) {
       console.log('[LangGraph] Detected corrupted thread state in catch, clearing and retrying...');
       // Delete the corrupted thread
       try {

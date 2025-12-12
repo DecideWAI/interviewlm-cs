@@ -184,26 +184,103 @@ def run_with_timeout(func, *args, timeout: float = TOOL_TIMEOUT_SECONDS, **kwarg
         raise TimeoutError(f"Operation timed out after {timeout}s")
 
 
+def run_with_retry(func, *args, max_retries: int = 2, timeout: float = TOOL_TIMEOUT_SECONDS, **kwargs):
+    """
+    Run a function with timeout and retry logic.
+
+    Retries on TimeoutError or sandbox connection errors.
+
+    Args:
+        func: Function to run
+        *args: Arguments to pass to the function
+        max_retries: Maximum number of retries (default: 2)
+        timeout: Timeout per attempt in seconds
+        **kwargs: Keyword arguments to pass to the function
+
+    Returns:
+        Function result
+
+    Raises:
+        Last exception if all retries fail
+    """
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            return run_with_timeout(func, *args, timeout=timeout, **kwargs)
+        except (TimeoutError, Exception) as e:
+            last_error = e
+            error_msg = str(e).lower()
+            # Retry on timeout or connection errors
+            if attempt < max_retries and (
+                "timeout" in error_msg or
+                "connection" in error_msg or
+                "sandbox" in error_msg
+            ):
+                logger.warning(f"Retry {attempt + 1}/{max_retries} after error: {e}")
+                time.sleep(1 * (attempt + 1))  # Exponential backoff
+                continue
+            raise
+    raise last_error
+
+
 # =============================================================================
 # Sandbox Helper Function
 # =============================================================================
 
-def run_in_sandbox(sandbox, *args, **kwargs):
+import threading
+
+# Per-sandbox locks to serialize operations (Modal sandboxes may not handle concurrent calls well)
+_sandbox_locks: Dict[str, threading.Lock] = {}
+_sandbox_locks_lock = threading.Lock()
+
+
+def _get_sandbox_lock(sandbox_id: str) -> threading.Lock:
+    """Get or create a lock for a specific sandbox."""
+    with _sandbox_locks_lock:
+        if sandbox_id not in _sandbox_locks:
+            _sandbox_locks[sandbox_id] = threading.Lock()
+            logger.debug(f"[SandboxLock] Created new lock for sandbox: {sandbox_id}")
+        return _sandbox_locks[sandbox_id]
+
+
+def run_in_sandbox(sandbox, *args, sandbox_id: str = None, **kwargs):
     """
-    Run a command in a Modal Sandbox.
+    Run a command in a Modal Sandbox with serialized access.
+
+    Modal sandboxes may not handle concurrent operations well.
+    This function serializes operations per sandbox to prevent hangs.
 
     Args:
         sandbox: Modal Sandbox instance
         *args: Command arguments (e.g., "bash", "-c", "ls")
+        sandbox_id: Optional sandbox ID for lock selection
         **kwargs: Additional options (e.g., timeout=60)
 
     Returns:
         Process result with stdout, stderr, returncode
     """
-    execute_method = getattr(sandbox, "exec")
-    proc = execute_method(*args, **kwargs)
-    proc.wait()
-    return proc
+    # Get lock for this sandbox (use object id if no sandbox_id provided)
+    lock_key = sandbox_id or str(id(sandbox))
+    lock = _get_sandbox_lock(lock_key)
+
+    # Extract command for logging
+    cmd_preview = " ".join(str(a)[:50] for a in args[:3]) if args else "unknown"
+    thread_id = threading.current_thread().name
+
+    logger.debug(f"[SandboxLock] Thread {thread_id} waiting for lock {lock_key[:20]}... (cmd: {cmd_preview})")
+
+    with lock:
+        logger.debug(f"[SandboxLock] Thread {thread_id} acquired lock {lock_key[:20]}, executing...")
+        try:
+            # Get the execute method from sandbox
+            run_method = getattr(sandbox, "exec")
+            proc = run_method(*args, **kwargs)
+            proc.wait()
+            logger.debug(f"[SandboxLock] Thread {thread_id} completed, releasing lock {lock_key[:20]}")
+            return proc
+        except Exception as e:
+            logger.error(f"[SandboxLock] Thread {thread_id} error in sandbox exec: {e}")
+            raise
 
 
 # =============================================================================

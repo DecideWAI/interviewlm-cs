@@ -105,14 +105,28 @@ export interface StreamingCallbacks {
 // Thread Management
 // =============================================================================
 
+import { v5 as uuidv5 } from 'uuid';
+
+// Namespace UUID for generating deterministic thread IDs
+const LANGGRAPH_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'; // DNS namespace
+
+/**
+ * Generate a deterministic UUID from session ID and agent type
+ * This ensures the same session always gets the same thread UUID
+ */
+function generateThreadUUID(sessionId: string, agentType: string): string {
+  const input = `${agentType}:${sessionId}`;
+  return uuidv5(input, LANGGRAPH_NAMESPACE);
+}
+
 /**
  * Get or create a thread for a session.
- * Uses deterministic thread ID format: {agentType}_{sessionId}
+ * Uses deterministic UUID v5 generated from agentType and sessionId
  * This ensures conversation history persists across requests.
  */
 export async function getOrCreateThread(sessionId: string, agentType: string = 'coding_agent'): Promise<string> {
-  // Use deterministic thread ID format for consistent history
-  const threadId = `${agentType}_${sessionId}`;
+  // Generate deterministic UUID for consistent history
+  const threadId = generateThreadUUID(sessionId, agentType);
 
   try {
     // Try to get existing thread
@@ -130,11 +144,11 @@ export async function getOrCreateThread(sessionId: string, agentType: string = '
       threadId,
       metadata: { sessionId, agentType },
     });
-    console.log(`[LangGraph] Created thread ${threadId}`);
+    console.log(`[LangGraph] Created thread ${threadId} for session ${sessionId}`);
     return threadId;
   } catch {
     // Thread may already exist (race condition) or creation failed
-    // Either way, use the deterministic ID
+    // Either way, use the deterministic UUID
     console.log(`[LangGraph] Using thread ${threadId}`);
     return threadId;
   }
@@ -405,7 +419,7 @@ export async function clearSession(sessionId: string): Promise<void> {
 
   for (const agentType of agentTypes) {
     try {
-      const threadId = `${agentType}_${sessionId}`;
+      const threadId = generateThreadUUID(sessionId, agentType);
       await client.threads.delete(threadId);
       console.log(`[LangGraph] Deleted thread ${threadId}`);
     } catch {

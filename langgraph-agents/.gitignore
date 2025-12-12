@@ -58,3 +58,7 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# LangGraph dev server
+.langgraph_api/
+*.pckl
