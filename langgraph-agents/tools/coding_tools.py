@@ -24,6 +24,7 @@ from services import (
     SandboxManager,
     run_in_sandbox,
     run_with_timeout,
+    run_with_retry,
     MODAL_AVAILABLE,
 )
 
@@ -121,43 +122,75 @@ def _run_async(coro):
 
 
 def get_blocked_patterns_sync() -> List[str]:
-    """Get blocked command patterns from DB."""
+    """Get blocked command patterns from DB with fallback defaults."""
     global _cached_blocked_patterns
     if _cached_blocked_patterns is not None:
         return _cached_blocked_patterns
 
-    config_service = _get_config_service()
-    if not config_service:
-        raise RuntimeError("Config service not available. Please ensure database is properly configured.")
+    # Fallback patterns if DB is unavailable
+    FALLBACK_BLOCKED_PATTERNS = [
+        r"rm\s+-rf\s+/",        # Dangerous recursive delete
+        r"mkfs",                 # Filesystem format
+        r"dd\s+if=",            # Direct disk writes
+        r":(){ :|:& };:",       # Fork bomb
+        r"chmod\s+-R\s+777",    # Dangerous permissions
+        r"curl.*\|\s*sh",       # Pipe to shell
+        r"wget.*\|\s*sh",       # Pipe to shell
+        r"nc\s+-e",             # Netcat reverse shell
+        r"python.*-c.*socket",  # Python reverse shell
+    ]
 
-    patterns = _run_async(config_service.get_blocked_patterns())
-    if patterns:
-        _cached_blocked_patterns = patterns
-        logger.debug(f"Using DB blocked patterns: {len(patterns)} patterns")
-        return patterns
+    try:
+        config_service = _get_config_service()
+        if config_service:
+            patterns = _run_async(config_service.get_blocked_patterns())
+            if patterns:
+                _cached_blocked_patterns = patterns
+                logger.debug(f"Using DB blocked patterns: {len(patterns)} patterns")
+                return patterns
+    except Exception as e:
+        logger.warning(f"Failed to load blocked patterns from DB: {e}")
 
-    raise RuntimeError("Blocked patterns not found in database. Please run database seeds.")
+    # Use fallback patterns
+    logger.info("Using fallback blocked patterns (DB unavailable)")
+    _cached_blocked_patterns = FALLBACK_BLOCKED_PATTERNS
+    return FALLBACK_BLOCKED_PATTERNS
 
 
 def get_workspace_restrictions_sync() -> List[str]:
-    """Get workspace path restrictions from DB."""
+    """Get workspace path restrictions from DB with fallback defaults."""
     global _cached_workspace_restrictions
     if _cached_workspace_restrictions is not None:
         return _cached_workspace_restrictions
 
-    config_service = _get_config_service()
-    if not config_service:
-        raise RuntimeError("Config service not available. Please ensure database is properly configured.")
+    # Fallback restrictions if DB is unavailable
+    FALLBACK_WORKSPACE_RESTRICTIONS = [
+        "/etc/",
+        "/root/",
+        "/var/",
+        "/usr/",
+        "/bin/",
+        "/sbin/",
+        "../",  # Directory traversal
+    ]
 
-    restrictions = _run_async(config_service.get_security_config("workspace_restrictions"))
-    if restrictions and isinstance(restrictions, dict):
-        blocked_paths = restrictions.get("blockedPaths", [])
-        if blocked_paths:
-            _cached_workspace_restrictions = blocked_paths
-            logger.debug(f"Using DB workspace restrictions: {len(blocked_paths)} paths")
-            return blocked_paths
+    try:
+        config_service = _get_config_service()
+        if config_service:
+            restrictions = _run_async(config_service.get_security_config("workspace_restrictions"))
+            if restrictions and isinstance(restrictions, dict):
+                blocked_paths = restrictions.get("blockedPaths", [])
+                if blocked_paths:
+                    _cached_workspace_restrictions = blocked_paths
+                    logger.debug(f"Using DB workspace restrictions: {len(blocked_paths)} paths")
+                    return blocked_paths
+    except Exception as e:
+        logger.warning(f"Failed to load workspace restrictions from DB: {e}")
 
-    raise RuntimeError("Workspace restrictions not found in database. Please run database seeds.")
+    # Use fallback restrictions
+    logger.info("Using fallback workspace restrictions (DB unavailable)")
+    _cached_workspace_restrictions = FALLBACK_WORKSPACE_RESTRICTIONS
+    return FALLBACK_WORKSPACE_RESTRICTIONS
 
 
 def is_command_allowed(command: str) -> tuple[bool, str]:
@@ -244,12 +277,14 @@ def read_file(
         if not file_path.startswith("/"):
             file_path = f"/workspace/{file_path}"
 
-        proc = run_in_sandbox(sb, "cat", file_path)
-        content = proc.stdout.read()
-        exit_code = proc.returncode
+        # Wrap in timeout with retry to prevent hanging
+        def _read_file():
+            proc = run_in_sandbox(sb, "cat", file_path)
+            return proc.stdout.read(), proc.returncode, proc.stderr.read()
+
+        content, exit_code, stderr = run_with_retry(_read_file, timeout=TOOL_TIMEOUT_SECONDS)
 
         if exit_code != 0:
-            stderr = proc.stderr.read()
             return {"success": False, "error": f"Failed to read file: {stderr}"}
 
         # Apply offset and limit
@@ -302,13 +337,17 @@ def write_file(
         if not file_path.startswith("/"):
             file_path = f"/workspace/{file_path}"
 
-        # Create parent directory
-        parent = str(Path(file_path).parent)
-        run_in_sandbox(sb, "mkdir", "-p", parent)
+        # Wrap in timeout with retry to prevent hanging
+        def _write_file():
+            # Create parent directory
+            parent = str(Path(file_path).parent)
+            run_in_sandbox(sb, "mkdir", "-p", parent)
 
-        # Write file using base64 to handle special characters safely
-        encoded = base64.b64encode(content.encode()).decode()
-        run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{file_path}'")
+            # Write file using base64 to handle special characters safely
+            encoded = base64.b64encode(content.encode()).decode()
+            run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{file_path}'")
+
+        run_with_retry(_write_file, timeout=TOOL_TIMEOUT_SECONDS)
 
         return {
             "success": True,
@@ -525,8 +564,12 @@ def grep_files(
         safe_pattern = pattern.replace('"', '\\"').replace("'", "\\'")
         cmd = f'grep -rn "{safe_pattern}" {path} 2>/dev/null | head -100'
 
-        proc = run_in_sandbox(sb, "bash", "-c", cmd)
-        stdout = proc.stdout.read()
+        # Wrap in timeout with retry to prevent hanging
+        def _grep():
+            proc = run_in_sandbox(sb, "bash", "-c", cmd)
+            return proc.stdout.read()
+
+        stdout = run_with_retry(_grep, timeout=TOOL_TIMEOUT_SECONDS)
 
         matches = []
         for line in stdout.strip().split("\n"):
@@ -635,11 +678,12 @@ def run_bash(
         # Build command with working directory
         full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {command}"
 
-        proc = run_in_sandbox(sb, "bash", "-c", full_cmd, timeout=min(timeout, 120))
+        # Wrap in timeout with retry to prevent hanging
+        def _run_bash():
+            proc = run_in_sandbox(sb, "bash", "-c", full_cmd, timeout=min(timeout, 120))
+            return proc.stdout.read(), proc.stderr.read(), proc.returncode
 
-        stdout = proc.stdout.read()
-        stderr = proc.stderr.read()
-        exit_code = proc.returncode
+        stdout, stderr, exit_code = run_with_retry(_run_bash, timeout=min(timeout, 120))
 
         return {
             "success": exit_code == 0,
@@ -647,16 +691,16 @@ def run_bash(
             "stderr": sanitize_output(stderr),
             "exit_code": exit_code,
         }
+    except TimeoutError:
+        return {
+            "success": False,
+            "error": f"Command timed out after {timeout}s",
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+        }
     except Exception as e:
         error_msg = str(e)
-        if "timeout" in error_msg.lower():
-            return {
-                "success": False,
-                "error": f"Command timed out after {timeout}s",
-                "stdout": "",
-                "stderr": "",
-                "exit_code": -1,
-            }
         return {
             "success": False,
             "error": error_msg,

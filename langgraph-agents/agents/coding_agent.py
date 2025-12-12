@@ -416,6 +416,47 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
 
 
 # =============================================================================
+# Middleware: System Prompt Handling for Thread Persistence
+# =============================================================================
+
+@wrap_model_call
+async def system_prompt_middleware(request: ModelRequest, handler) -> ModelResponse:
+    """Ensure system prompt is only present once at the start of messages.
+
+    When using thread persistence, the system message accumulates in the thread.
+    This middleware ensures we have exactly one system message at the beginning
+    to avoid the 'multiple non-consecutive system messages' error.
+    """
+    messages = list(request.messages) if request.messages else []
+
+    # Check if first message is already a SystemMessage
+    has_system_at_start = messages and isinstance(messages[0], SystemMessage)
+
+    # Count system messages
+    system_messages = [m for m in messages if isinstance(m, SystemMessage)]
+
+    if len(system_messages) > 1:
+        # Multiple system messages - keep only the first one
+        seen_system = False
+        filtered_messages = []
+        for msg in messages:
+            if isinstance(msg, SystemMessage):
+                if not seen_system:
+                    filtered_messages.append(msg)
+                    seen_system = True
+                # Skip subsequent system messages
+            else:
+                filtered_messages.append(msg)
+        request.messages = filtered_messages
+    elif not has_system_at_start and system_messages:
+        # System message exists but not at start - move it
+        non_system = [m for m in messages if not isinstance(m, SystemMessage)]
+        request.messages = system_messages[:1] + non_system
+
+    return await handler(request)
+
+
+# =============================================================================
 # Agent Factory
 # =============================================================================
 
@@ -445,8 +486,9 @@ def create_coding_agent_graph(
     model = _create_anthropic_model(settings.coding_agent_model)
 
     # Build middleware list
-    # Order matters: summarization -> model_selection -> caching (caching MUST be last)
+    # Order matters: system_prompt -> summarization -> model_selection -> caching (caching MUST be last)
     middleware = [
+        system_prompt_middleware,      # Deduplicate system messages for thread persistence
         summarization_middleware,      # Summarize long conversations first
         model_selection_middleware,    # Select model and convert tools
         anthropic_caching_middleware,  # Add cache_control (MUST run LAST)
