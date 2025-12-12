@@ -31,8 +31,13 @@ logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Configuration Constants
-# NOTE: Sandbox and image configs now come from database only.
+# Primary configs come from database, with fallback defaults for robustness
 # =============================================================================
+
+# Default sandbox configuration (fallback when DB unavailable)
+DEFAULT_SANDBOX_CPU = 2
+DEFAULT_SANDBOX_MEMORY_MB = 2048
+DEFAULT_SANDBOX_TIMEOUT_S = 3600  # 1 hour
 
 # Reconnection configuration (matching TypeScript)
 RECONNECT_TIMEOUT_S = 5  # 5 seconds per attempt
@@ -99,39 +104,69 @@ def _run_async(coro):
 
 def get_sandbox_config_sync(language: str) -> Dict[str, Any]:
     """
-    Get sandbox config from DB. Raises error if not available.
+    Get sandbox config from DB with fallback defaults.
 
     Returns dict with: cpu, memoryMb, timeoutSeconds, dockerImage
     """
-    config_service = _get_config_service()
-    config = _run_async(config_service.get_sandbox_config(language))
-    if config:
-        logger.debug(f"Using DB sandbox config for {language}: {config}")
-        return config
+    # Fallback config when DB is unavailable
+    FALLBACK_CONFIG = {
+        'cpu': DEFAULT_SANDBOX_CPU,
+        'memoryMb': DEFAULT_SANDBOX_MEMORY_MB,
+        'timeoutSeconds': DEFAULT_SANDBOX_TIMEOUT_S,
+    }
 
-    raise RuntimeError(f"Sandbox config for '{language}' not found in database. Please run database seeds.")
+    try:
+        config_service = _get_config_service()
+        config = _run_async(config_service.get_sandbox_config(language))
+        if config:
+            logger.debug(f"Using DB sandbox config for {language}: {config}")
+            return config
+    except Exception as e:
+        logger.warning(f"Failed to get sandbox config from DB: {e}")
+
+    # Use fallback config
+    logger.info(f"Using fallback sandbox config for {language}")
+    return FALLBACK_CONFIG
 
 
 def get_image_map_sync() -> Dict[str, str]:
-    """Get image map from DB. Raises error if not available."""
-    config_service = _get_config_service()
-    image_map = _run_async(config_service.get_image_map())
+    """Get image map from DB with fallback defaults."""
+    # Fallback image map when DB is unavailable
+    FALLBACK_IMAGE_MAP = {
+        'python': 'python:3.11-bookworm-slim',
+        'py': 'python:3.11-bookworm-slim',
+        'javascript': 'node:20-bookworm-slim',
+        'js': 'node:20-bookworm-slim',
+        'typescript': 'node:20-bookworm-slim',
+        'ts': 'node:20-bookworm-slim',
+        'go': 'golang:1.21-bookworm',
+        'golang': 'golang:1.21-bookworm',
+        'rust': 'rust:1.75-bookworm',
+    }
 
-    if not image_map:
-        raise RuntimeError("Image map not found in database. Please run database seeds.")
+    try:
+        config_service = _get_config_service()
+        image_map = _run_async(config_service.get_image_map())
 
-    # Add aliases pointing to same images
-    if 'python' in image_map:
-        image_map['py'] = image_map['python']
-    if 'javascript' in image_map:
-        image_map['js'] = image_map['javascript']
-    if 'typescript' in image_map:
-        image_map['ts'] = image_map['typescript']
-    if 'go' in image_map:
-        image_map['golang'] = image_map['go']
+        if image_map:
+            # Add aliases pointing to same images
+            if 'python' in image_map:
+                image_map['py'] = image_map['python']
+            if 'javascript' in image_map:
+                image_map['js'] = image_map['javascript']
+            if 'typescript' in image_map:
+                image_map['ts'] = image_map['typescript']
+            if 'go' in image_map:
+                image_map['golang'] = image_map['go']
 
-    logger.debug(f"Using DB image map: {image_map}")
-    return image_map
+            logger.debug(f"Using DB image map: {image_map}")
+            return image_map
+    except Exception as e:
+        logger.warning(f"Failed to get image map from DB: {e}")
+
+    # Use fallback image map
+    logger.info("Using fallback image map (DB unavailable)")
+    return FALLBACK_IMAGE_MAP
 
 # =============================================================================
 # Optional Dependencies
