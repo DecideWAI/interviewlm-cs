@@ -756,7 +756,7 @@ function startKeepAlive(sessionId: string, sandbox: any): void {
 
       // Wait for command to complete (don't need to check exitCode)
       await proc.exitCode;
-      console.log(`[Modal] Keep-alive ping sent for session ${sessionId}`);
+      // console.log(`[Modal] Keep-alive ping sent for session ${sessionId}`);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
 

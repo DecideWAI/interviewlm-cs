@@ -181,6 +181,12 @@ export default function InterviewPage() {
   // Prevent duplicate initialization in React 18 strict mode
   const initializationStartedRef = useRef(false);
 
+  // Ref to track selected file for use in event handlers (avoids stale closure)
+  const selectedFileRef = useRef<FileNode | null>(null);
+  useEffect(() => {
+    selectedFileRef.current = selectedFile;
+  }, [selectedFile]);
+
   const onRestore = useCallback((state: SessionState) => {
     // Auto-restore session state without showing prompt
     console.log('Auto-restoring session from:', new Date(state.lastSaved));
@@ -543,11 +549,26 @@ export default function InterviewPage() {
               const response = await fetch(`/api/interview/${candidateId}/files?path=${encodeURIComponent(change.path)}`);
               if (response.ok) {
                 const { content } = await response.json();
+                // Update the file cache
                 setFileCache(prev => {
                   const newCache = new Map(prev);
                   newCache.set(change.path, content);
                   return newCache;
                 });
+                // If this file is currently selected in the editor, update the code too
+                // Use ref to get current value (avoids stale closure)
+                if (selectedFileRef.current?.path === change.path) {
+                  console.log('[FileUpdates] Updating editor content for selected file:', change.path);
+                  setCode(content);
+                }
+                // Also update the open tab content
+                setOpenTabs(prevTabs =>
+                  prevTabs.map(tab =>
+                    tab.path === change.path
+                      ? { ...tab, content, isDirty: false }
+                      : tab
+                  )
+                );
                 console.log('[FileUpdates] Content refreshed for:', change.path);
               }
             } catch (fetchErr) {
@@ -1498,31 +1519,38 @@ export default function InterviewPage() {
   const handleRefreshFiles = async () => {
     setIsRefreshing(true);
     try {
-      // Refresh file tree structure
-      await refreshFiles();
+      // Use dedicated refresh API that fetches directly from sandbox
+      // This returns both file tree and all file contents in one call
+      const response = await fetch(`/api/interview/${candidateId}/files/refresh`, {
+        method: "POST",
+      });
 
-      // Re-fetch all file contents
-      await prefetchAllFiles();
+      if (!response.ok) {
+        throw new Error("Failed to refresh files");
+      }
 
-      // If a file is currently selected, update its content from the new cache
-      if (selectedFile) {
-        // Need to wait for state update, so fetch directly
-        const response = await fetch(
-          `/api/interview/${candidateId}/files?path=${encodeURIComponent(selectedFile.path)}`
-        );
-        if (response.ok) {
-          const responseJson = await response.json();
-          const data = responseJson.data || responseJson;
-          const fileContent = typeof data.content === 'string' ? data.content : '';
+      const { files, contents } = await response.json();
 
-          // Only update if content is different
-          if (fileContent !== code) {
-            setCode(fileContent);
-            // Update tab content too
-            setOpenTabs(prev => prev.map(tab =>
-              tab.path === selectedFile.path ? { ...tab, content: fileContent } : tab
-            ));
-          }
+      // Update file tree
+      if (files && Array.isArray(files)) {
+        setSessionData(prev => prev ? { ...prev, files } : null);
+      }
+
+      // Update file cache with all contents from sandbox
+      if (contents && typeof contents === 'object') {
+        setFileCache(new Map(Object.entries(contents)));
+        console.log(`[FileRefresh] Loaded ${Object.keys(contents).length} files from sandbox`);
+      }
+
+      // If a file is currently selected, update its content from the new data
+      if (selectedFile && contents[selectedFile.path] !== undefined) {
+        const fileContent = contents[selectedFile.path];
+        if (fileContent !== code) {
+          setCode(fileContent);
+          // Update tab content too
+          setOpenTabs(prev => prev.map(tab =>
+            tab.path === selectedFile.path ? { ...tab, content: fileContent, isDirty: false } : tab
+          ));
         }
       }
 
