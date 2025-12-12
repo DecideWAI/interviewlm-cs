@@ -37,7 +37,7 @@ from tools.coding_tools import (
     glob_files,
     get_environment_info,
 )
-from config import settings
+from config import settings, generate_question_eval_thread_uuid
 
 
 # =============================================================================
@@ -574,9 +574,11 @@ Return ONLY valid JSON (no markdown code blocks):
             tests_failed=tests_failed,
         )
 
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_question_eval_thread_uuid(session_id, question_id)
         config = {
             "configurable": {
-                "thread_id": f"qeval-{session_id}-{question_id}",
+                "thread_id": thread_uuid,
             }
         }
 

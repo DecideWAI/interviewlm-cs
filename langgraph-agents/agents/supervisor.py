@@ -21,7 +21,7 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
 
-from config import settings
+from config import settings, generate_supervisor_thread_uuid
 
 
 # =============================================================================
@@ -428,9 +428,11 @@ class SupervisorGraph:
         Returns:
             Dict with results from all agents involved
         """
+        # Use deterministic UUID for consistent thread grouping in LangSmith
+        thread_uuid = generate_supervisor_thread_uuid(session_id)
         config = {
             "configurable": {
-                "thread_id": f"supervisor-{session_id}",
+                "thread_id": thread_uuid,
             }
         }
 
