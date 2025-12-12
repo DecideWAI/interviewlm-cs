@@ -718,3 +718,17 @@ def create_coding_agent(
         tech_stack=tech_stack,
         workspace_root=workspace_root,
     )
+
+
+# =============================================================================
+# Graph Export for LangGraph Cloud
+# =============================================================================
+# LangGraph Cloud automatically handles checkpointing - do NOT specify checkpointer
+# The platform injects its own PostgreSQL-backed checkpointer
+#
+# This is referenced by langgraph.json as "coding_agent": "./agents/coding_agent.py:graph"
+
+graph = create_coding_agent_graph(
+    helpfulness_level="pair-programming",
+    use_checkpointing=False,  # Cloud handles this automatically
+)

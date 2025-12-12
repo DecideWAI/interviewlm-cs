@@ -359,3 +359,14 @@ class InterviewAgentGraph:
 def create_interview_agent(checkpointer=None) -> InterviewAgentGraph:
     """Factory function to create an Interview Agent."""
     return InterviewAgentGraph(checkpointer=checkpointer)
+
+
+# =============================================================================
+# Graph Export for LangGraph Cloud
+# =============================================================================
+# LangGraph Cloud automatically handles checkpointing - do NOT specify checkpointer
+# The platform injects its own PostgreSQL-backed checkpointer
+#
+# Note: This agent uses StateGraph directly (no LLM, pure state machine for IRT)
+
+interview_graph = create_interview_agent_graph().compile()

@@ -524,3 +524,12 @@ class SupervisorGraph:
 def create_supervisor(checkpointer=None) -> SupervisorGraph:
     """Factory function to create a Supervisor."""
     return SupervisorGraph(checkpointer=checkpointer)
+
+
+# =============================================================================
+# Graph Export for LangGraph Cloud
+# =============================================================================
+# LangGraph Cloud automatically handles checkpointing - do NOT specify checkpointer
+# The platform injects its own PostgreSQL-backed checkpointer
+
+supervisor_graph = create_supervisor_graph(use_checkpointing=False)

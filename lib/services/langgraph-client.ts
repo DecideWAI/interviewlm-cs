@@ -1,17 +1,18 @@
 /**
  * LangGraph Client
  *
- * Client for interacting with the LangGraph HTTP API server.
- * Provides streaming and non-streaming interfaces for the multi-agent system.
+ * Client for interacting with LangGraph server using the official SDK.
+ * Supports both LangGraph dev server and LangGraph Cloud.
  */
 
-import type {
-  AgentTool,
-  HelpfulnessLevel,
-} from '../types/agent';
+import { Client } from '@langchain/langgraph-sdk';
+import type { HelpfulnessLevel } from '../types/agent';
 
 // Configuration
-const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || 'http://localhost:8080';
+const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || 'http://localhost:2024';
+
+// Initialize LangGraph client
+const client = new Client({ apiUrl: LANGGRAPH_API_URL });
 
 // =============================================================================
 // Types
@@ -23,6 +24,7 @@ export interface CodingChatRequest {
   message: string;
   helpfulnessLevel?: HelpfulnessLevel;
   problemStatement?: string;
+  techStack?: string[];
   codeContext?: {
     fileName?: string;
     content?: string;
@@ -93,10 +95,49 @@ export interface EvaluationResult {
 
 export interface StreamingCallbacks {
   onText?: (delta: string) => void;
-  onToolUsed?: (tool: string) => void;
-  onFileModified?: (path: string) => void;
+  onToolStart?: (toolName: string, input: Record<string, unknown>) => void;
+  onToolEnd?: (toolName: string, output: unknown) => void;
   onComplete?: (response: CodingChatResponse) => void;
   onError?: (error: string) => void;
+}
+
+// =============================================================================
+// Thread Management
+// =============================================================================
+
+/**
+ * Get or create a thread for a session.
+ * Uses deterministic thread ID format: {agentType}_{sessionId}
+ * This ensures conversation history persists across requests.
+ */
+export async function getOrCreateThread(sessionId: string, agentType: string = 'coding_agent'): Promise<string> {
+  // Use deterministic thread ID format for consistent history
+  const threadId = `${agentType}_${sessionId}`;
+
+  try {
+    // Try to get existing thread
+    const thread = await client.threads.get(threadId);
+    if (thread) {
+      return threadId;
+    }
+  } catch {
+    // Thread doesn't exist, create it
+  }
+
+  try {
+    // Create thread with specific ID and metadata
+    await client.threads.create({
+      threadId,
+      metadata: { sessionId, agentType },
+    });
+    console.log(`[LangGraph] Created thread ${threadId}`);
+    return threadId;
+  } catch {
+    // Thread may already exist (race condition) or creation failed
+    // Either way, use the deterministic ID
+    console.log(`[LangGraph] Using thread ${threadId}`);
+    return threadId;
+  }
 }
 
 // =============================================================================
@@ -105,90 +146,91 @@ export interface StreamingCallbacks {
 
 /**
  * Send a message to the Coding Agent with streaming response.
- * Uses Server-Sent Events for real-time updates.
  */
 export async function streamCodingChat(
   request: CodingChatRequest,
   callbacks: StreamingCallbacks
 ): Promise<void> {
-  const url = `${LANGGRAPH_API_URL}/api/coding/chat`;
+  const threadId = await getOrCreateThread(request.sessionId);
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream',
-    },
-    body: JSON.stringify({
-      session_id: request.sessionId,
-      candidate_id: request.candidateId,
-      message: request.message,
-      helpfulness_level: request.helpfulnessLevel || 'pair-programming',
-      problem_statement: request.problemStatement,
-      code_context: request.codeContext,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error('No response body');
-  }
-
-  const decoder = new TextDecoder();
-  let buffer = '';
+  let fullText = '';
+  const toolsUsed: string[] = [];
+  const filesModified: string[] = [];
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
+    const stream = client.runs.stream(threadId, 'coding_agent', {
+      input: {
+        messages: [{ role: 'user', content: request.message }],
+      },
+      config: {
+        configurable: {
+          session_id: request.sessionId,
+          candidate_id: request.candidateId,
+          helpfulness_level: request.helpfulnessLevel || 'pair-programming',
+          problem_statement: request.problemStatement,
+          tech_stack: request.techStack,
+        },
+      },
+      // Use multiple stream modes for comprehensive event coverage
+      streamMode: ['messages', 'events'],
+    });
 
-      buffer += decoder.decode(value, { stream: true });
+    for await (const chunk of stream) {
+      // Cast to any for flexible event handling - LangGraph SDK types are strict
+      const event = chunk as any;
 
-      // Process complete events in buffer
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+      // Handle events mode - this is the primary source for text and tool events
+      if (event.event === 'events') {
+        const eventData = event.data;
 
-      let eventType = '';
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          eventType = line.slice(7);
-        } else if (line.startsWith('data: ') && eventType) {
-          const data = JSON.parse(line.slice(6));
-
-          switch (eventType) {
-            case 'thinking':
-              callbacks.onText?.(data.delta);
-              break;
-            case 'tool_used':
-              callbacks.onToolUsed?.(data.tool);
-              break;
-            case 'file_modified':
-              callbacks.onFileModified?.(data.path);
-              break;
-            case 'done':
-              callbacks.onComplete?.({
-                text: data.response,
-                toolsUsed: data.tools_used || [],
-                filesModified: data.files_modified || [],
-                metadata: data.metadata || {},
-              });
-              break;
-            case 'error':
-              callbacks.onError?.(data.error);
-              break;
+        if (eventData?.event === 'on_chat_model_stream') {
+          // Text streaming: content is in event.data.data.chunk.content as an array
+          // Format: [{"text":"Hello! ","type":"text","index":0}]
+          const chunkContent = eventData.data?.chunk?.content;
+          if (Array.isArray(chunkContent)) {
+            for (const item of chunkContent) {
+              if (item?.type === 'text' && item?.text) {
+                fullText += item.text;
+                callbacks.onText?.(item.text);
+              }
+            }
+          } else if (typeof chunkContent === 'string' && chunkContent) {
+            fullText += chunkContent;
+            callbacks.onText?.(chunkContent);
           }
+        } else if (eventData?.event === 'on_tool_start') {
+          const toolName = eventData.name || 'unknown';
+          toolsUsed.push(toolName);
+          callbacks.onToolStart?.(toolName, eventData.data?.input || {});
 
-          eventType = '';
+          // Track file modifications
+          if (toolName === 'write_file' || toolName === 'edit_file') {
+            const filePath = eventData.data?.input?.file_path;
+            if (filePath && !filesModified.includes(filePath)) {
+              filesModified.push(filePath);
+            }
+          }
+        } else if (eventData?.event === 'on_tool_end') {
+          callbacks.onToolEnd?.(eventData.name || 'unknown', eventData.data?.output);
         }
       }
+      // Handle error event
+      else if (event.event === 'error') {
+        throw new Error(event.data?.message || 'Stream error');
+      }
+      // Note: messages/partial events are skipped as we get text from events/on_chat_model_stream
     }
-  } finally {
-    reader.releaseLock();
+
+    callbacks.onComplete?.({
+      text: fullText,
+      toolsUsed,
+      filesModified,
+      metadata: { threadId },
+    });
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    callbacks.onError?.(errorMessage);
+    throw error;
   }
 }
 
@@ -198,35 +240,34 @@ export async function streamCodingChat(
 export async function sendCodingChat(
   request: CodingChatRequest
 ): Promise<CodingChatResponse> {
-  const url = `${LANGGRAPH_API_URL}/api/coding/chat/sync`;
+  const threadId = await getOrCreateThread(request.sessionId);
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  const result = await client.runs.wait(threadId, 'coding_agent', {
+    input: {
+      messages: [{ role: 'user', content: request.message }],
     },
-    body: JSON.stringify({
-      session_id: request.sessionId,
-      candidate_id: request.candidateId,
-      message: request.message,
-      helpfulness_level: request.helpfulnessLevel || 'pair-programming',
-      problem_statement: request.problemStatement,
-      code_context: request.codeContext,
-    }),
+    config: {
+      configurable: {
+        session_id: request.sessionId,
+        candidate_id: request.candidateId,
+        helpfulness_level: request.helpfulnessLevel || 'pair-programming',
+        problem_statement: request.problemStatement,
+        tech_stack: request.techStack,
+      },
+    },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
+  // Extract response from result (cast to any for flexible type handling)
+  const resultData = result as any;
+  const messages = resultData.messages || [];
+  const lastMessage = messages[messages.length - 1];
+  const text = typeof lastMessage?.content === 'string' ? lastMessage.content : '';
 
   return {
-    text: data.text,
-    toolsUsed: data.tools_used,
-    filesModified: data.files_modified,
-    metadata: data.metadata,
+    text,
+    toolsUsed: [],
+    filesModified: [],
+    metadata: { threadId },
   };
 }
 
@@ -240,36 +281,30 @@ export async function sendCodingChat(
 export async function recordInterviewEvent(
   event: InterviewEventData
 ): Promise<InterviewMetrics> {
-  const url = `${LANGGRAPH_API_URL}/api/interview/event`;
+  const threadId = await getOrCreateThread(event.sessionId, 'interview_agent');
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  const result = await client.runs.wait(threadId, 'interview_agent', {
+    input: {
+      messages: [],
       session_id: event.sessionId,
       candidate_id: event.candidateId,
-      event_type: event.eventType,
-      event_data: event.eventData,
-    }),
+      current_event_type: event.eventType,
+      current_event_data: event.eventData,
+    },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
+  // Cast to any for flexible type handling
+  const resultData = result as any;
+  const metrics = resultData.metrics || {};
 
   return {
-    sessionId: data.session_id,
-    irtTheta: data.irt_theta,
-    currentDifficulty: data.current_difficulty,
-    recommendedNextDifficulty: data.recommended_next_difficulty,
-    aiDependencyScore: data.ai_dependency_score,
-    questionsAnswered: data.questions_answered,
-    strugglingIndicators: data.struggling_indicators,
+    sessionId: event.sessionId,
+    irtTheta: metrics.irt_theta || 0,
+    currentDifficulty: metrics.current_difficulty || 5,
+    recommendedNextDifficulty: metrics.recommended_next_difficulty || 5,
+    aiDependencyScore: metrics.ai_dependency_score || 0,
+    questionsAnswered: metrics.questions_answered || 0,
+    strugglingIndicators: metrics.struggling_indicators || [],
   };
 }
 
@@ -279,29 +314,35 @@ export async function recordInterviewEvent(
 export async function getInterviewMetrics(
   sessionId: string
 ): Promise<InterviewMetrics> {
-  const url = `${LANGGRAPH_API_URL}/api/interview/${sessionId}/metrics`;
+  const threadId = await getOrCreateThread(sessionId, 'interview_agent');
 
-  const response = await fetch(url);
+  try {
+    const state = await client.threads.getState(threadId);
+    // Cast to any for flexible type handling
+    const stateData = state as any;
+    const metrics = stateData.values?.metrics || {};
 
-  if (!response.ok) {
-    if (response.status === 404) {
-      throw new Error('Session metrics not found');
-    }
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
+    return {
+      sessionId,
+      irtTheta: metrics.irt_theta || 0,
+      currentDifficulty: metrics.current_difficulty || 5,
+      recommendedNextDifficulty: metrics.recommended_next_difficulty || 5,
+      aiDependencyScore: metrics.ai_dependency_score || 0,
+      questionsAnswered: metrics.questions_answered || 0,
+      strugglingIndicators: metrics.struggling_indicators || [],
+    };
+  } catch {
+    // Return default metrics if thread not found
+    return {
+      sessionId,
+      irtTheta: 0,
+      currentDifficulty: 5,
+      recommendedNextDifficulty: 5,
+      aiDependencyScore: 0,
+      questionsAnswered: 0,
+      strugglingIndicators: [],
+    };
   }
-
-  const data = await response.json();
-
-  return {
-    sessionId: data.session_id,
-    irtTheta: data.irt_theta,
-    currentDifficulty: data.current_difficulty,
-    recommendedNextDifficulty: data.recommended_next_difficulty,
-    aiDependencyScore: data.ai_dependency_score,
-    questionsAnswered: data.questions_answered,
-    strugglingIndicators: data.struggling_indicators,
-  };
 }
 
 // =============================================================================
@@ -314,39 +355,41 @@ export async function getInterviewMetrics(
 export async function evaluateSession(
   request: EvaluationRequest
 ): Promise<EvaluationResult> {
-  const url = `${LANGGRAPH_API_URL}/api/evaluation/evaluate`;
+  const threadId = await getOrCreateThread(request.sessionId, 'evaluation_agent');
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
+  const evaluationPrompt = `Evaluate interview session ${request.sessionId}.
+Start by using get_session_metadata to understand the context, then explore the workspace
+and gather all relevant data before scoring.
+
+Session ID: ${request.sessionId}
+Candidate ID: ${request.candidateId}`;
+
+  const result = await client.runs.wait(threadId, 'evaluation_agent', {
+    input: {
+      messages: [{ role: 'user', content: evaluationPrompt }],
     },
-    body: JSON.stringify({
-      session_id: request.sessionId,
-      candidate_id: request.candidateId,
-      code_snapshots: request.codeSnapshots,
-      test_results: request.testResults,
-      claude_interactions: request.claudeInteractions,
-    }),
+    config: {
+      configurable: {
+        session_id: request.sessionId,
+        candidate_id: request.candidateId,
+      },
+    },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
+  // Parse evaluation result from response (cast to any for flexible type handling)
+  const resultData = result as any;
+  const defaultScore = { score: 50, confidence: 0.5, evidence: [] };
 
   return {
-    sessionId: data.session_id,
-    candidateId: data.candidate_id,
-    overallScore: data.overall_score,
-    codeQuality: data.code_quality,
-    problemSolving: data.problem_solving,
-    aiCollaboration: data.ai_collaboration,
-    communication: data.communication,
-    confidence: data.confidence,
-    biasFlags: data.bias_flags,
+    sessionId: request.sessionId,
+    candidateId: request.candidateId,
+    overallScore: resultData.overall_score || 50,
+    codeQuality: resultData.code_quality || defaultScore,
+    problemSolving: resultData.problem_solving || defaultScore,
+    aiCollaboration: resultData.ai_collaboration || defaultScore,
+    communication: resultData.communication || defaultScore,
+    confidence: resultData.overall_confidence || 0.5,
+    biasFlags: resultData.bias_flags || [],
   };
 }
 
@@ -355,18 +398,19 @@ export async function evaluateSession(
 // =============================================================================
 
 /**
- * Clear cached session data from the LangGraph server.
+ * Clear/delete all agent threads for a session.
  */
 export async function clearSession(sessionId: string): Promise<void> {
-  const url = `${LANGGRAPH_API_URL}/api/sessions/${sessionId}`;
+  const agentTypes = ['coding_agent', 'interview_agent', 'evaluation_agent'];
 
-  const response = await fetch(url, {
-    method: 'DELETE',
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
+  for (const agentType of agentTypes) {
+    try {
+      const threadId = `${agentType}_${sessionId}`;
+      await client.threads.delete(threadId);
+      console.log(`[LangGraph] Deleted thread ${threadId}`);
+    } catch {
+      // Ignore errors if thread doesn't exist
+    }
   }
 }
 
@@ -375,10 +419,17 @@ export async function clearSession(sessionId: string): Promise<void> {
  */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const url = `${LANGGRAPH_API_URL}/health`;
-    const response = await fetch(url);
-    return response.ok;
+    // Try to list assistants - this will fail if server is down
+    await client.assistants.search({ limit: 1 });
+    return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * Get the LangGraph client instance for advanced usage.
+ */
+export function getLangGraphClient(): Client {
+  return client;
 }

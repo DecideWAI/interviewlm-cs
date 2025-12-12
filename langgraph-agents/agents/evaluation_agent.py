@@ -607,3 +607,12 @@ Session ID: {session_id}
 def create_evaluation_agent(checkpointer=None) -> EvaluationAgentGraph:
     """Factory function to create an Evaluation Agent."""
     return EvaluationAgentGraph(checkpointer=checkpointer)
+
+
+# =============================================================================
+# Graph Export for LangGraph Cloud
+# =============================================================================
+# LangGraph Cloud automatically handles checkpointing - do NOT specify checkpointer
+# The platform injects its own PostgreSQL-backed checkpointer
+
+evaluation_graph = create_evaluation_agent_graph(use_checkpointing=False)

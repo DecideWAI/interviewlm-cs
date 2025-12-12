@@ -648,3 +648,15 @@ def create_question_evaluation_agent(
         checkpointer=checkpointer,
         use_agent_mode=use_agent_mode,
     )
+
+
+# =============================================================================
+# Graph Export for LangGraph Cloud
+# =============================================================================
+# LangGraph Cloud automatically handles checkpointing - do NOT specify checkpointer
+# The platform injects its own PostgreSQL-backed checkpointer
+
+question_evaluation_graph = create_question_evaluation_agent_graph(
+    use_agent_mode=False,
+    use_checkpointing=False,
+)

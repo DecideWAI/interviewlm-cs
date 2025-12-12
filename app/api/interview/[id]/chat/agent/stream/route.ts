@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { Client } from '@langchain/langgraph-sdk';
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { publishAIInteraction } from "@/lib/queues";
@@ -524,8 +525,13 @@ export async function POST(
 }
 
 /**
- * Call LangGraph Python agent via HTTP with streaming support
+ * Call LangGraph Python agent via SDK with streaming support
  */
+
+// Initialize LangGraph SDK client
+const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || 'http://localhost:2024';
+const langGraphClient = new Client({ apiUrl: LANGGRAPH_API_URL });
+
 interface LangGraphCallOptions {
   sessionId: string;
   candidateId: string;
@@ -540,145 +546,177 @@ interface LangGraphCallOptions {
   onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => void;
 }
 
-async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
+/**
+ * Get or create a LangGraph thread for a session
+ * Uses deterministic thread ID format: {agentType}_{sessionId}
+ * This ensures conversation history persists across requests
+ */
+async function getOrCreateThread(sessionId: string, agentType: string = 'coding_agent'): Promise<string> {
+  // Use deterministic thread ID format for consistent history
+  const threadId = `${agentType}_${sessionId}`;
+
+  try {
+    // Try to get existing thread
+    const thread = await langGraphClient.threads.get(threadId);
+    if (thread) {
+      return threadId;
+    }
+  } catch {
+    // Thread doesn't exist, create it
+  }
+
+  try {
+    // Create thread with specific ID and metadata
+    await langGraphClient.threads.create({
+      threadId,
+      metadata: { sessionId, agentType },
+    });
+    console.log(`[LangGraph] Created thread ${threadId}`);
+    return threadId;
+  } catch (error) {
+    // Thread may already exist (race condition) or creation failed
+    // Either way, use the deterministic ID
+    console.log(`[LangGraph] Using thread ${threadId}`);
+    return threadId;
+  }
+}
+
+async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0): Promise<{
   text: string;
   toolsUsed?: string[];
   filesModified?: string[];
   metadata?: Record<string, unknown>;
 }> {
-  const langGraphUrl = process.env.LANGGRAPH_API_URL || "http://localhost:9001";
+  const MAX_RETRIES = 1; // Only retry once for corrupted thread state
+  const threadId = await getOrCreateThread(options.sessionId);
+
+  let fullText = "";
+  const toolsUsed: string[] = [];
+  const filesModified: string[] = [];
+  const metadata: Record<string, unknown> = { threadId };
 
   try {
-    // Try streaming endpoint first
-    const response = await fetch(`${langGraphUrl}/api/coding/chat`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "text/event-stream",
+    console.log(`[LangGraph] Starting stream for thread ${threadId}, assistant: coding_agent`);
+
+    // Use LangGraph SDK streaming with multiple modes for comprehensive event coverage
+    const stream = langGraphClient.runs.stream(threadId, 'coding_agent', {
+      input: {
+        messages: [{ role: 'user', content: options.message }],
       },
-      body: JSON.stringify({
-        session_id: options.sessionId,
-        candidate_id: options.candidateId,
-        message: options.message,
-        helpfulness_level: options.helpfulnessLevel,
-        problem_statement: options.problemStatement,
-        tech_stack: options.techStack,  // Pass tech stack for enforcement
-        conversation_history: options.conversationHistory,
-      }),
+      config: {
+        configurable: {
+          session_id: options.sessionId,
+          candidate_id: options.candidateId,
+          helpfulness_level: options.helpfulnessLevel || 'pair-programming',
+          problem_statement: options.problemStatement,
+          tech_stack: options.techStack,
+        },
+        recursion_limit: 100, // Increased from default 25 for complex tool chains
+      },
+      // Use messages mode for text streaming
+      streamMode: ['messages', 'events'],
     });
 
-    if (!response.ok) {
-      // Fallback to non-streaming endpoint
-      return await callLangGraphAgentNonStreaming(options);
-    }
+    for await (const chunk of stream) {
+      // Cast to any for flexible event handling - LangGraph SDK types are strict
+      const event = chunk as any;
 
-    // Parse SSE stream
-    const reader = response.body?.getReader();
-    if (!reader) {
-      return await callLangGraphAgentNonStreaming(options);
-    }
+      // Handle events mode - this is the primary source for text and tool events
+      if (event.event === 'events') {
+        const eventData = event.data;
 
-    const decoder = new TextDecoder();
-    let fullText = "";
-    let toolsUsed: string[] = [];
-    let filesModified: string[] = [];
-    let metadata: Record<string, unknown> = {};
-
-    let currentEventType = "";
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      const chunk = decoder.decode(value);
-      const lines = chunk.split("\n");
-
-      for (const line of lines) {
-        if (line.startsWith("event: ")) {
-          currentEventType = line.substring(7).trim();
-          continue;
-        }
-        if (line.startsWith("data: ")) {
-          try {
-            const data = JSON.parse(line.substring(6));
-            // Merge SSE event type with data for consistent handling
-            const effectiveType = data.type || currentEventType;
-
-            if (effectiveType === "content" || effectiveType === "text_delta" || data.delta) {
-              const delta = data.delta || data.content || "";
-              fullText += delta;
-              options.onTextDelta(delta);
-            } else if (effectiveType === "tool_start" || data.tool_name || (effectiveType === "on_tool_start" && data.name)) {
-              // Tool starting - Python sends: {type: "tool_start", name, input}
-              const toolName = data.tool_name || data.name || data.tool || "";
-              if (toolName) {
-                options.onToolStart(toolName, data.tool_id || "", data.input || {});
+        if (eventData?.event === 'on_chat_model_stream') {
+          // Text streaming: content is in event.data.data.chunk.content as an array
+          // Format: [{"text":"Hello! ","type":"text","index":0}]
+          const chunkContent = eventData.data?.chunk?.content;
+          if (Array.isArray(chunkContent)) {
+            for (const item of chunkContent) {
+              if (item?.type === 'text' && item?.text) {
+                fullText += item.text;
+                options.onTextDelta(item.text);
               }
-            } else if (effectiveType === "tool_result" || effectiveType === "tool_end" || data.tool) {
-              // Handle both formats:
-              // - TypeScript agent: {type: "tool_result", tool_name, output}
-              // - Python LangGraph: {type: "tool_end", name, output}
-              const toolNameRaw = data.tool_name || data.name || data.tool || "";
-              const output = data.output || data.result || {};
-
-              options.onToolResult(
-                toolNameRaw,
-                data.tool_id || "",
-                output,
-                !!data.is_error
-              );
-              if (toolNameRaw) {
-                toolsUsed.push(toolNameRaw);
-              }
-
-              // Broadcast file changes for file operations from LangGraph agent
-              // This enables real-time file tree updates in the frontend
-              const toolName = toolNameRaw.toLowerCase();
-              console.log(`[LangGraph] Tool result: ${toolName}, output:`, JSON.stringify(output).slice(0, 200));
-              if (
-                (toolName === "write_file" || toolName === "edit_file") &&
-                output.success &&
-                output.path
-              ) {
-                console.log(`[LangGraph] Broadcasting file change: ${output.path} to candidate ${options.candidateId}`);
-                const isCreate = toolName === "write_file";
-                const filePath = output.path.startsWith("/workspace")
-                  ? output.path
-                  : `/workspace/${output.path}`;
-                const fileName = filePath.split("/").pop() || filePath;
-
-                // Track file in database so it appears in file tree on refresh
-                if (options.sessionRecordingId) {
-                  sessionService
-                    .addTrackedFile(options.sessionRecordingId, filePath)
-                    .catch((err) =>
-                      console.error("[LangGraph] Failed to track file:", err)
-                    );
-                }
-
-                // Broadcast file change event for real-time updates
-                // IMPORTANT: Use candidateId (not sessionId) because frontend connects via /api/interview/[candidateId]/file-updates
-                fileStreamManager.broadcastFileChange({
-                  sessionId: options.candidateId,
-                  type: isCreate ? "create" : "update",
-                  path: filePath,
-                  fileType: "file",
-                  name: fileName,
-                  timestamp: new Date().toISOString(),
-                });
-                filesModified.push(filePath);
-              }
-            } else if (effectiveType === "done" || data.response) {
-              fullText = data.response || data.text || fullText;
-              toolsUsed = data.tools_used || toolsUsed;
-              filesModified = data.files_modified || filesModified;
-              metadata = data.metadata || metadata;
             }
-          } catch {
-            // Ignore parse errors
+          } else if (typeof chunkContent === 'string' && chunkContent) {
+            fullText += chunkContent;
+            options.onTextDelta(chunkContent);
+          }
+        } else if (eventData?.event === 'on_tool_start') {
+          const toolName = eventData.name || 'unknown';
+          const toolId = eventData.run_id || `tool_${Date.now()}`;
+          toolsUsed.push(toolName);
+          options.onToolStart(toolName, toolId, eventData.data?.input || {});
+        } else if (eventData?.event === 'on_tool_end') {
+          const toolName = eventData.name || 'unknown';
+          const toolId = eventData.run_id || '';
+          const output = eventData.data?.output || {};
+          const isError = !!eventData.data?.error;
+
+          options.onToolResult(toolName, toolId, output, isError);
+
+          // Broadcast file changes for file operations
+          const toolNameLower = toolName.toLowerCase();
+          console.log(`[LangGraph] Tool result: ${toolNameLower}, output:`, JSON.stringify(output).slice(0, 200));
+
+          if (
+            (toolNameLower === 'write_file' || toolNameLower === 'edit_file') &&
+            output.success &&
+            output.path
+          ) {
+            console.log(`[LangGraph] Broadcasting file change: ${output.path} to candidate ${options.candidateId}`);
+            const isCreate = toolNameLower === 'write_file';
+            const filePath = output.path.startsWith('/workspace')
+              ? output.path
+              : `/workspace/${output.path}`;
+            const fileName = filePath.split('/').pop() || filePath;
+
+            // Track file in database so it appears in file tree on refresh
+            if (options.sessionRecordingId) {
+              sessionService
+                .addTrackedFile(options.sessionRecordingId, filePath)
+                .catch((err) =>
+                  console.error('[LangGraph] Failed to track file:', err)
+                );
+            }
+
+            // Broadcast file change event for real-time updates
+            fileStreamManager.broadcastFileChange({
+              sessionId: options.candidateId,
+              type: isCreate ? 'create' : 'update',
+              path: filePath,
+              fileType: 'file',
+              name: fileName,
+              timestamp: new Date().toISOString(),
+            });
+            filesModified.push(filePath);
           }
         }
       }
+      // Handle metadata event
+      else if (event.event === 'metadata') {
+        Object.assign(metadata, event.data || {});
+      }
+      // Handle error event
+      else if (event.event === 'error') {
+        const errorMessage = event.data?.message || 'Stream error';
+        console.error('[LangGraph] Stream error:', event.data);
+
+        // Check if this is a corrupted thread state error (tool_use without tool_result)
+        if (errorMessage.includes('tool_use') && errorMessage.includes('tool_result') && retryCount < MAX_RETRIES) {
+          console.log('[LangGraph] Detected corrupted thread state, clearing and retrying...');
+          // Delete the corrupted thread
+          try {
+            await langGraphClient.threads.delete(threadId);
+            console.log(`[LangGraph] Deleted corrupted thread ${threadId}`);
+          } catch (deleteError) {
+            console.warn('[LangGraph] Failed to delete thread:', deleteError);
+          }
+          // Retry with a fresh thread
+          return callLangGraphAgent(options, retryCount + 1);
+        }
+
+        throw new Error(errorMessage);
+      }
+      // Note: messages/partial events are skipped as we get text from events/on_chat_model_stream
     }
 
     return {
@@ -688,65 +726,25 @@ async function callLangGraphAgent(options: LangGraphCallOptions): Promise<{
       metadata,
     };
   } catch (error) {
-    console.error("[LangGraph] Streaming failed, trying non-streaming:", error);
-    return await callLangGraphAgentNonStreaming(options);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[LangGraph] Streaming failed:', error);
+
+    // Check if this is a corrupted thread state error (tool_use without tool_result)
+    if (errorMessage.includes('tool_use') && errorMessage.includes('tool_result') && retryCount < MAX_RETRIES) {
+      console.log('[LangGraph] Detected corrupted thread state in catch, clearing and retrying...');
+      // Delete the corrupted thread
+      try {
+        await langGraphClient.threads.delete(threadId);
+        console.log(`[LangGraph] Deleted corrupted thread ${threadId}`);
+      } catch (deleteError) {
+        console.warn('[LangGraph] Failed to delete thread:', deleteError);
+      }
+      // Retry with a fresh thread
+      return callLangGraphAgent(options, retryCount + 1);
+    }
+
+    throw error;
   }
-}
-
-/**
- * Non-streaming fallback for LangGraph agent
- */
-async function callLangGraphAgentNonStreaming(options: LangGraphCallOptions): Promise<{
-  text: string;
-  toolsUsed?: string[];
-  filesModified?: string[];
-  metadata?: Record<string, unknown>;
-}> {
-  const langGraphUrl = process.env.LANGGRAPH_API_URL || "http://localhost:9001";
-
-  const response = await fetch(`${langGraphUrl}/api/coding/chat/sync`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      session_id: options.sessionId,
-      candidate_id: options.candidateId,
-      message: options.message,
-      helpfulness_level: options.helpfulnessLevel,
-      problem_statement: options.problemStatement,
-      tech_stack: options.techStack,  // Pass tech stack for enforcement
-      conversation_history: options.conversationHistory,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} ${errorText}`);
-  }
-
-  const result = await response.json();
-
-  // Send full response as single delta
-  if (result.text) {
-    options.onTextDelta(result.text);
-  }
-
-  return {
-    text: result.text || "",
-    toolsUsed: result.tools_used || [],
-    filesModified: result.files_modified || [],
-    metadata: {
-      model: result.model,
-      usage: result.token_usage
-        ? {
-          input_tokens: result.token_usage.input,
-          output_tokens: result.token_usage.output,
-        }
-        : undefined,
-      ...result.metadata,
-    },
-  };
 }
 
 /**
