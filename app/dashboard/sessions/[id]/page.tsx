@@ -395,6 +395,8 @@ export default function SessionReplayPage() {
 
   const [leftSidebarTab, setLeftSidebarTab] = useState<"problem" | "files">("problem");
   const [rightPanelTab, setRightPanelTab] = useState<"chat" | "evaluation">("chat");
+  const [questionMarkers, setQuestionMarkers] = useState<Array<{ index: number; questionNumber: number; title: string }>>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 
   const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -474,16 +476,8 @@ export default function SessionReplayPage() {
           const starterPath = initialFileName.startsWith('/') ? initialFileName : `/${initialFileName}`;
           allFiles.add(starterPath);
 
-          // Convert to FileNode array
-          const initialFiles: FileNode[] = Array.from(allFiles).map((filePath, index) => {
-            const name = filePath.split('/').pop() || filePath;
-            return {
-              id: `file-${index}`,
-              name,
-              type: "file" as const,
-              path: filePath.startsWith('/') ? filePath : `/${filePath}`
-            };
-          });
+          // Build nested folder structure from flat file paths
+          const initialFiles = buildFileTree(Array.from(allFiles));
 
           const initialTabs = [{
             id: initialFileName,
@@ -513,6 +507,33 @@ export default function SessionReplayPage() {
           });
         }
 
+        // Compute question markers from timeline
+        // Q1 starts at index 0, subsequent questions start after conversation_reset events
+        const markers: Array<{ index: number; questionNumber: number; title: string }> = [];
+
+        // Q1 starts at the beginning
+        if (data.questions.length > 0) {
+          markers.push({
+            index: 0,
+            questionNumber: 1,
+            title: data.questions[0]?.title || "Question 1",
+          });
+        }
+
+        // Find conversation_reset events for subsequent questions
+        let questionNum = 2;
+        data.timeline.forEach((event: TimelineEvent, index: number) => {
+          if (event.type === "conversation_reset" && questionNum <= data.questions.length) {
+            markers.push({
+              index,
+              questionNumber: questionNum,
+              title: data.questions[questionNum - 1]?.title || `Question ${questionNum}`,
+            });
+            questionNum++;
+          }
+        });
+
+        setQuestionMarkers(markers);
         setLoading(false);
       } catch (err) {
         console.error("Error fetching session:", err);
@@ -523,6 +544,49 @@ export default function SessionReplayPage() {
 
     fetchSession();
   }, [sessionId]);
+
+  // Update current question based on playback position
+  useEffect(() => {
+    if (questionMarkers.length === 0) return;
+
+    // Find which question we're in based on playback index
+    let qIndex = 0;
+    for (let i = questionMarkers.length - 1; i >= 0; i--) {
+      if (playback.currentIndex >= questionMarkers[i].index) {
+        qIndex = i;
+        break;
+      }
+    }
+    setCurrentQuestionIndex(qIndex);
+  }, [playback.currentIndex, questionMarkers]);
+
+  // Helper to add a file to the tree, maintaining folder structure
+  const addFileToTree = useCallback((files: FileNode[], filePath: string): FileNode[] => {
+    // Check if file already exists (search recursively)
+    const fileExists = (nodes: FileNode[], path: string): boolean => {
+      for (const node of nodes) {
+        if (node.path === path || node.name === path.split('/').pop()) return true;
+        if (node.children && fileExists(node.children, path)) return true;
+      }
+      return false;
+    };
+
+    const normalizedPath = filePath.startsWith('/') ? filePath : `/${filePath}`;
+    if (fileExists(files, normalizedPath)) return files;
+
+    // Rebuild tree with the new file
+    const allPaths = new Set<string>();
+    const collectPaths = (nodes: FileNode[]) => {
+      for (const node of nodes) {
+        if (node.type === 'file') allPaths.add(node.path);
+        if (node.children) collectPaths(node.children);
+      }
+    };
+    collectPaths(files);
+    allPaths.add(normalizedPath);
+
+    return buildFileTree(Array.from(allPaths));
+  }, []);
 
   // Apply timeline event to replay state
   const applyEvent = useCallback((event: TimelineEvent) => {
@@ -535,17 +599,9 @@ export default function SessionReplayPage() {
           const fileName = event.data.fileName || event.data.fileId || prev.currentFile;
 
           if (fileName) {
-            const fileExists = prev.files.some(f => f.name === fileName || f.path === `/${fileName}` || f.path === fileName);
-
-            // Add new file to tree if doesn't exist (even without content)
-            if (!fileExists) {
-              newState.files = [...prev.files, {
-                id: fileName,
-                name: fileName,
-                type: "file" as const,
-                path: fileName.startsWith('/') ? fileName : `/${fileName}`
-              }];
-            }
+            const normalizedPath = fileName.startsWith('/') ? fileName : `/${fileName}`;
+            // Add file to tree with proper folder structure
+            newState.files = addFileToTree(prev.files, normalizedPath);
 
             // Only handle content if fullContent is available
             if (event.data.fullContent) {
@@ -606,22 +662,10 @@ export default function SessionReplayPage() {
 
         case "file_write":
         case "file_create":
-          // Handle file creation events
+          // Handle file creation events with proper folder structure
           const fileWritePath = event.data.filePath || event.data.path || event.data.fileName;
           if (fileWritePath) {
-            const writeName = fileWritePath.split('/').pop() || fileWritePath;
-            const writeFileExists = prev.files.some(f =>
-              f.name === writeName || f.path === fileWritePath || f.path === `/${writeName}`
-            );
-
-            if (!writeFileExists) {
-              newState.files = [...prev.files, {
-                id: writeName,
-                name: writeName,
-                type: "file" as const,
-                path: fileWritePath.startsWith('/') ? fileWritePath : `/${fileWritePath}`
-              }];
-            }
+            newState.files = addFileToTree(prev.files, fileWritePath);
           }
           break;
 
@@ -630,19 +674,7 @@ export default function SessionReplayPage() {
           if (event.data && (event.data.fileName || event.data.filePath || event.data.fileId)) {
             const genericFileName = event.data.fileName || event.data.filePath || event.data.fileId;
             if (genericFileName) {
-              const genericName = genericFileName.split('/').pop() || genericFileName;
-              const genericExists = prev.files.some(f =>
-                f.name === genericName || f.path === genericFileName || f.path === `/${genericName}`
-              );
-
-              if (!genericExists) {
-                newState.files = [...prev.files, {
-                  id: genericName,
-                  name: genericName,
-                  type: "file" as const,
-                  path: genericFileName.startsWith('/') ? genericFileName : `/${genericFileName}`
-                }];
-              }
+              newState.files = addFileToTree(prev.files, genericFileName);
             }
           }
           break;
@@ -650,7 +682,7 @@ export default function SessionReplayPage() {
 
       return newState;
     });
-  }, []);
+  }, [addFileToTree]);
 
   // Playback Logic
   useEffect(() => {
@@ -874,14 +906,57 @@ export default function SessionReplayPage() {
             {formatTime(playback.currentTime)}
           </span>
 
-          <input
-            type="range"
-            min={0}
-            max={sessionData.timeline.length - 1}
-            value={playback.currentIndex}
-            onChange={(e) => seekToIndex(parseInt(e.target.value))}
-            className="w-32 h-1 bg-border rounded-lg appearance-none cursor-pointer"
-          />
+          {/* Enhanced Timeline with Question Markers */}
+          <div className="relative w-64 h-6 flex items-center">
+            {/* Track background */}
+            <div className="absolute inset-x-0 h-1 bg-border rounded-full" />
+
+            {/* Progress fill */}
+            <div
+              className="absolute left-0 h-1 bg-primary rounded-full"
+              style={{ width: `${(playback.currentIndex / Math.max(sessionData.timeline.length - 1, 1)) * 100}%` }}
+            />
+
+            {/* Question markers */}
+            {questionMarkers.map((marker, i) => {
+              const position = (marker.index / Math.max(sessionData.timeline.length - 1, 1)) * 100;
+              const isActive = playback.currentIndex >= marker.index &&
+                (i === questionMarkers.length - 1 || playback.currentIndex < questionMarkers[i + 1]?.index);
+              return (
+                <button
+                  key={marker.index}
+                  onClick={() => seekToIndex(marker.index)}
+                  className={cn(
+                    "absolute top-0 -translate-x-1/2 flex flex-col items-center group",
+                    "hover:z-10 transition-transform hover:scale-110"
+                  )}
+                  style={{ left: `${position}%` }}
+                  title={marker.title}
+                >
+                  <span className={cn(
+                    "text-[10px] font-bold px-1 rounded mb-0.5",
+                    isActive ? "bg-primary text-white" : "bg-background-tertiary text-text-secondary"
+                  )}>
+                    Q{marker.questionNumber}
+                  </span>
+                  <div className={cn(
+                    "w-2 h-2 rounded-full border-2",
+                    isActive ? "bg-primary border-primary" : "bg-background border-border-secondary"
+                  )} />
+                </button>
+              );
+            })}
+
+            {/* Slider input (invisible but functional) */}
+            <input
+              type="range"
+              min={0}
+              max={sessionData.timeline.length - 1}
+              value={playback.currentIndex}
+              onChange={(e) => seekToIndex(parseInt(e.target.value))}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            />
+          </div>
 
           <span className="text-xs text-text-tertiary">
             {playback.currentIndex + 1}/{sessionData.timeline.length}
@@ -912,10 +987,10 @@ export default function SessionReplayPage() {
         onLeftSidebarTabChange={setLeftSidebarTab}
         problemContent={
           <ProblemPanel
-            title={sessionData.questions[0]?.title || "Problem"}
-            description={sessionData.questions[0]?.description || ""}
-            difficulty={(sessionData.questions[0]?.difficulty?.toLowerCase() as "easy" | "medium" | "hard") || "medium"}
-            testCases={sessionData.questions[0]?.testCases}
+            title={sessionData.questions[currentQuestionIndex]?.title || "Problem"}
+            description={sessionData.questions[currentQuestionIndex]?.description || ""}
+            difficulty={(sessionData.questions[currentQuestionIndex]?.difficulty?.toLowerCase() as "easy" | "medium" | "hard") || "medium"}
+            testCases={sessionData.questions[currentQuestionIndex]?.testCases}
           />
         }
         filesContent={
@@ -977,7 +1052,7 @@ export default function SessionReplayPage() {
               )}
               <CodeEditor
                 value={replayState.code}
-                language={(sessionData.questions[0]?.language as "typescript" | "javascript" | "python" | "go") || "typescript"}
+                language={(sessionData.questions[currentQuestionIndex]?.language as "typescript" | "javascript" | "python" | "go") || "typescript"}
                 readOnly={true}
                 onChange={() => {}}
               />
@@ -1011,4 +1086,84 @@ function formatTime(ms: number) {
   const h = Math.floor(minutes / 60);
   if (h > 0) return `${h}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Build a nested FileNode tree from a flat list of file paths
+ * Converts paths like:
+ *   /workspace/models/__init__.py
+ *   /workspace/models/room.py
+ *   /workspace/services/room_service.py
+ * Into a nested tree structure with folders containing children
+ */
+function buildFileTree(paths: string[]): FileNode[] {
+  const root: FileNode[] = [];
+  const folderMap = new Map<string, FileNode>();
+
+  // Sort paths to ensure parent folders are processed before children
+  const sortedPaths = [...paths].sort();
+
+  for (const filePath of sortedPaths) {
+    // Normalize path - remove leading slash and /workspace prefix for cleaner display
+    let normalizedPath = filePath;
+    if (normalizedPath.startsWith('/workspace/')) {
+      normalizedPath = normalizedPath.substring('/workspace/'.length);
+    } else if (normalizedPath.startsWith('/')) {
+      normalizedPath = normalizedPath.substring(1);
+    }
+
+    const parts = normalizedPath.split('/').filter(Boolean);
+    if (parts.length === 0) continue;
+
+    const fileName = parts[parts.length - 1];
+    const folderParts = parts.slice(0, -1);
+
+    // Build folder hierarchy
+    let currentPath = '';
+    let parentArray = root;
+
+    for (let i = 0; i < folderParts.length; i++) {
+      const folderName = folderParts[i];
+      currentPath = currentPath ? `${currentPath}/${folderName}` : folderName;
+
+      let folder = folderMap.get(currentPath);
+      if (!folder) {
+        folder = {
+          id: `folder-${currentPath}`,
+          name: folderName,
+          type: 'folder' as const,
+          path: `/workspace/${currentPath}`,
+          children: [],
+        };
+        folderMap.set(currentPath, folder);
+        parentArray.push(folder);
+      }
+      parentArray = folder.children!;
+    }
+
+    // Add the file to the appropriate parent
+    const fileNode: FileNode = {
+      id: `file-${filePath}`,
+      name: fileName,
+      type: 'file' as const,
+      path: filePath.startsWith('/') ? filePath : `/${filePath}`,
+    };
+    parentArray.push(fileNode);
+  }
+
+  // Sort: folders first, then files, both alphabetically
+  const sortNodes = (nodes: FileNode[]): FileNode[] => {
+    return nodes.sort((a, b) => {
+      if (a.type === 'folder' && b.type === 'file') return -1;
+      if (a.type === 'file' && b.type === 'folder') return 1;
+      return a.name.localeCompare(b.name);
+    }).map(node => {
+      if (node.children) {
+        return { ...node, children: sortNodes(node.children) };
+      }
+      return node;
+    });
+  };
+
+  return sortNodes(root);
 }
