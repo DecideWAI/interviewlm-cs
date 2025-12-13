@@ -1,4 +1,5 @@
-# Production Environment Variables
+# Production Environment Variables (Budget-Optimized)
+# These defaults are configured for ~$135-165/month target
 
 variable "project_id" {
   description = "GCP project ID"
@@ -17,7 +18,10 @@ variable "storage_location" {
   default     = "US" # Multi-region for durability
 }
 
-# Application
+# -----------------------------------------------------------------------------
+# Application Configuration (Budget defaults)
+# -----------------------------------------------------------------------------
+
 variable "app_image" {
   description = "Container image for the application"
   type        = string
@@ -31,67 +35,94 @@ variable "custom_domain" {
 variable "app_cpu" {
   description = "CPU for app containers"
   type        = string
-  default     = "4"
+  default     = "1"  # Budget: 1 vCPU (was 4)
 }
 
 variable "app_memory" {
   description = "Memory for app containers"
   type        = string
-  default     = "2Gi"
+  default     = "1Gi"  # Budget: 1GB (was 2Gi)
 }
 
 variable "app_min_instances" {
-  description = "Minimum app instances (keep warm)"
+  description = "Minimum app instances (0 for scale-to-zero)"
   type        = number
-  default     = 2
+  default     = 0  # Budget: Scale-to-zero (was 2)
 }
 
 variable "app_max_instances" {
   description = "Maximum app instances"
   type        = number
-  default     = 20
+  default     = 10  # Budget: Max 10 (was 20)
 }
 
-# Workers
+# -----------------------------------------------------------------------------
+# Workers Configuration (Budget defaults)
+# -----------------------------------------------------------------------------
+
 variable "worker_cpu" {
   description = "CPU for worker containers"
   type        = string
-  default     = "2"
+  default     = "1"  # Budget: 1 vCPU (was 2)
 }
 
 variable "worker_memory" {
   description = "Memory for worker containers"
   type        = string
-  default     = "2Gi"
+  default     = "1Gi"  # Budget: 1GB (was 2Gi)
 }
 
 variable "worker_min_instances" {
-  description = "Minimum worker instances"
+  description = "Minimum worker instances (0 for scale-to-zero)"
   type        = number
-  default     = 2
+  default     = 0  # Budget: Scale-to-zero (was 2)
 }
 
 variable "worker_max_instances" {
   description = "Maximum worker instances"
   type        = number
-  default     = 10
+  default     = 5  # Budget: Max 5 (was 10)
 }
 
-# Database
+# -----------------------------------------------------------------------------
+# Database Configuration (Budget defaults)
+# -----------------------------------------------------------------------------
+
 variable "database_tier" {
   description = "Cloud SQL machine tier"
   type        = string
-  default     = "db-custom-2-4096" # 2 vCPU, 4GB RAM
+  default     = "db-g1-small"  # Budget: ~$25/month (was db-custom-2-4096)
 }
 
-# Redis
+# -----------------------------------------------------------------------------
+# Redis Configuration (Budget defaults)
+# -----------------------------------------------------------------------------
+
 variable "redis_memory_gb" {
   description = "Redis memory in GB"
   type        = number
-  default     = 5
+  default     = 1  # Budget: 1GB (was 5)
 }
 
-# Alerting
+# -----------------------------------------------------------------------------
+# Security Configuration
+# -----------------------------------------------------------------------------
+
+variable "cloud_run_ingress" {
+  description = "Cloud Run ingress setting. Use INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING for Cloudflare setup"
+  type        = string
+  default     = "INGRESS_TRAFFIC_ALL"
+
+  validation {
+    condition     = contains(["INGRESS_TRAFFIC_ALL", "INGRESS_TRAFFIC_INTERNAL_ONLY", "INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING"], var.cloud_run_ingress)
+    error_message = "Ingress must be one of: INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING."
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Alerting Configuration
+# -----------------------------------------------------------------------------
+
 variable "alert_email_addresses" {
   description = "Email addresses for alert notifications"
   type        = list(string)
@@ -117,7 +148,10 @@ variable "slack_auth_token" {
   sensitive   = true
 }
 
-# CI/CD
+# -----------------------------------------------------------------------------
+# CI/CD Configuration
+# -----------------------------------------------------------------------------
+
 variable "enable_workload_identity" {
   description = "Enable Workload Identity for GitHub Actions"
   type        = bool
@@ -135,28 +169,26 @@ variable "enable_oauth" {
   default     = true
 }
 
-# Payment (Paddle)
+# -----------------------------------------------------------------------------
+# Payment Configuration (Paddle)
+# NOTE: Product IDs are now stored in the database (PricingPlan model)
+# Only API credentials are configured here as secrets
+# See: prisma/schema.prisma (PricingPlan), prisma/seed.ts
+# -----------------------------------------------------------------------------
+
 variable "paddle_vendor_id" {
-  description = "Paddle vendor ID"
+  description = "Paddle vendor ID (displayed in checkout, not secret)"
   type        = string
+  default     = ""
 }
 
-variable "paddle_product_single" {
-  description = "Paddle product ID for single assessment"
-  type        = string
-}
+# REMOVED: paddle_product_single, paddle_product_medium, paddle_product_enterprise
+# These are now managed in the database for dynamic configuration without redeployment
 
-variable "paddle_product_medium" {
-  description = "Paddle product ID for medium pack"
-  type        = string
-}
+# -----------------------------------------------------------------------------
+# Email Configuration
+# -----------------------------------------------------------------------------
 
-variable "paddle_product_enterprise" {
-  description = "Paddle product ID for enterprise"
-  type        = string
-}
-
-# Email
 variable "resend_from_email" {
   description = "From email address for Resend"
   type        = string

@@ -1,5 +1,13 @@
-# InterviewLM - Production Environment
-# Terraform configuration for production environment
+# InterviewLM - Production Environment (Budget-Optimized)
+# Terraform configuration with security best practices for Cloudflare integration
+#
+# Estimated Monthly Cost: ~$135-165
+# - Cloud SQL db-g1-small (ZONAL): ~$25
+# - Memorystore Redis 1GB (BASIC): ~$35
+# - Cloud Run (scale-to-zero): ~$20-50
+# - VPC Connector (e2-micro): ~$15
+# - Cloud NAT: ~$30
+# - Storage + Secrets: ~$10
 
 terraform {
   required_version = ">= 1.5.0"
@@ -52,6 +60,7 @@ locals {
     project     = "interviewlm"
     environment = local.environment
     managed_by  = "terraform"
+    cost_center = "budget-optimized"
   }
 }
 
@@ -106,7 +115,7 @@ module "iam" {
 }
 
 # -----------------------------------------------------------------------------
-# VPC Module
+# VPC Module (Budget: e2-micro connector)
 # -----------------------------------------------------------------------------
 
 module "vpc" {
@@ -119,15 +128,16 @@ module "vpc" {
 
   subnet_cidr                 = "10.2.0.0/20"
   vpc_connector_cidr          = "10.10.0.0/28"
+  # Budget: Use smallest connector instances
   vpc_connector_min_instances = 2
-  vpc_connector_max_instances = 10
-  vpc_connector_machine_type  = "e2-standard-4"
+  vpc_connector_max_instances = 3
+  vpc_connector_machine_type  = "e2-micro"
 
   depends_on = [google_project_service.apis]
 }
 
 # -----------------------------------------------------------------------------
-# Cloud SQL Module
+# Cloud SQL Module (Budget: db-g1-small, ZONAL, with SSL)
 # -----------------------------------------------------------------------------
 
 module "cloud_sql" {
@@ -141,25 +151,27 @@ module "cloud_sql" {
   network_id                  = module.vpc.network_id
   private_services_connection = module.vpc.private_services_connection
 
-  # Production: high availability with good resources
+  # Budget: Small instance, single zone (no HA)
   tier              = var.database_tier
-  availability_type = "REGIONAL" # Multi-zone HA
-  disk_size         = 50
+  availability_type = "ZONAL"  # Single zone for budget (upgrade to REGIONAL for HA)
+  disk_size         = 20       # Start smaller
   disk_autoresize   = true
 
-  # Full backups with PITR
+  # Essential backups (still important even on budget)
   backup_enabled         = true
   point_in_time_recovery = true
-  backup_retention_days  = 14
-  retained_backups       = 30
+  backup_retention_days  = 7
+  retained_backups       = 7
 
-  # Production: strict deletion protection
+  # Security: Enable deletion protection and SSL
   deletion_protection              = true
   store_password_in_secret_manager = true
+  require_ssl                      = true
+  ssl_mode                         = "ENCRYPTED_ONLY"
 
   query_insights_enabled = true
 
-  # Production database flags for performance
+  # Essential database flags for security and performance
   database_flags = [
     {
       name  = "log_checkpoints"
@@ -180,10 +192,6 @@ module "cloud_sql" {
     {
       name  = "log_min_duration_statement"
       value = "1000" # Log queries > 1 second
-    },
-    {
-      name  = "max_connections"
-      value = "200"
     }
   ]
 
@@ -193,7 +201,7 @@ module "cloud_sql" {
 }
 
 # -----------------------------------------------------------------------------
-# Memorystore Module
+# Memorystore Module (Budget: 1GB BASIC with AUTH + TLS)
 # -----------------------------------------------------------------------------
 
 module "memorystore" {
@@ -207,17 +215,17 @@ module "memorystore" {
   network_id                  = module.vpc.network_id
   private_services_connection = module.vpc.private_services_connection
 
-  # Production: Standard HA with replicas
-  tier           = "STANDARD_HA"
+  # Budget: Basic tier (no HA, but much cheaper)
+  # Upgrade to STANDARD_HA when traffic justifies it
+  tier           = "BASIC"
   memory_size_gb = var.redis_memory_gb
   redis_version  = "REDIS_7_0"
-  replica_count  = 1
 
-  persistence_mode    = "RDB"
-  rdb_snapshot_period = "ONE_HOUR"
-  auth_enabled        = true
+  # No persistence for BASIC tier (cache only)
+  persistence_mode = "DISABLED"
 
-  # Enable transit encryption in production
+  # Security: AUTH and transit encryption
+  auth_enabled            = true
   transit_encryption_mode = "SERVER_AUTHENTICATION"
 
   store_url_in_secret_manager = true
@@ -244,7 +252,7 @@ module "cloud_storage" {
   create_artifacts_bucket  = true
   artifacts_retention_days = 365
 
-  # Production lifecycle: transition to cheaper storage over time
+  # Budget lifecycle: transition to cheaper storage over time
   lifecycle_rules = [
     {
       action_type   = "SetStorageClass"
@@ -263,7 +271,7 @@ module "cloud_storage" {
     },
     {
       action_type        = "Delete"
-      num_newer_versions = 5
+      num_newer_versions = 3
       with_state         = "ARCHIVED"
     }
   ]
@@ -307,7 +315,7 @@ module "secrets" {
 }
 
 # -----------------------------------------------------------------------------
-# Cloud Run Module
+# Cloud Run Module (Budget: scale-to-zero, restricted ingress for Cloudflare)
 # -----------------------------------------------------------------------------
 
 module "cloud_run" {
@@ -321,21 +329,25 @@ module "cloud_run" {
   vpc_connector_id      = module.vpc.vpc_connector_id
   service_account_email = module.iam.cloud_run_service_account_email
 
-  # Production: high resources with always-on instances
+  # Budget: Scale-to-zero, smaller resources
   app_image         = var.app_image
   app_cpu           = var.app_cpu
   app_memory        = var.app_memory
-  app_min_instances = var.app_min_instances
+  app_min_instances = var.app_min_instances  # 0 for scale-to-zero
   app_max_instances = var.app_max_instances
 
-  # Workers enabled with guaranteed capacity
+  # Workers: Also scale-to-zero
   enable_workers       = true
   worker_cpu           = var.worker_cpu
   worker_memory        = var.worker_memory
-  worker_min_instances = var.worker_min_instances
+  worker_min_instances = var.worker_min_instances  # 0 for scale-to-zero
   worker_max_instances = var.worker_max_instances
 
+  # Security: Restrict ingress for Cloudflare setup
+  # This blocks direct access to Cloud Run URL
+  # Traffic must come through Cloud Load Balancing (which Cloudflare can route to)
   allow_public_access = true
+  ingress             = var.cloud_run_ingress
   custom_domain       = var.custom_domain
 
   app_env_vars = {
@@ -417,7 +429,7 @@ module "cloud_run" {
 }
 
 # -----------------------------------------------------------------------------
-# Monitoring Module
+# Monitoring Module (Essential alerts only for budget)
 # -----------------------------------------------------------------------------
 
 module "monitoring" {
@@ -433,10 +445,10 @@ module "monitoring" {
   slack_auth_token       = var.slack_auth_token
   app_url                = "https://${var.custom_domain}"
 
-  # Strict thresholds for production
-  error_rate_threshold   = 1
-  latency_threshold_ms   = 2000
-  database_cpu_threshold = 70
+  # Reasonable thresholds for budget setup
+  error_rate_threshold   = 5    # More tolerant for cold starts
+  latency_threshold_ms   = 3000 # Cold start can be slow
+  database_cpu_threshold = 80
 
   database_instance_name = module.cloud_sql.instance_name
 
@@ -446,3 +458,5 @@ module "monitoring" {
 
   depends_on = [module.cloud_run, module.cloud_sql]
 }
+
+# Outputs are defined in outputs.tf

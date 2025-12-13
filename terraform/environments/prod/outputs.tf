@@ -107,3 +107,47 @@ output "dns_configuration" {
     For more details, see: https://cloud.google.com/run/docs/mapping-custom-domains
   EOT
 }
+
+# Security configuration summary
+output "security_summary" {
+  description = "Security configuration summary"
+  value = {
+    cloud_sql_ssl_mode         = "ENCRYPTED_ONLY"
+    cloud_sql_private_ip       = true
+    redis_auth_enabled         = true
+    redis_transit_encryption   = "SERVER_AUTHENTICATION"
+    cloud_run_ingress          = var.cloud_run_ingress
+    vpc_connector_enabled      = true
+    secrets_in_secret_manager  = true
+  }
+}
+
+# Upgrade instructions
+output "upgrade_instructions" {
+  description = "Instructions for upgrading from budget to full production"
+  value = <<-EOT
+    To upgrade from budget to full production (~$400-800/month):
+
+    1. Database HA: Change availability_type = "REGIONAL" in main.tf
+    2. Database Size: Change database_tier = "db-custom-2-4096" in terraform.tfvars
+    3. Redis HA: Change tier = "STANDARD_HA" and memory_size_gb = 5 in main.tf
+    4. Cloud Run: Set app_min_instances = 2 and worker_min_instances = 2
+    5. VPC Connector: Change vpc_connector_machine_type = "e2-standard-4"
+
+    Then run: terraform apply
+  EOT
+}
+
+# Cost estimate
+output "estimated_monthly_cost" {
+  description = "Estimated monthly cost breakdown"
+  value = <<-EOT
+    Budget Configuration (~$135-165/month):
+    - Cloud SQL db-g1-small (ZONAL): ~$25/month
+    - Memorystore Redis 1GB (BASIC): ~$35/month
+    - Cloud Run (scale-to-zero): ~$20-50/month
+    - VPC Connector (e2-micro): ~$15/month
+    - Cloud NAT: ~$30/month
+    - Storage + Secrets: ~$10/month
+  EOT
+}

@@ -397,3 +397,77 @@ Extensive business and technical documentation exists in:
 - **`docs/` directory**: Additional documentation (12 files)
 
 These documents contain detailed analysis of pricing models, cost structures, and technical architecture decisions.
+
+## Linear Task Management (MCP)
+
+**IMPORTANT**: Always use the Linear MCP tools for task management. Never skip this step.
+
+### Workflow
+
+1. **Before starting work**: Check for existing Linear issues related to the task
+   ```
+   mcp__linear-server__list_issues - Search for related issues
+   ```
+
+2. **When starting a new task**:
+   - Ask the user: "Should I create a new Linear issue for this task, or is there an existing one?"
+   - If new, use `mcp__linear-server__create_issue` to create the task
+   - If existing, use `mcp__linear-server__update_issue` to update status
+
+3. **During work**: Update issue status as you progress
+   - Move to "In Progress" when starting
+   - Add comments with `mcp__linear-server__create_comment` for significant updates
+
+4. **After completing work**:
+   - Update the issue status to "Done" or appropriate state
+   - Add a summary comment of what was accomplished
+
+### Available Linear MCP Tools
+
+| Tool | Purpose |
+|------|---------|
+| `mcp__linear-server__list_teams` | List available teams |
+| `mcp__linear-server__list_issues` | Search/filter issues |
+| `mcp__linear-server__get_issue` | Get issue details |
+| `mcp__linear-server__create_issue` | Create new issue |
+| `mcp__linear-server__update_issue` | Update existing issue |
+| `mcp__linear-server__create_comment` | Add comment to issue |
+| `mcp__linear-server__list_issue_statuses` | Get available statuses |
+| `mcp__linear-server__list_issue_labels` | Get available labels |
+| `mcp__linear-server__list_projects` | List projects |
+| `mcp__linear-server__list_cycles` | List sprints/cycles |
+
+### Issue Creation Template
+
+When creating issues, include:
+- **Title**: Clear, actionable description
+- **Description**: Context, acceptance criteria, technical notes
+- **Labels**: Appropriate labels (bug, feature, improvement, etc.)
+- **Project**: Assign to relevant project if applicable
+
+### Example Workflow
+
+```
+User: "Help me implement user authentication"
+
+Claude:
+1. First, let me check if there's an existing issue for this...
+   [Uses mcp__linear-server__list_issues with query="authentication"]
+
+2. No existing issue found. Should I create a new Linear issue to track this work?
+
+User: "Yes, create one"
+
+Claude:
+   [Uses mcp__linear-server__create_issue with title, description, team]
+   Created issue AUTH-123: "Implement user authentication"
+
+3. [Updates issue to "In Progress" as work begins]
+4. [Adds comments for significant milestones]
+5. [Updates to "Done" when complete]
+```
+
+### Always Ask
+
+Before starting any significant work, always ask:
+> "Is there an existing Linear issue for this task, or should I create a new one?"

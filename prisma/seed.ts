@@ -354,6 +354,225 @@ async function main() {
 
   console.log(`✅ Created ${techCreated} technologies (${techSkipped} already existed)`);
 
+  // Seed Pricing Plans (Credit Packs with $20 floor)
+  console.log("\n💳 Seeding pricing plans...");
+
+  const pricingPlans = [
+    {
+      slug: "starter",
+      name: "Starter Pack",
+      description: "Perfect for trying out the platform",
+      paddleProductId: process.env.PADDLE_PRODUCT_STARTER || "pri_starter_10",
+      credits: 10,
+      price: 250.00,
+      pricePerCredit: 25.00,
+      sortOrder: 1,
+      isPopular: false,
+      badge: null,
+      features: [
+        "10 base assessments",
+        "AI-assisted coding environment",
+        "Automated evaluation",
+        "AI usage analytics",
+        "30-day result access",
+      ],
+      planType: "ONE_TIME" as const,
+    },
+    {
+      slug: "growth",
+      name: "Growth Pack",
+      description: "For growing engineering teams",
+      paddleProductId: process.env.PADDLE_PRODUCT_GROWTH || "pri_growth_50",
+      credits: 50,
+      price: 1125.00,
+      pricePerCredit: 22.50,
+      sortOrder: 2,
+      isPopular: false,
+      badge: "10% Savings",
+      features: [
+        "50 base assessments",
+        "All Starter features",
+        "Priority support",
+        "Team analytics dashboard",
+        "Candidate comparison tools",
+      ],
+      planType: "ONE_TIME" as const,
+    },
+    {
+      slug: "scale",
+      name: "Scale Pack",
+      description: "For high-volume technical hiring",
+      paddleProductId: process.env.PADDLE_PRODUCT_SCALE || "pri_scale_200",
+      credits: 200,
+      price: 4200.00,
+      pricePerCredit: 21.00,
+      sortOrder: 3,
+      isPopular: true,
+      badge: "Most Popular",
+      features: [
+        "200 base assessments",
+        "All Growth features",
+        "Dedicated account manager",
+        "API access",
+        "Custom problem library",
+        "Bulk candidate invites",
+      ],
+      planType: "ONE_TIME" as const,
+    },
+    {
+      slug: "enterprise",
+      name: "Enterprise Pack",
+      description: "Enterprise-scale hiring with maximum value",
+      paddleProductId: process.env.PADDLE_PRODUCT_ENTERPRISE || "pri_enterprise_500",
+      credits: 500,
+      price: 10000.00,
+      pricePerCredit: 20.00, // $20 floor - no discounts below this
+      sortOrder: 4,
+      isPopular: false,
+      badge: "Best Value",
+      features: [
+        "500 base assessments",
+        "All Scale features",
+        "SSO/SAML authentication",
+        "Custom integrations",
+        "90-day result retention",
+        "Custom SLA",
+        "White-label options",
+      ],
+      planType: "ONE_TIME" as const,
+    },
+  ];
+
+  let plansCreated = 0;
+  let plansUpdated = 0;
+
+  for (const plan of pricingPlans) {
+    const existing = await prisma.pricingPlan.findUnique({
+      where: { slug: plan.slug },
+    });
+
+    if (existing) {
+      // Update existing plan (useful for updating Paddle product IDs)
+      await prisma.pricingPlan.update({
+        where: { slug: plan.slug },
+        data: {
+          paddleProductId: plan.paddleProductId,
+          name: plan.name,
+          description: plan.description,
+          credits: plan.credits,
+          price: plan.price,
+          pricePerCredit: plan.pricePerCredit,
+          sortOrder: plan.sortOrder,
+          isPopular: plan.isPopular,
+          badge: plan.badge,
+          features: plan.features,
+          planType: plan.planType,
+          isActive: true,
+        },
+      });
+      plansUpdated++;
+    } else {
+      await prisma.pricingPlan.create({
+        data: {
+          slug: plan.slug,
+          paddleProductId: plan.paddleProductId,
+          name: plan.name,
+          description: plan.description,
+          credits: plan.credits,
+          price: plan.price,
+          pricePerCredit: plan.pricePerCredit,
+          sortOrder: plan.sortOrder,
+          isPopular: plan.isPopular,
+          badge: plan.badge,
+          features: plan.features,
+          planType: plan.planType,
+          isActive: true,
+        },
+      });
+      plansCreated++;
+    }
+  }
+
+  console.log(`✅ Pricing plans: ${plansCreated} created, ${plansUpdated} updated`);
+
+  // Seed Assessment Add-Ons (Video Recording, Live Proctoring)
+  console.log("\n🎬 Seeding assessment add-ons...");
+
+  const addons = [
+    {
+      slug: "video-recording",
+      name: "Video Recording",
+      description: "Full session recording with timeline playback and scrubbing",
+      price: 10.00,
+      icon: "Video",
+      sortOrder: 1,
+      features: [
+        "Complete session video recording",
+        "Timeline scrubbing and playback",
+        "Code change visualization",
+        "AI interaction replay",
+        "Shareable with hiring team",
+      ],
+    },
+    {
+      slug: "live-proctoring",
+      name: "Live Proctoring",
+      description: "Real-time monitoring with anti-cheating measures",
+      price: 15.00,
+      icon: "Shield",
+      sortOrder: 2,
+      features: [
+        "Webcam monitoring",
+        "Screen activity tracking",
+        "Browser lock mode",
+        "Tab switch detection",
+        "Copy-paste monitoring",
+        "Identity verification",
+      ],
+    },
+  ];
+
+  let addonsCreated = 0;
+  let addonsUpdated = 0;
+
+  for (const addon of addons) {
+    const existing = await prisma.assessmentAddOn.findUnique({
+      where: { slug: addon.slug },
+    });
+
+    if (existing) {
+      await prisma.assessmentAddOn.update({
+        where: { slug: addon.slug },
+        data: {
+          name: addon.name,
+          description: addon.description,
+          price: addon.price,
+          icon: addon.icon,
+          sortOrder: addon.sortOrder,
+          features: addon.features,
+          isActive: true,
+        },
+      });
+      addonsUpdated++;
+    } else {
+      await prisma.assessmentAddOn.create({
+        data: {
+          slug: addon.slug,
+          name: addon.name,
+          description: addon.description,
+          price: addon.price,
+          icon: addon.icon,
+          sortOrder: addon.sortOrder,
+          features: addon.features,
+          isActive: true,
+        },
+      });
+      addonsCreated++;
+    }
+  }
+
+  console.log(`✅ Assessment add-ons: ${addonsCreated} created, ${addonsUpdated} updated`);
+
   // Seed configuration data (security, models, sandbox, roles, seniorities)
   await seedAllConfigs();
 

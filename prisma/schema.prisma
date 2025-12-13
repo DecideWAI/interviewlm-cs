@@ -1170,6 +1170,97 @@ model TierConfig {
   @@map("tier_configs")
 }
 
+// =====================================================
+// PRICING PLANS (Paddle Products)
+// Database-driven Paddle product configuration
+// Replaces hardcoded env vars for dynamic pricing
+// =====================================================
+
+model PricingPlan {
+  id                String   @id @default(cuid())
+
+  // Plan identification
+  slug              String   @unique // "single", "medium", "enterprise"
+  name              String   // "Single Assessment", "50 Assessments", etc.
+  description       String?
+
+  // Paddle integration
+  paddleProductId   String   @map("paddle_product_id") // Paddle price ID (e.g., "pri_01hzf9kj")
+  paddlePriceId     String?  @map("paddle_price_id")   // Optional: separate price ID if different
+
+  // Pricing details
+  credits           Int      // Number of credits included
+  price             Decimal  @db.Decimal(10, 2) // Display price (e.g., 20.00, 750.00)
+  currency          String   @default("USD")
+  pricePerCredit    Decimal  @map("price_per_credit") @db.Decimal(10, 2) // For display (e.g., 20.00, 15.00)
+
+  // Display configuration
+  sortOrder         Int      @default(0) @map("sort_order")
+  isPopular         Boolean  @default(false) @map("is_popular") // Highlight badge
+  badge             String?  // Optional badge text ("Best Value", "Most Popular")
+  features          Json     @default("[]") // Array of feature strings for display
+
+  // Plan type
+  planType          PlanType @default(ONE_TIME) @map("plan_type")
+  billingInterval   String?  @map("billing_interval") // "monthly", "yearly" for subscriptions
+
+  // Availability
+  isActive          Boolean  @default(true) @map("is_active")
+  availableFrom     DateTime? @map("available_from")
+  availableUntil    DateTime? @map("available_until")
+
+  // Audit trail
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdBy         String?  @map("created_by")
+
+  @@index([isActive, sortOrder])
+  @@index([planType])
+  @@map("pricing_plans")
+}
+
+enum PlanType {
+  ONE_TIME      // Credit pack purchase
+  SUBSCRIPTION  // Recurring subscription
+}
+
+// =====================================================
+// ASSESSMENT ADD-ONS
+// Premium features that can be added to any assessment
+// Purchased separately at time of assessment
+// =====================================================
+
+model AssessmentAddOn {
+  id              String   @id @default(cuid())
+
+  // Add-on identification
+  slug            String   @unique  // "video-recording", "live-proctoring"
+  name            String   // "Video Recording", "Live Proctoring"
+  description     String?
+
+  // Pricing
+  price           Decimal  @db.Decimal(10, 2) // Per-assessment price
+  currency        String   @default("USD")
+
+  // Display
+  icon            String?  // Lucide icon name (e.g., "Video", "Shield")
+  sortOrder       Int      @default(0) @map("sort_order")
+  features        Json     @default("[]") // Feature bullet points
+
+  // Paddle integration (if separate product)
+  paddleProductId String?  @map("paddle_product_id")
+
+  // Availability
+  isActive        Boolean  @default(true) @map("is_active")
+
+  // Audit
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("assessment_addons")
+}
+
 // Assessment templates - pre-built question templates
 model AssessmentTemplateConfig {
   id                String   @id @default(cuid())

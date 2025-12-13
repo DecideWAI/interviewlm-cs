@@ -546,6 +546,80 @@ interface LangGraphCallOptions {
   onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => void;
 }
 
+/**
+ * Extract tool output from LangGraph event data
+ * Handles various formats:
+ * - Direct dict: {success: true, path: "...", bytes_written: 123}
+ * - ToolMessage wrapper: {content: '{"success":true,...}'}
+ * - JSON string: '{"success":true,...}'
+ */
+function extractToolOutput(rawOutput: unknown): Record<string, unknown> {
+  if (!rawOutput) {
+    console.log('[extractToolOutput] rawOutput is null/undefined');
+    return {};
+  }
+
+  console.log('[extractToolOutput] Input type:', typeof rawOutput);
+  console.log('[extractToolOutput] Input preview:', JSON.stringify(rawOutput).slice(0, 300));
+
+  // If it's already a plain object with expected fields, return it
+  if (typeof rawOutput === 'object' && rawOutput !== null) {
+    const obj = rawOutput as Record<string, unknown>;
+
+    // Check if this looks like a ToolMessage with .content
+    if ('content' in obj) {
+      console.log('[extractToolOutput] Found content field, extracting...');
+      const content = obj.content;
+      // content can be a JSON string that needs parsing
+      if (typeof content === 'string') {
+        try {
+          const parsed = JSON.parse(content);
+          if (typeof parsed === 'object' && parsed !== null) {
+            console.log('[extractToolOutput] Parsed content JSON:', JSON.stringify(parsed).slice(0, 200));
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          // Not valid JSON, return as-is
+          console.log('[extractToolOutput] Content is not valid JSON, returning rawContent');
+          return { rawContent: content };
+        }
+      }
+      // content is already an object
+      if (typeof content === 'object' && content !== null) {
+        console.log('[extractToolOutput] Content is object:', JSON.stringify(content).slice(0, 200));
+        return content as Record<string, unknown>;
+      }
+    }
+
+    // Check if it has expected tool result fields (success, path, etc.)
+    if ('success' in obj || 'path' in obj || 'error' in obj) {
+      console.log('[extractToolOutput] Direct object with expected fields');
+      return obj;
+    }
+
+    // Fallback: return the object as-is
+    console.log('[extractToolOutput] Returning object as-is');
+    return obj;
+  }
+
+  // If it's a JSON string, try to parse it
+  if (typeof rawOutput === 'string') {
+    try {
+      const parsed = JSON.parse(rawOutput);
+      if (typeof parsed === 'object' && parsed !== null) {
+        console.log('[extractToolOutput] Parsed string JSON:', JSON.stringify(parsed).slice(0, 200));
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      console.log('[extractToolOutput] String is not valid JSON');
+      return { rawContent: rawOutput };
+    }
+  }
+
+  console.log('[extractToolOutput] Unhandled type, returning empty object');
+  return {};
+}
+
 import { v5 as uuidv5 } from 'uuid';
 
 // Namespace UUID for generating deterministic thread IDs
@@ -662,8 +736,9 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
         } else if (eventData?.event === 'on_tool_end') {
           const toolName = eventData.name || 'unknown';
           const toolId = eventData.run_id || '';
-          const output = eventData.data?.output || {};
-          const isError = !!eventData.data?.error;
+          // Extract tool output, handling ToolMessage wrapper and JSON string formats
+          const output = extractToolOutput(eventData.data?.output);
+          const isError = !!eventData.data?.error || output.success === false;
 
           options.onToolResult(toolName, toolId, output, isError);
 
@@ -674,13 +749,15 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
           if (
             (toolNameLower === 'write_file' || toolNameLower === 'edit_file') &&
             output.success &&
-            output.path
+            output.path &&
+            typeof output.path === 'string'
           ) {
-            console.log(`[LangGraph] Broadcasting file change: ${output.path} to candidate ${options.candidateId}`);
+            const outputPath = output.path as string;
+            console.log(`[LangGraph] Broadcasting file change: ${outputPath} to candidate ${options.candidateId}`);
             const isCreate = toolNameLower === 'write_file';
-            const filePath = output.path.startsWith('/workspace')
-              ? output.path
-              : `/workspace/${output.path}`;
+            const filePath = outputPath.startsWith('/workspace')
+              ? outputPath
+              : `/workspace/${outputPath}`;
             const fileName = filePath.split('/').pop() || filePath;
 
             // Track file in database so it appears in file tree on refresh

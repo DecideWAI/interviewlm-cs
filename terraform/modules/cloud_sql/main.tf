@@ -42,11 +42,14 @@ resource "google_sql_database_instance" "main" {
     disk_size         = var.disk_size
     disk_autoresize   = var.disk_autoresize
 
-    # Private IP configuration
+    # Private IP configuration with SSL enforcement
     ip_configuration {
       ipv4_enabled                                  = false
       private_network                               = var.network_id
       enable_private_path_for_google_cloud_services = true
+      # Security: Require SSL for all connections
+      require_ssl = var.require_ssl
+      ssl_mode    = var.ssl_mode
     }
 
     # Backup configuration
@@ -175,5 +178,6 @@ resource "google_secret_manager_secret_version" "database_url" {
   count = var.store_password_in_secret_manager ? 1 : 0
 
   secret      = google_secret_manager_secret.database_url[0].id
-  secret_data = "postgresql://${var.database_user}:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/${var.database_name}?schema=public"
+  # Include sslmode=require when SSL is enabled
+  secret_data = var.require_ssl ? "postgresql://${var.database_user}:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/${var.database_name}?schema=public&sslmode=require" : "postgresql://${var.database_user}:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/${var.database_name}?schema=public"
 }

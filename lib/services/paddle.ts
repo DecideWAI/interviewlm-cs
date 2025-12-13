@@ -3,14 +3,17 @@
  *
  * Handles credit purchases, webhooks, and subscription management using Paddle.
  * Paddle provides built-in tax handling, fraud detection, and global payment methods.
+ *
+ * Product configuration is stored in the database (PricingPlan model) for dynamic updates.
  */
 
 import { z } from "zod";
 import crypto from "crypto";
 import prisma from "@/lib/prisma";
 import { alerting } from "@/lib/services/alerting";
+import type { PricingPlan, AssessmentAddOn } from "@prisma/client";
 
-// Configuration
+// Configuration (API keys still from env - these are secrets)
 const PADDLE_VENDOR_ID = process.env.PADDLE_VENDOR_ID;
 const PADDLE_API_KEY = process.env.PADDLE_API_KEY;
 const PADDLE_PUBLIC_KEY = process.env.PADDLE_PUBLIC_KEY;
@@ -32,29 +35,181 @@ const createCheckoutSchema = z.object({
   quantity: z.number().int().positive().default(1),
 });
 
+// In-memory cache for pricing plans (refreshed every 5 minutes)
+let pricingPlansCache: PricingPlan[] | null = null;
+let cacheTimestamp = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
- * Product configuration for credit packages
+ * Get all active pricing plans from database (with caching)
  */
-export const PADDLE_PRODUCTS = {
-  SINGLE: {
-    id: process.env.PADDLE_PRODUCT_SINGLE || "pri_01hzf9kj",
-    name: "Single Assessment",
-    credits: 1,
-    price: 20,
-  },
-  MEDIUM: {
-    id: process.env.PADDLE_PRODUCT_MEDIUM || "pri_01hzf9km",
-    name: "50 Assessments",
-    credits: 50,
-    price: 750,
-  },
-  ENTERPRISE: {
-    id: process.env.PADDLE_PRODUCT_ENTERPRISE || "pri_01hzf9kn",
-    name: "500 Assessments",
-    credits: 500,
-    price: 5000,
-  },
-} as const;
+export async function getPricingPlans(): Promise<PricingPlan[]> {
+  const now = Date.now();
+
+  // Return cached if still valid
+  if (pricingPlansCache && now - cacheTimestamp < CACHE_TTL_MS) {
+    return pricingPlansCache;
+  }
+
+  // Fetch from database
+  const plans = await prisma.pricingPlan.findMany({
+    where: {
+      isActive: true,
+      OR: [
+        { availableFrom: null },
+        { availableFrom: { lte: new Date() } },
+      ],
+      AND: [
+        {
+          OR: [
+            { availableUntil: null },
+            { availableUntil: { gte: new Date() } },
+          ],
+        },
+      ],
+    },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  // Update cache
+  pricingPlansCache = plans;
+  cacheTimestamp = now;
+
+  return plans;
+}
+
+/**
+ * Get a single pricing plan by slug or Paddle product ID
+ */
+export async function getPricingPlan(
+  identifier: string
+): Promise<PricingPlan | null> {
+  const plans = await getPricingPlans();
+
+  // Try to find by slug first, then by paddleProductId
+  return (
+    plans.find((p) => p.slug === identifier) ||
+    plans.find((p) => p.paddleProductId === identifier) ||
+    null
+  );
+}
+
+/**
+ * Clear the pricing plans cache (call after admin updates)
+ */
+export function clearPricingPlansCache(): void {
+  pricingPlansCache = null;
+  cacheTimestamp = 0;
+}
+
+// In-memory cache for add-ons
+let addOnsCache: AssessmentAddOn[] | null = null;
+let addOnsCacheTimestamp = 0;
+
+/**
+ * Get all active assessment add-ons from database (with caching)
+ */
+export async function getAddOns(): Promise<AssessmentAddOn[]> {
+  const now = Date.now();
+
+  // Return cached if still valid
+  if (addOnsCache && now - addOnsCacheTimestamp < CACHE_TTL_MS) {
+    return addOnsCache;
+  }
+
+  // Fetch from database
+  const addons = await prisma.assessmentAddOn.findMany({
+    where: { isActive: true },
+    orderBy: { sortOrder: "asc" },
+  });
+
+  // Update cache
+  addOnsCache = addons;
+  addOnsCacheTimestamp = now;
+
+  return addons;
+}
+
+/**
+ * Get a single add-on by slug
+ */
+export async function getAddOn(slug: string): Promise<AssessmentAddOn | null> {
+  const addons = await getAddOns();
+  return addons.find((a) => a.slug === slug) || null;
+}
+
+/**
+ * Clear the add-ons cache (call after admin updates)
+ */
+export function clearAddOnsCache(): void {
+  addOnsCache = null;
+  addOnsCacheTimestamp = 0;
+}
+
+/**
+ * Calculate total price for a checkout with add-ons
+ */
+export async function calculateCheckoutTotal(
+  planSlug: string,
+  addOnSlugs: string[] = [],
+  quantity: number = 1
+): Promise<{
+  plan: PricingPlan;
+  addOns: AssessmentAddOn[];
+  baseTotal: number;
+  addOnsTotal: number;
+  grandTotal: number;
+}> {
+  const plan = await getPricingPlan(planSlug);
+  if (!plan) {
+    throw new Error(`Plan not found: ${planSlug}`);
+  }
+
+  const allAddOns = await getAddOns();
+  const selectedAddOns = allAddOns.filter((a) => addOnSlugs.includes(a.slug));
+
+  const baseTotal = Number(plan.price);
+  // Add-ons are priced per assessment, so multiply by credits
+  const addOnsTotal = selectedAddOns.reduce(
+    (sum, addon) => sum + Number(addon.price) * plan.credits,
+    0
+  );
+  const grandTotal = (baseTotal + addOnsTotal) * quantity;
+
+  return {
+    plan,
+    addOns: selectedAddOns,
+    baseTotal,
+    addOnsTotal,
+    grandTotal,
+  };
+}
+
+/**
+ * Legacy PADDLE_PRODUCTS format for backward compatibility
+ * @deprecated Use getPricingPlans() instead
+ */
+export async function getLegacyProducts(): Promise<
+  Record<string, { id: string; name: string; credits: number; price: number }>
+> {
+  const plans = await getPricingPlans();
+  const products: Record<
+    string,
+    { id: string; name: string; credits: number; price: number }
+  > = {};
+
+  for (const plan of plans) {
+    const key = plan.slug.toUpperCase();
+    products[key] = {
+      id: plan.paddleProductId,
+      name: plan.name,
+      credits: plan.credits,
+      price: Number(plan.price),
+    };
+  }
+
+  return products;
+}
 
 /**
  * Get Paddle authentication headers
@@ -111,12 +266,12 @@ export function verifyWebhookSignature(
 /**
  * Create a checkout session for purchasing credits
  *
- * @param params - Checkout parameters
+ * @param params - Checkout parameters (productId can be slug or Paddle product ID)
  * @returns Checkout URL for redirect
  */
 export async function createCheckout(params: {
   organizationId: string;
-  productId: string;
+  productId: string; // Can be slug (e.g., "single") or Paddle ID (e.g., "pri_01hzf9kj")
   userId: string;
   email: string;
   quantity?: number;
@@ -124,12 +279,10 @@ export async function createCheckout(params: {
   try {
     const validatedParams = createCheckoutSchema.parse(params);
 
-    // Get product details
-    const product = Object.values(PADDLE_PRODUCTS).find(
-      (p) => p.id === validatedParams.productId
-    );
+    // Get product details from database
+    const plan = await getPricingPlan(validatedParams.productId);
 
-    if (!product) {
+    if (!plan) {
       throw new Error(`Invalid product ID: ${validatedParams.productId}`);
     }
 
@@ -140,7 +293,7 @@ export async function createCheckout(params: {
       body: JSON.stringify({
         items: [
           {
-            price_id: validatedParams.productId,
+            price_id: plan.paddleProductId, // Use the Paddle product ID from DB
             quantity: validatedParams.quantity,
           },
         ],
@@ -150,7 +303,8 @@ export async function createCheckout(params: {
         custom_data: {
           organization_id: validatedParams.organizationId,
           user_id: validatedParams.userId,
-          credits: product.credits * validatedParams.quantity,
+          credits: plan.credits * validatedParams.quantity,
+          plan_slug: plan.slug, // Include plan slug for reference
         },
         settings: {
           success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?payment=success`,
@@ -763,22 +917,68 @@ export function getPaddleEnvironment(): "sandbox" | "production" {
 
 /**
  * Initialize Paddle client-side (returns config for frontend)
+ * Note: This is now async because products come from database
  */
-export function getPaddleConfig() {
+export async function getPaddleConfig() {
+  const [plans, addons] = await Promise.all([
+    getPricingPlans(),
+    getAddOns(),
+  ]);
+
+  // Transform plans to frontend-friendly format
+  const products = plans.map((plan) => ({
+    id: plan.paddleProductId,
+    slug: plan.slug,
+    name: plan.name,
+    description: plan.description,
+    credits: plan.credits,
+    price: Number(plan.price),
+    pricePerCredit: Number(plan.pricePerCredit),
+    currency: plan.currency,
+    isPopular: plan.isPopular,
+    badge: plan.badge,
+    features: plan.features as string[],
+  }));
+
+  // Transform add-ons to frontend-friendly format
+  const addOns = addons.map((addon) => ({
+    slug: addon.slug,
+    name: addon.name,
+    description: addon.description,
+    price: Number(addon.price),
+    currency: addon.currency,
+    icon: addon.icon,
+    features: addon.features as string[],
+  }));
+
   return {
     vendor: PADDLE_VENDOR_ID,
     environment: getPaddleEnvironment(),
-    products: PADDLE_PRODUCTS,
+    products,
+    addOns,
   };
 }
 
 export const paddleService = {
+  // Checkout & payments
   createCheckout,
   handleWebhook,
   verifyWebhookSignature,
+  // Credits management
   getOrganizationCredits,
   deductCredits,
+  // Configuration
   getPaddlePublicKey,
   getPaddleEnvironment,
   getPaddleConfig,
+  // Pricing plans (database-driven)
+  getPricingPlans,
+  getPricingPlan,
+  clearPricingPlansCache,
+  getLegacyProducts,
+  // Assessment add-ons (database-driven)
+  getAddOns,
+  getAddOn,
+  clearAddOnsCache,
+  calculateCheckoutTotal,
 };

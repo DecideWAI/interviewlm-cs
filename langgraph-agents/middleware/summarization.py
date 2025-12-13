@@ -190,11 +190,13 @@ async def summarization_middleware(
     try:
         summary_text = await _generate_summary(messages_to_summarize)
 
-        # Create summary message
-        summary_message = SystemMessage(content=[
+        # Create summary message as a HumanMessage (not SystemMessage)
+        # Using HumanMessage avoids "multiple non-consecutive system messages" error
+        # from Anthropic API when the first message is already a SystemMessage
+        summary_message = HumanMessage(content=[
             {
                 "type": "text",
-                "text": f"[CONVERSATION SUMMARY - {len(messages_to_summarize)} messages summarized]\n\n{summary_text}",
+                "text": f"[CONVERSATION SUMMARY - The following summarizes {len(messages_to_summarize)} earlier messages in this conversation]\n\n{summary_text}\n\n[END SUMMARY - Continue the conversation from here]",
             }
         ])
 

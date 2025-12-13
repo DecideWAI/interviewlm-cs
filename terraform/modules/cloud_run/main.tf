@@ -20,7 +20,9 @@ resource "google_cloud_run_v2_service" "app" {
   location = var.region
   project  = var.project_id
 
-  ingress = "INGRESS_TRAFFIC_ALL"
+  # Security: Control ingress traffic source
+  # Use INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING for Cloudflare/LB setup
+  ingress = var.ingress
 
   template {
     service_account = var.service_account_email

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Container } from "@/components/layout/container";
 import { Logo } from "@/components/Logo";
+import { Spinner } from "@/components/ui/spinner";
 import {
   Check,
   X,
@@ -22,253 +23,183 @@ import {
   ChevronDown,
   ChevronUp,
   Sparkles,
-  CreditCard,
-  Package,
+  Video,
+  ShieldCheck,
+  Plus,
 } from "lucide-react";
 
+// Types for API response
+interface PricingPlan {
+  slug: string;
+  name: string;
+  description: string | null;
+  credits: number;
+  price: number;
+  pricePerCredit: number;
+  currency: string;
+  paddleProductId: string;
+  isPopular: boolean;
+  badge: string | null;
+  features: string[];
+  sortOrder: number;
+  planType: string;
+}
+
+interface AddOn {
+  slug: string;
+  name: string;
+  description: string | null;
+  price: number;
+  currency: string;
+  icon: string | null;
+  features: string[];
+  paddleProductId: string | null;
+}
+
+interface PricingData {
+  plans: PricingPlan[];
+  addOns: AddOn[];
+  summary: {
+    basePrice: number;
+    priceFloor: number;
+    addOnPrices: {
+      videoRecording: number;
+      liveProctoring: number;
+    };
+  };
+}
+
 export default function PricingPage() {
-  const [pricingModel, setPricingModel] = useState<"credits" | "subscription">("credits");
+  const [pricingData, setPricingData] = useState<PricingData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedAddOns, setSelectedAddOns] = useState<string[]>([]);
   const [avgSalary, setAvgSalary] = useState(120000);
   const [assessmentsPerMonth, setAssessmentsPerMonth] = useState(50);
   const [expandedFaq, setExpandedFaq] = useState<number | null>(0);
 
-  // Credit Pack Pricing
-  const creditPacks = [
-    {
-      name: "Pay-as-you-go",
-      description: "Perfect for trying out the platform",
-      credits: 1,
-      totalPrice: 20,
-      pricePerAssessment: 20,
-      discount: 0,
-      features: [
-        "No commitment required",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Email support",
-      ],
-      cta: "Buy Single Credit",
-      variant: "outline" as const,
-      badge: null,
-    },
-    {
-      name: "Small Pack",
-      description: "For growing teams",
-      credits: 10,
-      totalPrice: 180,
-      pricePerAssessment: 18,
-      discount: 10,
-      features: [
-        "10 assessments",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Custom branding",
-        "Priority email support",
-        "API access",
-      ],
-      cta: "Buy 10 Credits",
-      variant: "outline" as const,
-      badge: null,
-    },
-    {
-      name: "Medium Pack",
-      description: "For scaling companies",
-      credits: 50,
-      totalPrice: 750,
-      pricePerAssessment: 15,
-      discount: 25,
-      features: [
-        "50 assessments",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Custom branding",
-        "All integrations",
-        "Priority support",
-        "API access",
-        "Custom problem library",
-      ],
-      cta: "Buy 50 Credits",
-      variant: "primary" as const,
-      badge: "Best Value",
-    },
-    {
-      name: "Large Pack",
-      description: "For high-volume hiring",
-      credits: 200,
-      totalPrice: 2400,
-      pricePerAssessment: 12,
-      discount: 40,
-      features: [
-        "200 assessments",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Custom branding",
-        "All integrations",
-        "Dedicated support",
-        "API access",
-        "Custom problem library",
-        "Bulk candidate invites",
-        "Collaborative hiring",
-      ],
-      cta: "Buy 200 Credits",
-      variant: "outline" as const,
-      badge: null,
-    },
-  ];
+  // Fetch pricing data from API
+  useEffect(() => {
+    async function fetchPricing() {
+      try {
+        const response = await fetch("/api/pricing");
+        if (!response.ok) {
+          throw new Error("Failed to fetch pricing");
+        }
+        const data = await response.json();
+        setPricingData(data);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load pricing");
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchPricing();
+  }, []);
 
-  // Subscription Pricing
-  const subscriptionTiers = [
-    {
-      name: "Starter",
-      description: "For small teams",
-      monthlyPrice: 149,
-      includedAssessments: 10,
-      overagePrice: 16,
-      features: [
-        "10 assessments/month included",
-        "$16 per additional assessment",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Email support",
-      ],
-      cta: "Start Starter Plan",
-      variant: "outline" as const,
-      badge: null,
-    },
-    {
-      name: "Professional",
-      description: "For growing teams",
-      monthlyPrice: 349,
-      includedAssessments: 30,
-      overagePrice: 14,
-      features: [
-        "30 assessments/month included",
-        "$14 per additional assessment",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Custom branding",
-        "Priority email support",
-        "API access",
-      ],
-      cta: "Start Professional Plan",
-      variant: "outline" as const,
-      badge: null,
-    },
-    {
-      name: "Growth",
-      description: "For scaling companies",
-      monthlyPrice: 799,
-      includedAssessments: 100,
-      overagePrice: 10,
-      features: [
-        "100 assessments/month included",
-        "$10 per additional assessment",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Custom branding",
-        "All integrations",
-        "Dedicated support",
-        "API access",
-        "Custom problem library",
-        "Bulk candidate invites",
-      ],
-      cta: "Start Growth Plan",
-      variant: "primary" as const,
-      badge: "Most Popular",
-    },
-    {
-      name: "Scale",
-      description: "For enterprises",
-      monthlyPrice: 1799,
-      includedAssessments: 300,
-      overagePrice: 8,
-      features: [
-        "300 assessments/month included",
-        "$8 per additional assessment",
-        "All assessment types",
-        "AI-powered evaluation",
-        "Advanced analytics",
-        "Custom branding",
-        "All integrations",
-        "24/7 dedicated support",
-        "API access",
-        "Custom problem library",
-        "Bulk candidate invites",
-        "Collaborative hiring",
-        "SSO/SAML authentication",
-        "Custom SLA",
-      ],
-      cta: "Contact Sales",
-      variant: "outline" as const,
-      badge: null,
-    },
-  ];
+  // Toggle add-on selection
+  const toggleAddOn = (slug: string) => {
+    setSelectedAddOns(prev =>
+      prev.includes(slug)
+        ? prev.filter(s => s !== slug)
+        : [...prev, slug]
+    );
+  };
+
+  // Calculate add-on cost for a plan
+  const calculateAddOnCost = (credits: number) => {
+    if (!pricingData) return 0;
+    return selectedAddOns.reduce((total, slug) => {
+      const addon = pricingData.addOns.find(a => a.slug === slug);
+      return total + (addon ? addon.price * credits : 0);
+    }, 0);
+  };
 
   // ROI Calculator
-  const costPerHire = 4683; // Industry average
-  const badHireReplacementCost = avgSalary * 1.5;
-  const traditionalTestCostPerCandidate = 22; // Industry average $18-25 for premium platforms
-  const interviewLMCostPerCandidate = pricingModel === "credits" ?
-    15 : // Medium pack average
-    (assessmentsPerMonth <= 10 ? 14.9 : assessmentsPerMonth <= 30 ? 11.63 : assessmentsPerMonth <= 100 ? 7.99 : 6);
+  const basePrice = pricingData?.summary?.basePrice || 25;
+  const traditionalTestCostPerCandidate = 30; // Vervoe charges $30
+  const interviewLMCostPerCandidate = pricingData?.plans?.find(p => p.slug === "scale")?.pricePerCredit || 21;
 
   const monthlySavings = assessmentsPerMonth * (traditionalTestCostPerCandidate - interviewLMCostPerCandidate);
   const annualSavings = monthlySavings * 12;
-  const badHirePrevention = badHireReplacementCost * 0.3; // 30% reduction in bad hires
+  const badHireReplacementCost = avgSalary * 1.5;
+  const badHirePrevention = badHireReplacementCost * 0.3;
 
   const comparisonFeatures = [
-    { feature: "AI tool proficiency testing", us: true, traditional: false },
+    { feature: "AI Copilot proficiency testing", us: true, traditional: false },
     { feature: "Real-world coding environment", us: true, traditional: false },
     { feature: "Anti-cheating monitoring", us: true, traditional: true },
-    { feature: "Automated grading", us: true, traditional: true },
+    { feature: "Automated AI evaluation", us: true, traditional: true },
     { feature: "Setup time", us: "< 5 min", traditional: "Hours" },
-    { feature: "Cost per assessment", us: "$12-20", traditional: "$18-30" },
+    { feature: "Cost per assessment", us: "$20-25", traditional: "$30+" },
     { feature: "AI usage analytics", us: true, traditional: false },
-    { feature: "Custom problem library", us: true, traditional: true },
-    { feature: "Measures future readiness", us: true, traditional: false },
+    { feature: "Video recording add-on", us: true, traditional: false },
+    { feature: "Measures future AI readiness", us: true, traditional: false },
   ];
 
   const faqs = [
     {
       question: "How does credit-based pricing work?",
-      answer: "Purchase credits in packs and use them whenever you need to assess candidates. 1 credit = 1 assessment. Credits never expire and can be used anytime. The more credits you buy upfront, the lower your cost per assessment.",
+      answer: "Purchase credits in packs and use them whenever you need to assess candidates. 1 credit = 1 base assessment. Add premium features like Video Recording or Live Proctoring at checkout. Credits never expire.",
+    },
+    {
+      question: "What are add-ons?",
+      answer: "Add-ons are premium features you can add to any assessment. Video Recording ($10) captures the full session for playback. Live Proctoring ($15) provides real-time monitoring and anti-cheating measures. Add-ons are charged per assessment.",
     },
     {
       question: "Do credits expire?",
       answer: "No! Credits never expire. Buy them once and use them whenever you need to assess candidates, whether that's next week or next year.",
     },
     {
-      question: "What's the difference between credits and subscriptions?",
-      answer: "Credits are prepaid and never expire - perfect if your hiring needs vary month-to-month. Subscriptions include a set number of assessments monthly with discounted overage pricing - ideal for consistent hiring volume.",
+      question: "What's included in a base assessment?",
+      answer: "Every assessment includes: AI-assisted coding environment (Claude Code), automated AI evaluation, detailed candidate report, AI usage analytics, and 30-day result access. Premium add-ons like Video Recording and Live Proctoring are optional.",
     },
     {
-      question: "Can I switch between credit packs and subscriptions?",
-      answer: "Yes! You can start with credits to test the platform, then switch to a subscription if you have consistent hiring needs. Unused credits remain available even if you have an active subscription.",
-    },
-    {
-      question: "What happens if I exceed my subscription limit?",
-      answer: "You'll be charged the overage rate specified in your plan. Starter: $8/assessment, Professional: $7/assessment, Growth: $5/assessment, Scale: $4/assessment. You can also buy credit packs for better rates.",
+      question: "How does volume pricing work?",
+      answer: "The more credits you buy, the lower your per-assessment cost. Starter (10 credits) = $25/each, Growth (50) = $22.50/each, Scale (200) = $21/each, Enterprise (500) = $20/each. The $20 floor ensures quality.",
     },
     {
       question: "Is there a free trial?",
-      answer: "Yes! Start with a 14-day free trial that includes 3 free assessments. No credit card required. After the trial, purchase credits or choose a subscription plan.",
+      answer: "Yes! Start with a 14-day free trial that includes 3 free assessments. No credit card required. After the trial, purchase credits to continue.",
     },
     {
       question: "Do you offer refunds?",
-      answer: "We offer a 30-day money-back guarantee on credit pack purchases if you haven't used any credits. For subscriptions, we offer refunds within 30 days if you're not satisfied with the platform.",
+      answer: "We offer a 30-day money-back guarantee on credit pack purchases if you haven't used any credits.",
     },
     {
-      question: "Can I get a custom enterprise plan?",
-      answer: "Yes! For teams needing 500+ assessments/year, we offer custom enterprise plans with volume discounts (up to 50% off), dedicated account managers, custom integrations, and SLA agreements. Contact our sales team to discuss your needs.",
+      question: "What makes InterviewLM different?",
+      answer: "We're the only platform that tests how developers work WITH AI tools. As AI transforms development, we help you hire developers who can leverage AI effectively - a skill no other platform measures.",
     },
   ];
+
+  // Icon component for add-ons
+  const AddOnIcon = ({ icon }: { icon: string | null }) => {
+    if (icon === "Video") return <Video className="h-5 w-5" />;
+    if (icon === "Shield") return <ShieldCheck className="h-5 w-5" />;
+    return <Plus className="h-5 w-5" />;
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <Spinner className="h-8 w-8 mx-auto mb-4" />
+          <p className="text-text-secondary">Loading pricing...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !pricingData) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-error mb-4">{error || "Failed to load pricing"}</p>
+          <Button onClick={() => window.location.reload()}>Retry</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -312,225 +243,225 @@ export default function PricingPage() {
           <div className="text-center space-y-6">
             <Badge variant="primary" className="mx-auto">
               <Sparkles className="h-3 w-3 mr-1" />
-              $15-20 per assessment • Premium AI evaluation
+              $20-25 per assessment • Premium AI evaluation
             </Badge>
             <h1 className="text-5xl font-bold text-text-primary">
               Simple, transparent pricing
             </h1>
             <p className="text-xl text-text-secondary max-w-2xl mx-auto">
-              Pay only for what you use. Buy credits that never expire, or choose a monthly plan.
+              Pay only for what you use. Buy credits that never expire. Add premium features when you need them.
             </p>
             <p className="text-sm text-text-tertiary">
               Start with a free 14-day trial • 3 free assessments • No credit card required
             </p>
-
-            {/* Pricing Model Toggle */}
-            <div className="flex items-center justify-center gap-4 pt-4">
-              <button
-                onClick={() => setPricingModel("credits")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                  pricingModel === "credits"
-                    ? "bg-primary text-white"
-                    : "bg-background-tertiary text-text-secondary hover:bg-background-hover"
-                }`}
-              >
-                <Package className="h-4 w-4" />
-                <span className="text-sm font-medium">Credit Packs</span>
-                <Badge variant={pricingModel === "credits" ? "success" : "default"} className="text-xs">
-                  Never Expire
-                </Badge>
-              </button>
-              <button
-                onClick={() => setPricingModel("subscription")}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
-                  pricingModel === "subscription"
-                    ? "bg-primary text-white"
-                    : "bg-background-tertiary text-text-secondary hover:bg-background-hover"
-                }`}
-              >
-                <CreditCard className="h-4 w-4" />
-                <span className="text-sm font-medium">Monthly Plans</span>
-              </button>
-            </div>
           </div>
         </Container>
       </section>
 
-      {/* Pricing Tiers */}
-      <section className="py-16">
+      {/* Premium Add-Ons Section */}
+      <section className="py-12 bg-background-secondary border-b border-border">
         <Container size="lg">
-          {pricingModel === "credits" ? (
-            <>
-              <div className="text-center mb-12">
-                <h2 className="text-2xl font-bold text-text-primary mb-2">
-                  Prepaid Credit Packs
-                </h2>
-                <p className="text-text-secondary">
-                  Buy credits once, use them anytime. Credits never expire.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {creditPacks.map((pack, index) => (
-                  <Card
-                    key={index}
-                    className={`border-border-secondary relative flex flex-col ${
-                      pack.badge ? "border-primary shadow-lg shadow-primary/10" : ""
-                    }`}
-                  >
-                    {pack.badge && (
-                      <div className="absolute top-4 left-1/2 -translate-x-1/2 -translate-y-full">
-                        <Badge variant="primary">
-                          <Sparkles className="h-3 w-3 mr-1" />
-                          {pack.badge}
-                        </Badge>
-                      </div>
-                    )}
-                    <CardHeader className="pb-8 pt-6">
-                      <CardTitle className="text-2xl">{pack.name}</CardTitle>
-                      <CardDescription className="text-base">
-                        {pack.description}
-                      </CardDescription>
-                      <div className="pt-4">
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-4xl font-bold text-text-primary">
-                            ${pack.totalPrice}
-                          </span>
-                        </div>
-                        <p className="text-sm text-text-secondary mt-2">
-                          ${pack.pricePerAssessment}/assessment
-                        </p>
-                        {pack.discount > 0 && (
-                          <Badge variant="success" className="mt-2">
-                            Save {pack.discount}%
-                          </Badge>
-                        )}
-                        <p className="text-xs text-text-tertiary mt-2">
-                          {pack.credits} {pack.credits === 1 ? "credit" : "credits"} • Never expires
-                        </p>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="flex-1 flex flex-col">
-                      <Link href="/auth/signup" className="w-full">
-                        <Button variant={pack.variant} className="w-full mb-6">
-                          {pack.cta}
-                          <ArrowRight className="h-4 w-4 ml-2" />
-                        </Button>
-                      </Link>
+          <div className="text-center mb-8">
+            <h2 className="text-2xl font-bold text-text-primary mb-2">
+              Premium Add-Ons
+            </h2>
+            <p className="text-text-secondary">
+              Enhance any assessment with premium features. Select the ones you need.
+            </p>
+          </div>
 
-                      <div className="space-y-3 flex-1">
-                        {pack.features.map((feature, i) => (
-                          <div key={i} className="flex items-start gap-3">
-                            <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-                            <span className="text-sm text-text-secondary">{feature}</span>
-                          </div>
-                        ))}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+            {pricingData.addOns.map((addon) => (
+              <Card
+                key={addon.slug}
+                className={`cursor-pointer transition-all ${
+                  selectedAddOns.includes(addon.slug)
+                    ? "border-primary bg-primary/5 shadow-lg shadow-primary/10"
+                    : "border-border-secondary hover:border-border-hover"
+                }`}
+                onClick={() => toggleAddOn(addon.slug)}
+              >
+                <CardContent className="pt-6">
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${
+                        selectedAddOns.includes(addon.slug)
+                          ? "bg-primary text-white"
+                          : "bg-background-tertiary text-text-secondary"
+                      }`}>
+                        <AddOnIcon icon={addon.icon} />
                       </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-
-              {/* Enterprise Option */}
-              <Card className="mt-12 border-primary/30 bg-gradient-to-br from-primary/5 to-primary/10">
-                <CardContent className="pt-8 pb-8">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <h3 className="text-2xl font-bold text-text-primary mb-2">
-                        Enterprise Volume Packs
-                      </h3>
-                      <p className="text-text-secondary mb-4">
-                        500+ assessments with up to 50% discount. Includes dedicated support, custom integrations, and SLA.
-                      </p>
-                      <div className="flex items-center gap-4">
-                        <div>
-                          <p className="text-sm text-text-tertiary">Starting at</p>
-                          <p className="text-3xl font-bold text-primary">$10/assessment</p>
-                        </div>
-                        <div className="h-12 w-px bg-border"></div>
-                        <div>
-                          <p className="text-sm text-text-tertiary">500 credits</p>
-                          <p className="text-lg font-semibold text-text-primary">$5,000</p>
-                        </div>
+                      <div>
+                        <h3 className="font-semibold text-text-primary">{addon.name}</h3>
+                        <p className="text-sm text-text-tertiary">{addon.description}</p>
                       </div>
                     </div>
-                    <Link href="/contact">
-                      <Button size="lg">
-                        Contact Sales
-                        <ArrowRight className="h-4 w-4 ml-2" />
-                      </Button>
-                    </Link>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold text-primary">+${addon.price}</p>
+                      <p className="text-xs text-text-tertiary">per assessment</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    {addon.features.map((feature, i) => (
+                      <div key={i} className="flex items-center gap-2 text-sm text-text-secondary">
+                        <Check className="h-4 w-4 text-success flex-shrink-0" />
+                        {feature}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-border">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-text-secondary">
+                        {selectedAddOns.includes(addon.slug) ? "Selected" : "Click to add"}
+                      </span>
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${
+                        selectedAddOns.includes(addon.slug)
+                          ? "bg-primary border-primary"
+                          : "border-border-secondary"
+                      }`}>
+                        {selectedAddOns.includes(addon.slug) && (
+                          <Check className="h-3 w-3 text-white" />
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
-            </>
-          ) : (
-            <>
-              <div className="text-center mb-12">
-                <h2 className="text-2xl font-bold text-text-primary mb-2">
-                  Monthly Subscription Plans
-                </h2>
-                <p className="text-text-secondary">
-                  Fixed monthly price with included assessments and discounted overages.
-                </p>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {subscriptionTiers.map((tier, index) => (
-                  <Card
-                    key={index}
-                    className={`border-border-secondary relative flex flex-col ${
-                      tier.badge ? "border-primary shadow-lg shadow-primary/10" : ""
-                    }`}
-                  >
-                    {tier.badge && (
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                        <Badge variant="primary">
-                          <Sparkles className="h-3 w-3 mr-1" />
-                          {tier.badge}
-                        </Badge>
-                      </div>
-                    )}
-                    <CardHeader className="pb-8 pt-6">
-                      <CardTitle className="text-2xl">{tier.name}</CardTitle>
-                      <CardDescription className="text-base">
-                        {tier.description}
-                      </CardDescription>
-                      <div className="pt-4">
-                        <div className="flex items-baseline gap-1">
-                          <span className="text-4xl font-bold text-text-primary">
-                            ${tier.monthlyPrice}
-                          </span>
-                          <span className="text-text-secondary">/mo</span>
-                        </div>
-                        <p className="text-sm text-text-secondary mt-2">
-                          {tier.includedAssessments} assessments included
-                        </p>
-                        <p className="text-xs text-text-tertiary mt-1">
-                          ${tier.overagePrice} per additional assessment
-                        </p>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="flex-1 flex flex-col">
-                      <Link href={tier.name === "Scale" ? "/contact" : "/auth/signup"} className="w-full">
-                        <Button variant={tier.variant} className="w-full mb-6">
-                          {tier.cta}
-                          <ArrowRight className="h-4 w-4 ml-2" />
-                        </Button>
-                      </Link>
+            ))}
+          </div>
 
-                      <div className="space-y-3 flex-1">
-                        {tier.features.map((feature, i) => (
-                          <div key={i} className="flex items-start gap-3">
-                            <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
-                            <span className="text-sm text-text-secondary">{feature}</span>
-                          </div>
-                        ))}
+          {selectedAddOns.length > 0 && (
+            <div className="text-center mt-6">
+              <Badge variant="success">
+                <Check className="h-3 w-3 mr-1" />
+                {selectedAddOns.length} add-on{selectedAddOns.length > 1 ? "s" : ""} selected
+              </Badge>
+            </div>
+          )}
+        </Container>
+      </section>
+
+      {/* Credit Packs */}
+      <section className="py-16">
+        <Container size="lg">
+          <div className="text-center mb-12">
+            <h2 className="text-2xl font-bold text-text-primary mb-2">
+              Credit Packs
+            </h2>
+            <p className="text-text-secondary">
+              Buy credits once, use them anytime. Credits never expire.
+              {selectedAddOns.length > 0 && (
+                <span className="text-primary ml-1">
+                  (Prices include selected add-ons)
+                </span>
+              )}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {pricingData.plans.map((plan) => {
+              const addOnCost = calculateAddOnCost(plan.credits);
+              const totalPrice = plan.price + addOnCost;
+              const effectivePerCredit = totalPrice / plan.credits;
+              const savings = plan.slug === "starter" ? 0 : Math.round((1 - plan.pricePerCredit / basePrice) * 100);
+
+              return (
+                <Card
+                  key={plan.slug}
+                  className={`border-border-secondary relative flex flex-col ${
+                    plan.isPopular ? "border-primary shadow-lg shadow-primary/10" : ""
+                  }`}
+                >
+                  {plan.badge && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <Badge variant="primary">
+                        <Sparkles className="h-3 w-3 mr-1" />
+                        {plan.badge}
+                      </Badge>
+                    </div>
+                  )}
+                  <CardHeader className="pb-8 pt-6">
+                    <CardTitle className="text-2xl">{plan.name}</CardTitle>
+                    <CardDescription className="text-base">
+                      {plan.description}
+                    </CardDescription>
+                    <div className="pt-4">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-4xl font-bold text-text-primary">
+                          ${Math.round(totalPrice).toLocaleString()}
+                        </span>
                       </div>
-                    </CardContent>
-                  </Card>
+                      <p className="text-sm text-text-secondary mt-2">
+                        ${effectivePerCredit.toFixed(2)}/assessment
+                        {selectedAddOns.length > 0 && " (with add-ons)"}
+                      </p>
+                      {savings > 0 && (
+                        <Badge variant="success" className="mt-2">
+                          Save {savings}%
+                        </Badge>
+                      )}
+                      <p className="text-xs text-text-tertiary mt-2">
+                        {plan.credits} credits • Never expires
+                      </p>
+                      {addOnCost > 0 && (
+                        <p className="text-xs text-primary mt-1">
+                          +${addOnCost} for add-ons
+                        </p>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="flex-1 flex flex-col">
+                    <Link href="/auth/signup" className="w-full">
+                      <Button
+                        variant={plan.isPopular ? "primary" : "outline"}
+                        className="w-full mb-6"
+                      >
+                        Buy {plan.credits} Credits
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </Button>
+                    </Link>
+
+                    <div className="space-y-3 flex-1">
+                      {plan.features.map((feature, i) => (
+                        <div key={i} className="flex items-start gap-3">
+                          <Check className="h-5 w-5 text-success flex-shrink-0 mt-0.5" />
+                          <span className="text-sm text-text-secondary">{feature}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* What's Included */}
+          <Card className="mt-12 border-border-secondary">
+            <CardContent className="pt-8 pb-8">
+              <h3 className="text-xl font-bold text-text-primary mb-4 text-center">
+                Every Assessment Includes
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                {[
+                  "AI-assisted coding (Claude Code)",
+                  "Automated AI evaluation",
+                  "Detailed candidate report",
+                  "AI usage analytics",
+                  "Anti-cheating monitoring",
+                  "30-day result access",
+                  "Email support",
+                  "API access",
+                ].map((feature, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm text-text-secondary">
+                    <Check className="h-4 w-4 text-success flex-shrink-0" />
+                    {feature}
+                  </div>
                 ))}
               </div>
-            </>
-          )}
+            </CardContent>
+          </Card>
 
           {/* Trust Signals */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-12 pt-12 border-t border-border">
@@ -546,8 +477,8 @@ export default function PricingPage() {
             </div>
             <div className="text-center">
               <Users className="h-8 w-8 text-info mx-auto mb-2" />
-              <p className="text-sm font-medium text-text-primary">Trusted by 500+</p>
-              <p className="text-xs text-text-tertiary mt-1">Companies worldwide</p>
+              <p className="text-sm font-medium text-text-primary">$20 Floor</p>
+              <p className="text-xs text-text-tertiary mt-1">Quality guaranteed</p>
             </div>
             <div className="text-center">
               <Clock className="h-8 w-8 text-warning mx-auto mb-2" />
@@ -570,7 +501,7 @@ export default function PricingPage() {
               Calculate your savings
             </h2>
             <p className="text-lg text-text-secondary">
-              See how much you can save by switching to InterviewLM
+              See how much you save compared to Vervoe and other AI platforms ($30+/candidate)
             </p>
           </div>
 
@@ -615,7 +546,7 @@ export default function PricingPage() {
                     ${Math.round(monthlySavings).toLocaleString()}
                   </p>
                   <p className="text-xs text-text-tertiary mt-1">
-                    vs traditional testing platforms
+                    vs competitors at $30/assessment
                   </p>
                 </div>
 
@@ -681,7 +612,7 @@ export default function PricingPage() {
                       InterviewLM
                     </th>
                     <th className="text-center p-4 text-sm font-semibold text-text-tertiary">
-                      Traditional Tests
+                      Others
                     </th>
                   </tr>
                 </thead>
@@ -784,7 +715,7 @@ export default function PricingPage() {
           <Card className="border-primary bg-gradient-to-br from-primary/5 to-primary/10">
             <CardContent className="pt-12 pb-12 text-center">
               <h2 className="text-3xl font-bold text-text-primary mb-4">
-                Ready to transform your hiring?
+                Ready to hire AI-native developers?
               </h2>
               <p className="text-lg text-text-secondary mb-8 max-w-2xl mx-auto">
                 Start your free 14-day trial today. 3 free assessments included. No credit card required.

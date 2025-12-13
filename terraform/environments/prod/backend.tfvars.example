@@ -1,0 +1,5 @@
+# Backend configuration for Terraform state storage
+# Copy to backend.tfvars and use with: terraform init -backend-config=backend.tfvars
+
+bucket = "interviewlm-terraform-state-interviewlm-480415"
+prefix = "prod"

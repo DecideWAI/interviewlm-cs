@@ -1,56 +1,119 @@
-# Production Environment - Example Variables
+# Production Environment - Budget-Optimized Configuration
+# Estimated Cost: ~$135-165/month
+#
 # Copy this file to terraform.tfvars and fill in your values
 # IMPORTANT: Never commit terraform.tfvars with real values!
+#
+# Security Features Enabled:
+# - Cloud SQL: Private IP, SSL required (ENCRYPTED_ONLY)
+# - Redis: AUTH enabled, Transit encryption (TLS)
+# - Cloud Run: Ingress restricted for Cloudflare
+# - All secrets in Secret Manager
+# - VPC with private networking
 
-# Required
-project_id    = "your-gcp-project-id"
-app_image     = "us-central1-docker.pkg.dev/your-project/interviewlm-prod-docker/app:latest"
+# =============================================================================
+# REQUIRED - Must be filled in
+# =============================================================================
+
+project_id    = "interviewlm-480415"
+app_image     = "us-central1-docker.pkg.dev/interviewlm-480415/interviewlm-prod-docker/app:latest"
 custom_domain = "interviewlm.com"
 
-# Required - GitHub
+# GitHub repo for CI/CD (Workload Identity)
 github_repo = "your-org/interviewlm"
 
-# Required - Alerts
-alert_email_addresses = ["ops@interviewlm.com", "engineering@interviewlm.com"]
+# Alert notifications
+alert_email_addresses = ["your-email@example.com"]
 
-# Optional - Slack alerts
-slack_webhook_url  = ""
-slack_channel_name = "#interviewlm-alerts"
-slack_auth_token   = ""
+# =============================================================================
+# SECURITY - Cloudflare Integration
+# =============================================================================
 
-# Required - Paddle payment configuration
-paddle_vendor_id          = "your-vendor-id"
-paddle_product_single     = "pri_single_assessment"
-paddle_product_medium     = "pri_medium_pack"
-paddle_product_enterprise = "pri_enterprise"
+# For Cloudflare setup, use this ingress setting:
+# This blocks direct access to Cloud Run URL - traffic must come through Cloudflare
+cloud_run_ingress = "INGRESS_TRAFFIC_ALL"
+# After setting up Cloudflare, change to:
+# cloud_run_ingress = "INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING"
 
-# Optional - Override defaults
+# =============================================================================
+# BUDGET DEFAULTS (already optimized - override only if needed)
+# =============================================================================
+
+# Region
 region           = "us-central1"
 storage_location = "US"
 
-# App scaling
-app_cpu           = "4"
-app_memory        = "2Gi"
-app_min_instances = 2
-app_max_instances = 20
+# App scaling (scale-to-zero by default)
+# app_cpu           = "1"
+# app_memory        = "1Gi"
+# app_min_instances = 0
+# app_max_instances = 10
 
-# Worker scaling
-worker_cpu           = "2"
-worker_memory        = "2Gi"
-worker_min_instances = 2
-worker_max_instances = 10
+# Worker scaling (scale-to-zero by default)
+# worker_cpu           = "1"
+# worker_memory        = "1Gi"
+# worker_min_instances = 0
+# worker_max_instances = 5
 
-# Database sizing
-database_tier = "db-custom-2-4096"  # 2 vCPU, 4GB RAM
+# Database (db-g1-small is the budget default)
+# database_tier = "db-g1-small"
 
-# Redis sizing
-redis_memory_gb = 5
+# Redis (1GB is the budget default)
+# redis_memory_gb = 1
 
-# OAuth providers
-enable_oauth = true
+# =============================================================================
+# OPTIONAL - Payment (Paddle)
+# NOTE: Product IDs (single, medium, enterprise) are now stored in the database
+# See: prisma/schema.prisma (PricingPlan model) and prisma/seed.ts
+# This allows changing pricing without redeployment
+# =============================================================================
 
-# CI/CD
-enable_workload_identity = true
+# paddle_vendor_id = "your-vendor-id"
 
-# Email
-resend_from_email = "noreply@interviewlm.com"
+# To update Paddle product IDs, modify the seed data in prisma/seed.ts
+# or update directly in the database via admin UI (future)
+
+# =============================================================================
+# OPTIONAL - Slack alerts
+# =============================================================================
+
+# slack_webhook_url  = ""
+# slack_channel_name = "#interviewlm-alerts"
+# slack_auth_token   = ""
+
+# =============================================================================
+# OPTIONAL - OAuth and CI/CD
+# =============================================================================
+
+# enable_oauth = true
+# enable_workload_identity = true
+
+# =============================================================================
+# OPTIONAL - Email
+# =============================================================================
+
+# resend_from_email = "noreply@interviewlm.com"
+
+# =============================================================================
+# UPGRADE PATH - When ready to scale up
+# =============================================================================
+#
+# To upgrade to full production (~$400-800/month):
+#
+# 1. Database with HA:
+#    database_tier = "db-custom-2-4096"
+#    # Also change availability_type in main.tf from ZONAL to REGIONAL
+#
+# 2. Redis with HA:
+#    redis_memory_gb = 5
+#    # Also change tier in main.tf from BASIC to STANDARD_HA
+#
+# 3. Always-on instances (no cold starts):
+#    app_min_instances = 2
+#    worker_min_instances = 2
+#
+# 4. More resources:
+#    app_cpu = "4"
+#    app_memory = "2Gi"
+#    worker_cpu = "2"
+#    worker_memory = "2Gi"

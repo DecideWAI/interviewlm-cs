@@ -109,13 +109,23 @@ class Settings(BaseSettings):
         description="Number of recent conversation messages to cache (0 to disable)"
     )
 
-    # LangSmith Configuration (default LangChain observability)
+    # LangSmith Configuration (supports both LANGSMITH_* and LANGCHAIN_* prefixes)
+    # LANGSMITH_* is the newer/preferred naming convention
     langchain_tracing_v2: bool = Field(default=True, env="LANGCHAIN_TRACING_V2")
+
+    # API Key: prefer LANGSMITH_API_KEY, fallback to LANGCHAIN_API_KEY
+    langsmith_api_key: str | None = Field(default=None, env="LANGSMITH_API_KEY")
     langchain_api_key: str | None = Field(default=None, env="LANGCHAIN_API_KEY")
+
+    # Project: prefer LANGSMITH_PROJECT, fallback to LANGCHAIN_PROJECT
+    langsmith_project: str | None = Field(default=None, env="LANGSMITH_PROJECT")
     langchain_project: str = Field(
         default="interviewlm-agents",
         env="LANGCHAIN_PROJECT"
     )
+
+    # Endpoint: prefer LANGSMITH_ENDPOINT, fallback to LANGCHAIN_ENDPOINT
+    langsmith_endpoint: str | None = Field(default=None, env="LANGSMITH_ENDPOINT")
     langchain_endpoint: str = Field(
         default="https://api.smith.langchain.com",
         env="LANGCHAIN_ENDPOINT"
@@ -127,15 +137,34 @@ class Settings(BaseSettings):
         extra = "ignore"
 
     def configure_langsmith(self) -> None:
-        """Configure LangSmith tracing via environment variables."""
-        if self.langchain_tracing_v2 and self.langchain_api_key:
+        """Configure LangSmith tracing via environment variables.
+
+        Sets both LANGSMITH_* and LANGCHAIN_* variables for compatibility.
+        Prefers LANGSMITH_* values if set, falls back to LANGCHAIN_*.
+        """
+        # Resolve API key (prefer LANGSMITH_, fallback to LANGCHAIN_)
+        api_key = self.langsmith_api_key or self.langchain_api_key
+        project = self.langsmith_project or self.langchain_project
+        endpoint = self.langsmith_endpoint or self.langchain_endpoint
+
+        if self.langchain_tracing_v2 and api_key:
+            # Set both naming conventions for maximum compatibility
             os.environ["LANGCHAIN_TRACING_V2"] = "true"
-            os.environ["LANGCHAIN_API_KEY"] = self.langchain_api_key
-            os.environ["LANGCHAIN_PROJECT"] = self.langchain_project
-            os.environ["LANGCHAIN_ENDPOINT"] = self.langchain_endpoint
-            print(f"[Config] LangSmith tracing enabled for project: {self.langchain_project}")
+
+            # Set LANGSMITH_* (newer, preferred by LangSmith SDK)
+            os.environ["LANGSMITH_API_KEY"] = api_key
+            os.environ["LANGSMITH_PROJECT"] = project
+            os.environ["LANGSMITH_ENDPOINT"] = endpoint
+
+            # Set LANGCHAIN_* (older, for backward compatibility)
+            os.environ["LANGCHAIN_API_KEY"] = api_key
+            os.environ["LANGCHAIN_PROJECT"] = project
+            os.environ["LANGCHAIN_ENDPOINT"] = endpoint
+
+            print(f"[Config] LangSmith tracing enabled for project: {project}")
         elif self.langchain_tracing_v2:
-            print("[Config] Warning: LANGCHAIN_TRACING_V2 is true but LANGCHAIN_API_KEY is not set")
+            print("[Config] Warning: LANGCHAIN_TRACING_V2 is true but no API key set")
+            print("[Config] Set LANGSMITH_API_KEY or LANGCHAIN_API_KEY in .env")
 
 
 # Global settings instance

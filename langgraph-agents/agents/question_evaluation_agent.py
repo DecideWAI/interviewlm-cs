@@ -38,6 +38,7 @@ from tools.coding_tools import (
     get_environment_info,
 )
 from config import settings, generate_question_eval_thread_uuid
+from middleware import system_prompt_middleware
 
 
 # =============================================================================
@@ -375,6 +376,7 @@ def create_question_evaluation_agent_graph(
     model = _create_anthropic_model(settings.evaluation_agent_model)
 
     middleware = [
+        system_prompt_middleware,      # Remove SystemMessages from persistence
         model_selection_middleware,
         anthropic_caching_middleware,
     ]
