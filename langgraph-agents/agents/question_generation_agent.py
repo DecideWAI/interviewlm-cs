@@ -550,3 +550,98 @@ async def get_question_generation_agent() -> QuestionGenerationAgent:
     if _agent is None:
         _agent = create_question_generation_agent()
     return _agent
+
+
+# =============================================================================
+# LangGraph StateGraph Wrapper
+# =============================================================================
+
+from langgraph.graph import StateGraph, START, END
+from models.state import QuestionGenerationAgentState
+
+
+async def generate_node(state: QuestionGenerationAgentState) -> dict:
+    """
+    Node that generates a question based on state parameters.
+
+    Routes to either dynamic or incremental generation based on state.
+    """
+    agent = await get_question_generation_agent()
+
+    # Determine generation mode
+    is_incremental = bool(state.get("seed_id") and state.get("previous_questions"))
+
+    try:
+        if is_incremental:
+            # Incremental generation (IRT-based)
+            result = await agent.generate_incremental(
+                session_id=state.get("session_id", ""),
+                candidate_id=state.get("candidate_id", ""),
+                seed_id=state.get("seed_id", ""),
+                seniority=state.get("seniority", "mid"),
+                previous_questions=state.get("previous_questions", []),
+                previous_performance=state.get("previous_performance", []),
+                time_remaining=state.get("time_remaining", 3600),
+                assessment_type=state.get("assessment_type"),
+                current_code_snapshot=state.get("current_code_snapshot"),
+            )
+
+            return {
+                "generated_question": result.get("question"),
+                "irt_ability_estimate": result.get("irt_data", {}).get("ability_estimate"),
+                "irt_difficulty_targeting": result.get("irt_data", {}).get("difficulty_targeting"),
+                "generation_strategy": result.get("strategy"),
+                "generation_complete": True,
+            }
+        else:
+            # Dynamic generation
+            result = await agent.generate_dynamic(
+                role=state.get("role", "backend"),
+                seniority=state.get("seniority", "mid"),
+                assessment_type=state.get("assessment_type", "REAL_WORLD"),
+                tech_stack=state.get("tech_stack", []),
+                organization_id=state.get("organization_id"),
+            )
+
+            return {
+                "generated_question": result,
+                "generation_strategy": {
+                    "type": "generate",
+                    "reason": "dynamic",
+                    "source_question_id": None,
+                },
+                "generation_complete": True,
+            }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "generation_complete": True,
+        }
+
+
+def create_question_generation_graph() -> StateGraph:
+    """
+    Create a LangGraph StateGraph for question generation.
+
+    This graph exposes the question generation agent via the LangGraph SDK.
+    """
+    # Create graph with state schema
+    graph = StateGraph(QuestionGenerationAgentState)
+
+    # Add single generation node
+    graph.add_node("generate", generate_node)
+
+    # Simple flow: START -> generate -> END
+    graph.add_edge(START, "generate")
+    graph.add_edge("generate", END)
+
+    return graph.compile()
+
+
+# =============================================================================
+# Graph Export for LangGraph Cloud
+# =============================================================================
+# LangGraph Cloud automatically handles checkpointing - do NOT specify checkpointer
+# The platform injects its own PostgreSQL-backed checkpointer
+
+question_generation_graph = create_question_generation_graph()

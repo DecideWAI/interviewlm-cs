@@ -393,7 +393,7 @@ export async function analyzeSinglePrompt(
 
   try {
     const response = await client.messages.create({
-      model: 'claude-3-5-haiku-20241022', // Faster model for real-time
+      model: 'claude-haiku-4-5-20251001', // Faster model for real-time
       max_tokens: 300,
       temperature: 0,
       system: buildCachedSystemPrompt(singlePromptSystemPrompt),

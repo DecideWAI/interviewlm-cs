@@ -14,6 +14,7 @@ import re
 import base64
 import logging
 import asyncio
+import threading
 from typing import Any, List
 from pathlib import Path
 from langchain_core.tools import tool
@@ -102,20 +103,35 @@ def _get_config_service():
 
 
 def _run_async(coro):
-    """Run async coroutine in sync context."""
+    """Run async coroutine in sync context.
+
+    IMPORTANT: Async DB connections (asyncpg) have internal asyncio.Lock objects
+    that are bound to the event loop where they were created. Running them in
+    a different event loop (e.g., via ThreadPoolExecutor) causes errors.
+
+    To avoid this, we only attempt async calls when NOT in a ThreadPoolExecutor
+    and when there's no running event loop. Otherwise, we return None to trigger
+    fallback behavior.
+    """
+    # Check if we're in a ThreadPoolExecutor thread
+    # These threads should NOT try to run async DB operations
+    current_thread = threading.current_thread().name
+    if "ThreadPoolExecutor" in current_thread or "Pool" in current_thread:
+        logger.debug(f"Skipping async call in {current_thread} - would cause event loop issues")
+        return None
+
     try:
         # Check if there's a running event loop
         try:
             loop = asyncio.get_running_loop()
+            # If we're in an event loop, we can't safely run async DB operations
+            # because the config service may have connections bound to a different loop
+            logger.debug("Skipping async call - already in an event loop context")
+            return None
         except RuntimeError:
             # No running loop, we can use asyncio.run directly
+            # This is safe as long as the config service creates a fresh connection
             return asyncio.run(coro)
-
-        # Loop is running, need to run in a separate thread
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, coro)
-            return future.result(timeout=5)
     except Exception as e:
         logger.warning(f"Failed to run async config call: {e}")
         return None

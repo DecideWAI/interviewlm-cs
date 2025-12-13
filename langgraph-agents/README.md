@@ -17,21 +17,20 @@ This module reimplements the InterviewLM agent system using [LangGraph](https://
 
 ## Quick Start
 
-### Using Docker (Recommended)
+### Using LangGraph SDK (Recommended)
 
 ```bash
-# Clone and navigate to the directory
+# Navigate to the directory
 cd langgraph-agents
 
 # Copy environment file and configure
 cp .env.example .env
 # Edit .env with your API keys
 
-# Start all services
-docker-compose up -d
+# Start LangGraph dev server (port 2024)
+langgraph dev
 
-# Check health
-curl http://localhost:8000/health
+# The Next.js app connects via @langchain/langgraph-sdk
 ```
 
 ### Manual Installation
@@ -48,8 +47,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your API keys
 
-# Run the API server
-uvicorn api:app --host 0.0.0.0 --port 8000
+# Run the LangGraph server
+langgraph dev
 ```
 
 ## Architecture
@@ -58,7 +57,7 @@ uvicorn api:app --host 0.0.0.0 --port 8000
 
 | Service | Port | Purpose |
 |---------|------|---------|
-| LangGraph Agents API | 8000 | FastAPI server for agent operations |
+| LangGraph SDK Server | 2024 | LangGraph SDK server for agent operations |
 | PostgreSQL | 5432 | Shared database with Next.js app |
 | Redis | 6379 | Session caching and metrics |
 
@@ -93,45 +92,36 @@ START → supervisor → coding ─────┐
                    → evaluation ─┘
 ```
 
-## API Endpoints
+## LangGraph SDK Integration
 
-### Health & Status
+The agents are exposed via the LangGraph SDK standard API. The Next.js app uses `@langchain/langgraph-sdk` to communicate with the agents.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
+### Available Graphs
 
-### Coding Agent
+| Graph Name | Description | Used By |
+|------------|-------------|---------|
+| `coding_agent` | Helps candidates with coding tasks | `/api/interview/[id]/chat/agent/stream` |
+| `question_evaluation_agent` | Evaluates candidate solutions | `/api/interview/[id]/evaluate` |
+| `interview_agent` | Tracks metrics and adapts difficulty | Background processing |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/coding/chat` | Streaming SSE responses |
-| POST | `/api/coding/chat/sync` | Non-streaming responses |
+### TypeScript SDK Usage
 
-### Interview Agent
+```typescript
+import { Client } from "@langchain/langgraph-sdk";
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/interview/event` | Record interview event |
-| GET | `/api/interview/{session_id}/metrics` | Get session metrics |
+const client = new Client({ apiUrl: "http://localhost:2024" });
 
-### Evaluation Agent
+// Stream agent responses
+const stream = client.runs.stream(threadId, "coding_agent", {
+  input: { messages: [{ role: "user", content: "Help me fix this bug" }] },
+  streamMode: "events",
+});
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/evaluation/evaluate` | Evaluate completed session |
-
-### Supervisor
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/supervisor/workflow` | Run multi-agent workflow |
-
-### Session Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| DELETE | `/api/sessions/{session_id}` | Clear session data |
+// Wait for completion
+const result = await client.runs.wait(threadId, "question_evaluation_agent", {
+  input: { /* evaluation state */ },
+});
+```
 
 ## Configuration
 
@@ -154,7 +144,7 @@ MODAL_EXECUTE_COMMAND_URL=https://your-modal-app.modal.run/execute-command
 ```bash
 CODING_AGENT_MODEL=claude-sonnet-4-20250514
 EVALUATION_AGENT_MODEL=claude-sonnet-4-20250514
-INTERVIEW_AGENT_MODEL=claude-3-5-haiku-20241022
+INTERVIEW_AGENT_MODEL=claude-haiku-4-5-20251001
 ```
 
 ### Infrastructure

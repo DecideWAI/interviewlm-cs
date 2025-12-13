@@ -214,7 +214,7 @@ Respond with a JSON array of suggestions:
 ONLY return the JSON array, no other text.`;
 
     const response = await client.messages.create({
-      model: "claude-3-5-haiku-20241022", // Use fast model for completions
+      model: "claude-haiku-4-5-20251001", // Use fast model for completions
       max_tokens: 500,
       messages: [
         {

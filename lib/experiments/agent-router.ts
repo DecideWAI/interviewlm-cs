@@ -55,7 +55,7 @@ export class AgentRouter {
 
   private constructor() {
     this.langGraphConfig = {
-      baseUrl: process.env.LANGGRAPH_API_URL || 'http://localhost:8001',
+      baseUrl: process.env.LANGGRAPH_API_URL || 'http://localhost:2024',
       apiKey: process.env.LANGGRAPH_API_KEY,
     };
   }

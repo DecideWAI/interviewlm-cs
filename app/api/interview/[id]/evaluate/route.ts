@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
+import { Client } from "@langchain/langgraph-sdk";
+import { v5 as uuidv5 } from "uuid";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
@@ -9,10 +11,15 @@ import { strictRateLimit } from "@/lib/middleware/rate-limit";
 import { createQuestionEvaluationAgent, EvaluationResult as AgentEvaluationResult } from "@/lib/agents/question-evaluation-agent";
 // Note: modalService is no longer used here - the agent discovers code via tools
 
-// LangGraph API configuration (for separate testing)
-const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:8080";
-const LANGGRAPH_API_KEY = process.env.LANGGRAPH_API_KEY || "";
+// LangGraph SDK configuration
+const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:2024";
 const USE_LANGGRAPH_AGENT = process.env.USE_LANGGRAPH_AGENT === "true"; // Default false - use TypeScript agent
+
+// Initialize LangGraph SDK client
+const langGraphClient = new Client({ apiUrl: LANGGRAPH_API_URL });
+
+// Namespace UUID for generating deterministic thread IDs
+const LANGGRAPH_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
 
 // Request validation schema - code is now optional, will fetch from sandbox if empty
 const evaluateRequestSchema = z.object({
@@ -44,7 +51,7 @@ interface EvaluationResult {
   improvements: string[];
 }
 
-// LangGraph API response type
+// LangGraph evaluation response type (from agent state)
 interface LangGraphEvaluationResponse {
   overallScore: number;
   passed: boolean;
@@ -61,7 +68,44 @@ interface LangGraphEvaluationResponse {
 }
 
 /**
- * Call the LangGraph Question Evaluation Agent
+ * Generate a deterministic UUID from session ID and agent type
+ */
+function generateThreadUUID(sessionId: string, agentType: string): string {
+  const input = `${agentType}:${sessionId}`;
+  return uuidv5(input, LANGGRAPH_NAMESPACE);
+}
+
+/**
+ * Get or create a LangGraph thread for evaluation
+ */
+async function getOrCreateEvaluationThread(sessionId: string, questionId: string): Promise<string> {
+  // Use question-specific thread ID to keep evaluations isolated
+  const threadId = generateThreadUUID(`${sessionId}:${questionId}`, "question_evaluation_agent");
+
+  try {
+    const thread = await langGraphClient.threads.get(threadId);
+    if (thread) {
+      return threadId;
+    }
+  } catch {
+    // Thread doesn't exist, create it
+  }
+
+  try {
+    await langGraphClient.threads.create({
+      threadId,
+      metadata: { sessionId, questionId, agentType: "question_evaluation_agent" },
+    });
+    logger.debug("[Evaluate] Created LangGraph thread", { threadId, sessionId, questionId });
+    return threadId;
+  } catch {
+    // Thread may already exist (race condition)
+    return threadId;
+  }
+}
+
+/**
+ * Call the LangGraph Question Evaluation Agent via SDK
  */
 async function evaluateWithLangGraph(params: {
   sessionId: string;
@@ -76,38 +120,192 @@ async function evaluateWithLangGraph(params: {
   fileName?: string;
   passingThreshold: number;
 }): Promise<LangGraphEvaluationResponse> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  const threadId = await getOrCreateEvaluationThread(params.sessionId, params.questionId);
 
-  if (LANGGRAPH_API_KEY) {
-    headers["Authorization"] = `Bearer ${LANGGRAPH_API_KEY}`;
-  }
+  logger.debug("[Evaluate] Running LangGraph question_evaluation_agent", {
+    threadId,
+    sessionId: params.sessionId,
+    questionId: params.questionId,
+  });
 
-  const response = await fetch(`${LANGGRAPH_API_URL}/api/question-evaluation/evaluate`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({
+  // Build the evaluation prompt message
+  const evaluationPrompt = buildEvaluationPrompt(params);
+
+  // Run the agent and wait for completion
+  const result = await langGraphClient.runs.wait(threadId, "question_evaluation_agent", {
+    input: {
+      messages: [{ role: "user", content: evaluationPrompt }],
       session_id: params.sessionId,
       candidate_id: params.candidateId,
       question_id: params.questionId,
       question_title: params.questionTitle,
       question_description: params.questionDescription,
-      question_difficulty: params.questionDifficulty,
       question_requirements: params.questionRequirements,
-      code: params.code,
+      question_difficulty: params.questionDifficulty,
+      code: params.code || null,
       language: params.language,
-      file_name: params.fileName,
+      file_name: params.fileName || null,
       passing_threshold: params.passingThreshold,
-    }),
+    },
+    config: {
+      configurable: {
+        session_id: params.sessionId,
+        candidate_id: params.candidateId,
+        question_id: params.questionId,
+      },
+    },
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
+  // Extract evaluation result from agent state
+  const state = result as Record<string, unknown>;
+  let evaluationResult = state.evaluation_result as Record<string, unknown> | null;
+
+  // If evaluation_result not set, extract from messages (create_agent only populates messages)
+  if (!evaluationResult) {
+    const messages = state.messages as Array<{ type?: string; content?: string | Array<{ type: string; text?: string }> }> | undefined;
+    if (messages && messages.length > 0) {
+      // Find the last AI message
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (msg.type === 'ai' || (msg as any).role === 'assistant') {
+          let responseText = '';
+          if (typeof msg.content === 'string') {
+            responseText = msg.content;
+          } else if (Array.isArray(msg.content)) {
+            for (const block of msg.content) {
+              if (block.type === 'text' && block.text) {
+                responseText = block.text;
+                break;
+              }
+            }
+          }
+
+          // Parse JSON from response
+          if (responseText) {
+            const jsonMatch = responseText.match(/```json\s*([\s\S]*?)```/);
+            const jsonText = jsonMatch ? jsonMatch[1] : responseText;
+            try {
+              const parsed = JSON.parse(jsonText.trim());
+              // Convert to expected format
+              evaluationResult = {
+                overall_score: parsed.overallScore ?? 0,
+                passed: parsed.overallScore >= params.passingThreshold,
+                criteria: parsed.criteria,
+                feedback: parsed.feedback ?? '',
+                strengths: parsed.strengths ?? [],
+                improvements: parsed.improvements ?? [],
+              };
+              logger.debug("[Evaluate] Extracted evaluation from messages", { overallScore: parsed.overallScore });
+              break;
+            } catch (e) {
+              logger.warn("[Evaluate] Failed to parse evaluation JSON from message", { error: e });
+            }
+          }
+        }
+      }
+    }
   }
 
-  return response.json();
+  if (!evaluationResult) {
+    throw new Error("LangGraph agent did not return evaluation result");
+  }
+
+  // Map snake_case response to camelCase
+  const criteria = evaluationResult.criteria as Record<string, { score: number; feedback: string }> | undefined;
+
+  return {
+    overallScore: (evaluationResult.overall_score as number) ?? 0,
+    passed: (evaluationResult.passed as boolean) ?? false,
+    criteria: {
+      problemCompletion: {
+        score: criteria?.problem_completion?.score ?? 0,
+        maxScore: 20,
+        feedback: criteria?.problem_completion?.feedback ?? "",
+      },
+      codeQuality: {
+        score: criteria?.code_quality?.score ?? 0,
+        maxScore: 20,
+        feedback: criteria?.code_quality?.feedback ?? "",
+      },
+      bestPractices: {
+        score: criteria?.best_practices?.score ?? 0,
+        maxScore: 20,
+        feedback: criteria?.best_practices?.feedback ?? "",
+      },
+      errorHandling: {
+        score: criteria?.error_handling?.score ?? 0,
+        maxScore: 20,
+        feedback: criteria?.error_handling?.feedback ?? "",
+      },
+      efficiency: {
+        score: criteria?.efficiency?.score ?? 0,
+        maxScore: 20,
+        feedback: criteria?.efficiency?.feedback ?? "",
+      },
+    },
+    feedback: (evaluationResult.feedback as string) ?? "Evaluation completed",
+    strengths: (evaluationResult.strengths as string[]) ?? [],
+    improvements: (evaluationResult.improvements as string[]) ?? [],
+  };
+}
+
+/**
+ * Build the evaluation prompt for the agent
+ */
+function buildEvaluationPrompt(params: {
+  questionTitle: string;
+  questionDescription: string;
+  questionRequirements: string[] | null;
+  questionDifficulty: string;
+  code: string;
+  language: string;
+  fileName?: string;
+  passingThreshold: number;
+}): string {
+  let prompt = `Please evaluate the following code submission for the interview question.
+
+## Question: ${params.questionTitle}
+
+**Difficulty:** ${params.questionDifficulty}
+
+**Description:**
+${params.questionDescription}
+`;
+
+  if (params.questionRequirements && params.questionRequirements.length > 0) {
+    prompt += `
+**Requirements:**
+${params.questionRequirements.map((r) => `- ${r}`).join("\n")}
+`;
+  }
+
+  prompt += `
+**Passing Threshold:** ${params.passingThreshold}/100
+`;
+
+  if (params.code && params.code.trim()) {
+    prompt += `
+## Candidate's Code (${params.language}${params.fileName ? `, ${params.fileName}` : ""}):
+
+\`\`\`${params.language}
+${params.code}
+\`\`\`
+`;
+  } else {
+    prompt += `
+## Code Location
+The candidate's code is in the Modal sandbox at /workspace/. Please use the available tools to:
+1. List files in /workspace/ to find the solution
+2. Read the solution file(s)
+3. Run tests if available
+4. Evaluate the code
+`;
+  }
+
+  prompt += `
+Please evaluate the code on all 5 criteria (20 points each) and return the evaluation result as JSON.`;
+
+  return prompt;
 }
 
 /**

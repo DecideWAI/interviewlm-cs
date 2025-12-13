@@ -8,11 +8,14 @@ Also includes database query tools for fetching session data.
 """
 
 import re
-from typing import Any
+from typing import Any, Annotated
 from datetime import datetime
 import asyncpg
 from langchain_core.tools import tool
+from langchain_core.tools.base import InjectedToolCallId
+from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import Command
 
 from config import settings
 
@@ -1007,6 +1010,131 @@ async def send_evaluation_progress(
     except Exception as e:
         print(f"[EvaluationTools] Progress notification failed: {e}")
         return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# Question Evaluation Submission Tool (for Question Evaluation Agent)
+# =============================================================================
+
+
+@tool
+def submit_question_evaluation(
+    overall_score: int,
+    problem_completion_score: int,
+    problem_completion_feedback: str,
+    code_quality_score: int,
+    code_quality_feedback: str,
+    best_practices_score: int,
+    best_practices_feedback: str,
+    error_handling_score: int,
+    error_handling_feedback: str,
+    efficiency_score: int,
+    efficiency_feedback: str,
+    feedback: str,
+    strengths: list[str],
+    improvements: list[str],
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """Submit the final evaluation result after evaluating the candidate's code.
+
+    IMPORTANT: You MUST call this tool at the end of your evaluation to submit
+    the results. The evaluation is not complete until this tool is called.
+
+    Each criterion is scored 0-20 points, totaling 100 points maximum.
+
+    Args:
+        overall_score: Total score (0-100), should equal sum of all criteria scores
+        problem_completion_score: Score for problem completion (0-20)
+        problem_completion_feedback: Feedback for problem completion
+        code_quality_score: Score for code quality (0-20)
+        code_quality_feedback: Feedback for code quality
+        best_practices_score: Score for best practices (0-20)
+        best_practices_feedback: Feedback for best practices
+        error_handling_score: Score for error handling (0-20)
+        error_handling_feedback: Feedback for error handling
+        efficiency_score: Score for efficiency (0-20)
+        efficiency_feedback: Feedback for efficiency
+        feedback: Overall feedback paragraph summarizing the evaluation
+        strengths: List of 2-3 key strengths demonstrated
+        improvements: List of 2-3 areas for improvement
+
+    Returns:
+        Command that updates the agent state with evaluation_result
+    """
+    # Validate scores are in range
+    def clamp(val: int, min_val: int, max_val: int) -> int:
+        return max(min_val, min(max_val, val))
+
+    problem_completion_score = clamp(problem_completion_score, 0, 20)
+    code_quality_score = clamp(code_quality_score, 0, 20)
+    best_practices_score = clamp(best_practices_score, 0, 20)
+    error_handling_score = clamp(error_handling_score, 0, 20)
+    efficiency_score = clamp(efficiency_score, 0, 20)
+
+    # Recalculate overall score from criteria
+    calculated_score = (
+        problem_completion_score +
+        code_quality_score +
+        best_practices_score +
+        error_handling_score +
+        efficiency_score
+    )
+
+    # Use calculated score if provided score doesn't match
+    if overall_score != calculated_score:
+        overall_score = calculated_score
+
+    overall_score = clamp(overall_score, 0, 100)
+
+    # Build the evaluation result structure (matches QuestionEvaluationResult TypedDict)
+    evaluation_result = {
+        "overall_score": overall_score,
+        "passed": overall_score >= 70,  # Default passing threshold
+        "criteria": {
+            "problem_completion": {
+                "score": problem_completion_score,
+                "feedback": problem_completion_feedback,
+            },
+            "code_quality": {
+                "score": code_quality_score,
+                "feedback": code_quality_feedback,
+            },
+            "best_practices": {
+                "score": best_practices_score,
+                "feedback": best_practices_feedback,
+            },
+            "error_handling": {
+                "score": error_handling_score,
+                "feedback": error_handling_feedback,
+            },
+            "efficiency": {
+                "score": efficiency_score,
+                "feedback": efficiency_feedback,
+            },
+        },
+        "feedback": feedback,
+        "strengths": strengths[:5] if strengths else [],  # Limit to 5
+        "improvements": improvements[:5] if improvements else [],  # Limit to 5
+        "evaluated_at": datetime.utcnow().isoformat(),
+        "model": settings.evaluation_agent_model,
+    }
+
+    return Command(
+        update={
+            "evaluation_result": evaluation_result,
+            "evaluation_complete": True,
+            "messages": [
+                ToolMessage(
+                    content=f"Evaluation submitted successfully. Score: {overall_score}/100 ({'PASSED' if overall_score >= 70 else 'FAILED'})",
+                    tool_call_id=tool_call_id,
+                )
+            ],
+        }
+    )
+
+
+# Question evaluation submission tool (for Question Evaluation Agent)
+QUESTION_EVALUATION_TOOLS = [submit_question_evaluation]
 
 
 # =============================================================================

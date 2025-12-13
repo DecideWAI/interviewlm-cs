@@ -687,6 +687,8 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
     console.log(`[LangGraph] Starting stream for thread ${threadId}, assistant: coding_agent`);
 
     // Use LangGraph SDK streaming with multiple modes for comprehensive event coverage
+    // NOTE: LangGraph server handles checkpointing - we only send the NEW message
+    // The server loads previous state from checkpoint and appends via add_messages reducer
     const stream = langGraphClient.runs.stream(threadId, 'coding_agent', {
       input: {
         messages: [{ role: 'user', content: options.message }],

@@ -5,8 +5,12 @@
     "evaluation_agent": "./agents/evaluation_agent.py:evaluation_graph",
     "interview_agent": "./agents/interview_agent.py:interview_graph",
     "question_evaluation_agent": "./agents/question_evaluation_agent.py:question_evaluation_graph",
+    "question_generation_agent": "./agents/question_generation_agent.py:question_generation_graph",
     "supervisor": "./agents/supervisor.py:supervisor_graph"
   },
   "env": ".env",
-  "python_version": "3.12"
+  "python_version": "3.12",
+  "store": {
+    "postgres": {}
+  }
 }

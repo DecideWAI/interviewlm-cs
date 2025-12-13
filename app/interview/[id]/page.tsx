@@ -672,14 +672,15 @@ export default function InterviewPage() {
     return () => clearInterval(intervalId);
   }, [questionStartTime, sessionData]);
 
-  // Show completion card when all tests pass
+  // Show completion card when evaluation passes (NOT based on tests)
+  // Tests are informational but the evaluation agent's verdict is the gate
   useEffect(() => {
-    if (testResults.total > 0 && testResults.passed === testResults.total) {
+    if (evaluationResult?.passed) {
       setShowCompletionCard(true);
     } else {
       setShowCompletionCard(false);
     }
-  }, [testResults]);
+  }, [evaluationResult]);
 
   // Auto-save session state to localStorage (prevents data loss on refresh)
   // Also caches question/fileTree for fast restore on browser refresh
@@ -2083,9 +2084,10 @@ export default function InterviewPage() {
                     </button>
                   </div>
 
-                  {/* Tab Content */}
-                  <div className="flex-1 min-h-0">
-                    {rightPanelTab === "chat" ? (
+                  {/* Tab Content - Both panels rendered but only active one visible */}
+                  {/* This keeps both mounted to preserve state when switching tabs */}
+                  <div className="flex-1 min-h-0 relative">
+                    <div className={cn("h-full", rightPanelTab !== "chat" && "hidden")}>
                       <AIChat
                         ref={aiChatRef}
                         sessionId={candidateId}
@@ -2129,12 +2131,15 @@ export default function InterviewPage() {
                           });
                         }}
                         onSuggestNextQuestion={(suggestion) => {
-                          // AI suggests moving to next question
-                          console.log("AI suggests next question:", suggestion.reason);
-                          setShowCompletionCard(true);
+                          // AI suggests the candidate is ready - but completion requires evaluation
+                          // Don't auto-show completion card; candidate must run evaluation
+                          console.log("AI suggests evaluation:", suggestion.reason);
+                          // Switch to evaluation tab to prompt candidate to evaluate
+                          setRightPanelTab("evaluation");
                         }}
                       />
-                    ) : (
+                    </div>
+                    <div className={cn("h-full", rightPanelTab !== "evaluation" && "hidden")}>
                       <EvaluationPanel
                         evaluationResult={evaluationResult}
                         isEvaluating={isEvaluating}
@@ -2143,7 +2148,7 @@ export default function InterviewPage() {
                         isLastQuestion={currentQuestionIndex + 1 >= totalQuestions}
                         passingThreshold={passingThreshold}
                       />
-                    )}
+                    </div>
                   </div>
                 </div>
               </Panel>

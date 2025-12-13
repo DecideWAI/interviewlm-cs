@@ -11,7 +11,7 @@ from agents import create_coding_agent
 from config import settings
 
 # Use Haiku 3.5 - requires 2048+ tokens for caching (Sonnet only needs 1024+)
-settings.coding_agent_model = "claude-3-5-haiku-20241022"
+settings.coding_agent_model = "claude-haiku-4-5-20251001"
 
 async def test_coding_cache():
     print("=" * 60)

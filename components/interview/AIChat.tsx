@@ -41,6 +41,8 @@ interface AIChatProps {
     reason: string;
     performance: string;
   }) => void;
+  /** Called when agent starts/stops working (for gating completion UI) */
+  onAgentStateChange?: (isWorking: boolean) => void;
 }
 
 export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
@@ -49,7 +51,8 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
   className,
   onFileModified,
   onTestResultsUpdated,
-  onSuggestNextQuestion
+  onSuggestNextQuestion,
+  onAgentStateChange,
 }, ref) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");

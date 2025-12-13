@@ -56,7 +56,7 @@ const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   'claude-sonnet-4-5-20250929': { input: 3.0, output: 15.0 },
   'claude-haiku-4-5-20251001': { input: 1.0, output: 5.0 },
   'claude-3-5-sonnet-20241022': { input: 3.0, output: 15.0 },
-  'claude-3-5-haiku-20241022': { input: 1.0, output: 5.0 },
+  'claude-haiku-4-5-20251001': { input: 1.0, output: 5.0 },
 };
 
 // ============================================================================
@@ -291,9 +291,9 @@ export function logCacheMetrics(metrics: CacheMetrics, context: string): void {
   if (metrics.cacheCreationInputTokens > 0 || metrics.cacheReadInputTokens > 0) {
     console.log(
       `[${context}] Cache metrics - ` +
-        `created: ${metrics.cacheCreationInputTokens}, ` +
-        `read: ${metrics.cacheReadInputTokens}, ` +
-        `savings: ~${metrics.cacheSavingsPercent}%`
+      `created: ${metrics.cacheCreationInputTokens}, ` +
+      `read: ${metrics.cacheReadInputTokens}, ` +
+      `savings: ~${metrics.cacheSavingsPercent}%`
     );
   }
 }

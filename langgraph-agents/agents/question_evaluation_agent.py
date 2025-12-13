@@ -37,6 +37,7 @@ from tools.coding_tools import (
     glob_files,
     get_environment_info,
 )
+from tools.evaluation_tools import submit_question_evaluation
 from config import settings, generate_question_eval_thread_uuid
 from middleware import system_prompt_middleware
 
@@ -115,6 +116,7 @@ EVALUATION_TOOLS = [
     grep_files,
     glob_files,
     get_environment_info,
+    submit_question_evaluation,  # REQUIRED: Must call to submit evaluation result
 ]
 
 
@@ -140,7 +142,7 @@ Code may NOT be provided inline in the prompt. You have access to tools to disco
 2. Use `read_file` to read the solution file(s)
 3. Use `run_tests` to verify the solution works
 4. Read test files for additional context
-5. Evaluate and return JSON result
+5. **REQUIRED: Call `submit_question_evaluation` tool to submit your evaluation**
 
 **Evaluation Criteria (20 points each, 100 total):**
 
@@ -183,21 +185,20 @@ Code may NOT be provided inline in the prompt. You have access to tools to disco
 - Dynamic Programming: Overlapping subproblems
 - BFS/DFS: Graphs, trees
 
-**Output Format:**
-Return your evaluation as JSON:
-{
-  "overallScore": <0-100>,
-  "criteria": {
-    "problemCompletion": {"score": <0-20>, "feedback": "<feedback>"},
-    "codeQuality": {"score": <0-20>, "feedback": "<feedback>"},
-    "bestPractices": {"score": <0-20>, "feedback": "<feedback>"},
-    "errorHandling": {"score": <0-20>, "feedback": "<feedback>"},
-    "efficiency": {"score": <0-20>, "feedback": "<feedback>"}
-  },
-  "feedback": "<overall feedback paragraph>",
-  "strengths": ["<strength 1>", "<strength 2>"],
-  "improvements": ["<improvement 1>", "<improvement 2>"]
-}
+**CRITICAL: Submitting Your Evaluation**
+You MUST call the `submit_question_evaluation` tool to submit your results.
+The evaluation is NOT complete until you call this tool.
+
+The tool accepts:
+- overall_score: Total score (0-100)
+- problem_completion_score/feedback: Score 0-20 and feedback
+- code_quality_score/feedback: Score 0-20 and feedback
+- best_practices_score/feedback: Score 0-20 and feedback
+- error_handling_score/feedback: Score 0-20 and feedback
+- efficiency_score/feedback: Score 0-20 and feedback
+- feedback: Overall feedback paragraph
+- strengths: List of 2-3 key strengths
+- improvements: List of 2-3 areas for improvement
 
 Be honest, constructive, and fair. Be critical but encouraging."""
 
@@ -372,7 +373,20 @@ def create_question_evaluation_agent_graph(
     use_agent_mode: bool = False,
     use_checkpointing: bool = True,
 ):
-    """Create the Question Evaluation Agent using LangGraph v1's create_agent."""
+    """
+    Create the Question Evaluation Agent using LangGraph v1's create_agent.
+
+    The agent uses the submit_question_evaluation tool to store evaluation
+    results directly in state via the Command return type. No post-processing
+    node is needed.
+
+    Args:
+        use_agent_mode: If True, include file exploration tools (read_file, list_files, etc.)
+        use_checkpointing: If True, use MemorySaver for checkpointing
+
+    Returns:
+        Compiled agent graph
+    """
     model = _create_anthropic_model(settings.evaluation_agent_model)
 
     middleware = [
@@ -381,8 +395,9 @@ def create_question_evaluation_agent_graph(
         anthropic_caching_middleware,
     ]
 
-    # Only use tools in agent mode
-    tools = EVALUATION_TOOLS if use_agent_mode else []
+    # Always include tools - submit_question_evaluation is required
+    # In non-agent mode, we still need the submission tool
+    tools = EVALUATION_TOOLS if use_agent_mode else [submit_question_evaluation]
 
     agent_kwargs = {
         "model": model,
@@ -509,20 +524,8 @@ Evaluate the code on these 5 criteria (20 points each, 100 total):
 
 Provide honest, constructive feedback.
 
-Return ONLY valid JSON (no markdown code blocks):
-{{
-  "overallScore": <0-100 total>,
-  "criteria": {{
-    "problemCompletion": {{ "score": <0-20>, "feedback": "<specific feedback>" }},
-    "codeQuality": {{ "score": <0-20>, "feedback": "<specific feedback>" }},
-    "bestPractices": {{ "score": <0-20>, "feedback": "<specific feedback>" }},
-    "errorHandling": {{ "score": <0-20>, "feedback": "<specific feedback>" }},
-    "efficiency": {{ "score": <0-20>, "feedback": "<specific feedback>" }}
-  }},
-  "feedback": "<overall feedback paragraph>",
-  "strengths": ["<strength 1>", "<strength 2>"],
-  "improvements": ["<improvement 1>", "<improvement 2>"]
-}}"""
+**CRITICAL: You MUST call `submit_question_evaluation` to submit your evaluation.**
+The evaluation is NOT complete until you call this tool with all scores and feedback."""
 
     async def evaluate_question(
         self,
@@ -596,7 +599,22 @@ Return ONLY valid JSON (no markdown code blocks):
             context=context,
         )
 
-        # Parse response
+        # Get evaluation result from state (set by submit_question_evaluation tool)
+        evaluation_result = result.get("evaluation_result")
+
+        if evaluation_result:
+            # Add session metadata to result
+            evaluation_result["session_id"] = session_id
+            evaluation_result["candidate_id"] = candidate_id
+            evaluation_result["question_id"] = question_id
+
+            # Apply passing threshold
+            if "passed" not in evaluation_result:
+                evaluation_result["passed"] = evaluation_result.get("overall_score", 0) >= passing_threshold
+
+            return evaluation_result
+
+        # Fallback: Try to parse from messages (backwards compatibility)
         messages = result.get("messages", [])
         response_text = ""
         for msg in messages:
@@ -612,34 +630,34 @@ Return ONLY valid JSON (no markdown code blocks):
 
         ai_result = parse_evaluation_json(response_text)
 
-        if not ai_result:
-            # Fallback result
-            return QuestionEvaluationResult(
+        if ai_result:
+            return build_evaluation_result(
                 session_id=session_id,
                 candidate_id=candidate_id,
                 question_id=question_id,
-                overall_score=0,
-                passed=False,
-                criteria=QuestionEvaluationCriteria(
-                    problem_completion=QuestionCriterionScore(score=0, feedback="Evaluation failed"),
-                    code_quality=QuestionCriterionScore(score=0, feedback=""),
-                    best_practices=QuestionCriterionScore(score=0, feedback=""),
-                    error_handling=QuestionCriterionScore(score=0, feedback=""),
-                    efficiency=QuestionCriterionScore(score=0, feedback=""),
-                ),
-                feedback="Evaluation parsing error",
-                strengths=[],
-                improvements=[],
-                evaluated_at=datetime.utcnow().isoformat(),
-                model=settings.evaluation_agent_model,
+                ai_result=ai_result,
+                passing_threshold=passing_threshold,
             )
 
-        return build_evaluation_result(
+        # Final fallback - return error result
+        return QuestionEvaluationResult(
             session_id=session_id,
             candidate_id=candidate_id,
             question_id=question_id,
-            ai_result=ai_result,
-            passing_threshold=passing_threshold,
+            overall_score=0,
+            passed=False,
+            criteria=QuestionEvaluationCriteria(
+                problem_completion=QuestionCriterionScore(score=0, feedback="Evaluation failed - no result returned"),
+                code_quality=QuestionCriterionScore(score=0, feedback=""),
+                best_practices=QuestionCriterionScore(score=0, feedback=""),
+                error_handling=QuestionCriterionScore(score=0, feedback=""),
+                efficiency=QuestionCriterionScore(score=0, feedback=""),
+            ),
+            feedback="Agent did not call submit_question_evaluation tool",
+            strengths=[],
+            improvements=[],
+            evaluated_at=datetime.utcnow().isoformat(),
+            model=settings.evaluation_agent_model,
         )
 
 

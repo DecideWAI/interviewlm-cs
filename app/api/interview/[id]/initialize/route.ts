@@ -7,9 +7,21 @@ import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
 import { questionAssignmentService } from "@/lib/experiments/question-assignment-service";
-import type { QuestionBackendType } from "@/lib/experiments/types";
+import { Client } from "@langchain/langgraph-sdk";
+import { v5 as uuidv5 } from "uuid";
 import type { AssessmentType } from "@prisma/client";
 import type { GeneratedQuestionContent } from "@/lib/services/dynamic-question-generator";
+
+// LangGraph SDK client for question generation
+const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:2024";
+const langGraphClient = new Client({ apiUrl: LANGGRAPH_API_URL });
+
+// Namespace for generating deterministic thread UUIDs
+const QUESTION_GEN_NAMESPACE = "7ba7b810-9dad-11d1-80b4-00c04fd430c9";
+
+function generateQuestionGenThreadId(candidateId: string): string {
+  return uuidv5(`question-gen-init-${candidateId}`, QUESTION_GEN_NAMESPACE);
+}
 
 // GeneratedQuestionContent type is now imported from dynamic-question-generator service
 
@@ -59,72 +71,145 @@ func solution(input interface{}) interface{} {
 }
 
 /**
- * Generate question using selected backend
- * Supports both TypeScript (existing) and LangGraph (Python) backends
+ * Generate question using TypeScript dynamic question generator
  */
-async function generateQuestionWithBackend(
-  backend: QuestionBackendType,
-  params: {
-    role: string;
-    seniority: string;
-    assessmentType: AssessmentType;
-    techStack: string[];
-    organizationId: string;
+async function generateQuestionTypeScript(params: {
+  role: string;
+  seniority: string;
+  assessmentType: AssessmentType;
+  techStack: string[];
+  organizationId: string;
+}): Promise<GeneratedQuestionContent> {
+  logger.info('[Initialize] Using TypeScript dynamic question generator', {
+    role: params.role,
+    seniority: params.seniority,
+    assessmentType: params.assessmentType,
+  });
+  return dynamicQuestionGenerator.generate(params);
+}
+
+/**
+ * Generate question using LangGraph SDK
+ */
+async function generateQuestionLangGraph(params: {
+  candidateId: string;
+  role: string;
+  seniority: string;
+  assessmentType: AssessmentType;
+  techStack: string[];
+  organizationId: string;
+}): Promise<GeneratedQuestionContent> {
+  const threadId = generateQuestionGenThreadId(params.candidateId);
+
+  logger.info('[Initialize] Using LangGraph SDK for question generation', {
+    candidateId: params.candidateId,
+    threadId,
+  });
+
+  const startTime = Date.now();
+
+  // Build input state
+  const inputState = {
+    candidate_id: params.candidateId,
+    role: params.role,
+    seniority: params.seniority,
+    assessment_type: params.assessmentType,
+    tech_stack: params.techStack,
+    organization_id: params.organizationId,
+  };
+
+  // Call LangGraph SDK
+  const result = await langGraphClient.runs.wait(threadId, "question_generation_agent", {
+    input: inputState,
+    config: {
+      configurable: {
+        candidate_id: params.candidateId,
+      },
+    },
+  });
+
+  const latencyMs = Date.now() - startTime;
+  const state = result as Record<string, any>;
+
+  logger.info('[Initialize] LangGraph question generation complete', {
+    candidateId: params.candidateId,
+    latencyMs,
+    hasQuestion: !!state.generated_question,
+    error: state.error,
+  });
+
+  if (state.error) {
+    throw new Error(state.error);
   }
-): Promise<GeneratedQuestionContent> {
-  if (backend === 'langgraph') {
-    // Call Python LangGraph API
-    const langgraphUrl = process.env.LANGGRAPH_API_URL || 'http://localhost:8001';
-    const startTime = Date.now();
 
-    logger.info('[Initialize] Using LangGraph backend for question generation', {
-      backend,
-      url: langgraphUrl,
-    });
+  // Map snake_case to camelCase
+  const question = state.generated_question;
+  return {
+    title: question.title,
+    description: question.description,
+    requirements: question.requirements,
+    estimatedTime: question.estimated_time,
+    starterCode: question.starter_code,
+  };
+}
 
+/**
+ * Generate question with backend selection
+ */
+async function generateQuestion(params: {
+  candidateId: string;
+  sessionId?: string;
+  role: string;
+  seniority: string;
+  assessmentType: AssessmentType;
+  techStack: string[];
+  organizationId: string;
+  assessmentId?: string;
+}): Promise<GeneratedQuestionContent> {
+  // Get backend assignment
+  const backendResult = await questionAssignmentService.getBackendForSession({
+    sessionId: params.sessionId || params.candidateId,
+    candidateId: params.candidateId,
+    organizationId: params.organizationId,
+    assessmentId: params.assessmentId,
+    seniority: params.seniority,
+    role: params.role,
+    assessmentType: params.assessmentType,
+  });
+
+  logger.info('[Initialize] Backend selected for question generation', {
+    candidateId: params.candidateId,
+    backend: backendResult.backend,
+    source: backendResult.source,
+  });
+
+  if (backendResult.backend === 'langgraph') {
     try {
-      const response = await fetch(`${langgraphUrl}/api/question-generation/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          role: params.role,
-          seniority: params.seniority,
-          assessment_type: params.assessmentType,
-          tech_stack: params.techStack,
-          organization_id: params.organizationId,
-        }),
+      return await generateQuestionLangGraph({
+        candidateId: params.candidateId,
+        role: params.role,
+        seniority: params.seniority,
+        assessmentType: params.assessmentType,
+        techStack: params.techStack,
+        organizationId: params.organizationId,
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
-      }
-
-      const result = await response.json();
-      const latencyMs = Date.now() - startTime;
-
-      logger.info('[Initialize] LangGraph question generation complete', {
-        latencyMs,
-        title: result.title,
-      });
-
-      // Map snake_case to camelCase for compatibility
-      return {
-        title: result.title,
-        description: result.description,
-        requirements: result.requirements,
-        estimatedTime: result.estimated_time,
-        starterCode: result.starter_code,
-      };
     } catch (error) {
-      logger.error('[Initialize] LangGraph backend failed, falling back to TypeScript', error as Error);
-      // Fallback to TypeScript generator
-      return dynamicQuestionGenerator.generate(params);
+      logger.warn('[Initialize] LangGraph failed, falling back to TypeScript', {
+        candidateId: params.candidateId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      // Fallback to TypeScript
     }
   }
 
-  // Default: Use TypeScript generator
-  return dynamicQuestionGenerator.generate(params);
+  // TypeScript generator
+  return generateQuestionTypeScript({
+    role: params.role,
+    seniority: params.seniority,
+    assessmentType: params.assessmentType,
+    techStack: params.techStack,
+    organizationId: params.organizationId,
+  });
 }
 
 /**
@@ -311,26 +396,6 @@ module.exports = longestPalindrome;`,
   let needsStarterFiles = false;
   let volumeId = candidate.volumeId;
 
-  // Determine question generation backend (only if we need to generate)
-  let questionBackendResult: { backend: QuestionBackendType; source: string } | null = null;
-  if (needsQuestion) {
-    questionBackendResult = await questionAssignmentService.getBackendForSession({
-      sessionId: sessionRecording.id,
-      candidateId,
-      organizationId: candidate.organizationId,
-      assessmentId: assessment.id,
-      seniority,
-      role,
-      assessmentType,
-    });
-
-    logger.info('[Initialize] Question generation backend selected', {
-      candidateId,
-      backend: questionBackendResult.backend,
-      source: questionBackendResult.source,
-    });
-  }
-
   // OPTIMIZATION: Run question generation and sandbox creation in parallel
   // These are independent operations that together take 47-56s + 13s sequentially
   // Running in parallel saves ~13s (the sandbox creation time)
@@ -340,21 +405,23 @@ module.exports = longestPalindrome;`,
       role,
       seniority,
       assessmentType,
-      questionBackend: questionBackendResult?.backend,
     });
 
     const [generatedContent, volume] = await Promise.all([
       // Question generation (~47-56s)
       logger.time(
         'questionGeneration',
-        () => generateQuestionWithBackend(questionBackendResult!.backend, {
+        () => generateQuestion({
+          candidateId,
+          sessionId: sessionRecording.id,
           role,
           seniority,
           assessmentType,
           techStack: assessment.techStack || [language],
           organizationId: candidate.organizationId,
+          assessmentId: assessment.id,
         }),
-        { candidateId, role, seniority, assessmentType, backend: questionBackendResult?.backend }
+        { candidateId, role, seniority, assessmentType }
       ),
       // Sandbox creation (~13s)
       logger.time(
@@ -408,19 +475,21 @@ module.exports = longestPalindrome;`,
       seniority,
       assessmentType,
       techStack: assessment.techStack,
-      questionBackend: questionBackendResult?.backend,
     });
 
     const generatedContent = await logger.time(
       'questionGeneration',
-      () => generateQuestionWithBackend(questionBackendResult!.backend, {
+      () => generateQuestion({
+        candidateId,
+        sessionId: sessionRecording.id,
         role,
         seniority,
         assessmentType,
         techStack: assessment.techStack || [language],
         organizationId: candidate.organizationId,
+        assessmentId: assessment.id,
       }),
-      { candidateId, role, seniority, assessmentType, backend: questionBackendResult?.backend }
+      { candidateId, role, seniority, assessmentType }
     );
 
     question = await prisma.generatedQuestion.create({
@@ -443,7 +512,6 @@ module.exports = longestPalindrome;`,
     logger.info('[Initialize] Generated question', {
       candidateId,
       questionId: question.id,
-      backend: questionBackendResult?.backend,
       questionTitle: generatedContent.title,
       assessmentType,
     });

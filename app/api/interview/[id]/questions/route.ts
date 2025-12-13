@@ -3,6 +3,8 @@ import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import Anthropic from "@anthropic-ai/sdk";
+import { Client } from "@langchain/langgraph-sdk";
+import { v5 as uuidv5 } from "uuid";
 import { GeneratedProblem } from "@/types/problem";
 import { incrementalQuestionGenerator } from "@/lib/services/incremental-questions";
 import { irtEngine } from "@/lib/services/irt-difficulty-engine";
@@ -12,7 +14,6 @@ import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
 import { questionAssignmentService } from "@/lib/experiments/question-assignment-service";
-import type { QuestionBackendType } from "@/lib/experiments/types";
 
 // Request validation schema for generating next question
 const generateQuestionSchema = z.object({
@@ -34,116 +35,34 @@ const anthropic = new Anthropic({
   },
 });
 
+// LangGraph SDK client for question generation
+const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:2024";
+const langGraphClient = new Client({ apiUrl: LANGGRAPH_API_URL });
+
+// Namespace for generating deterministic thread UUIDs
+const QUESTION_GEN_NAMESPACE = "7ba7b810-9dad-11d1-80b4-00c04fd430c9";
+
+function generateQuestionGenThreadId(sessionId: string, questionNumber: number): string {
+  return uuidv5(`question-gen-${sessionId}-${questionNumber}`, QUESTION_GEN_NAMESPACE);
+}
+
 /**
- * Generate incremental question using selected backend
- * Supports both TypeScript (existing) and LangGraph (Python) backends
+ * Generate incremental question using TypeScript IRT engine
  */
-async function generateIncrementalQuestionWithBackend(
-  backend: QuestionBackendType,
-  params: {
-    candidateId: string;
-    seedId: string;
-    seniority: string;
-    previousQuestions: any[];
-    previousPerformance: any[];
-    timeRemaining: number;
-    assessmentType?: string;
-  }
-): Promise<any> {
-  if (backend === 'langgraph') {
-    // Call Python LangGraph API
-    const langgraphUrl = process.env.LANGGRAPH_API_URL || 'http://localhost:8001';
-    const startTime = Date.now();
+async function generateIncrementalQuestionTypeScript(params: {
+  candidateId: string;
+  seedId: string;
+  seniority: string;
+  previousQuestions: any[];
+  previousPerformance: any[];
+  timeRemaining: number;
+  assessmentType?: string;
+}): Promise<any> {
+  logger.info('[Questions] Using TypeScript IRT engine for incremental question generation', {
+    candidateId: params.candidateId,
+    seedId: params.seedId,
+  });
 
-    logger.info('[Questions] Using LangGraph backend for incremental question generation', {
-      backend,
-      candidateId: params.candidateId,
-    });
-
-    try {
-      const response = await fetch(`${langgraphUrl}/api/question-generation/generate-next`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: params.candidateId, // Use candidateId as session identifier
-          candidate_id: params.candidateId,
-          seed_id: params.seedId,
-          seniority: params.seniority,
-          previous_questions: params.previousQuestions.map(q => ({
-            id: q.id,
-            title: q.title,
-            description: q.description,
-            difficulty: q.difficulty,
-            score: q.score,
-            started_at: q.startedAt?.toISOString(),
-            completed_at: q.completedAt?.toISOString(),
-            estimated_time: q.estimatedTime,
-          })),
-          previous_performance: params.previousPerformance.map(p => ({
-            question_id: p.questionId,
-            score: p.score,
-            time_spent: p.timeSpent,
-            tests_passed_ratio: p.testsPassedRatio,
-          })),
-          time_remaining: params.timeRemaining,
-          assessment_type: params.assessmentType,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
-      }
-
-      const result = await response.json();
-      const latencyMs = Date.now() - startTime;
-
-      logger.info('[Questions] LangGraph incremental question generation complete', {
-        latencyMs,
-        title: result.question?.title,
-      });
-
-      // Map Python response to TypeScript format
-      return {
-        question: {
-          id: result.question?.id,
-          title: result.question?.title,
-          description: result.question?.description,
-          requirements: result.question?.requirements,
-          difficulty: result.question?.difficulty || 'MEDIUM',
-          estimatedTime: result.question?.estimated_time || 30,
-          starterCode: result.question?.starter_code,
-          difficultyAssessment: result.question?.difficulty_assessment,
-        },
-        abilityEstimate: result.irt_data?.ability_estimate ? {
-          theta: result.irt_data.ability_estimate.theta,
-          standardError: result.irt_data.ability_estimate.standard_error,
-          reliability: result.irt_data.ability_estimate.reliability,
-          questionsUsed: result.irt_data.ability_estimate.questions_used,
-        } : null,
-        difficultyTargeting: result.irt_data?.difficulty_targeting ? {
-          targetDifficulty: result.irt_data.difficulty_targeting.target_difficulty,
-          reasoning: result.irt_data.difficulty_targeting.reasoning,
-        } : null,
-        difficultyVisibility: result.irt_data?.difficulty_visibility || null,
-        shouldContinue: result.irt_data?.should_continue || { continue: true, reason: 'assessment_in_progress' },
-        strategy: result.strategy,
-      };
-    } catch (error) {
-      logger.error('[Questions] LangGraph backend failed, falling back to TypeScript', error as Error);
-      // Fallback to TypeScript generator
-      return incrementalQuestionGenerator.generateNextQuestionWithIRT({
-        candidateId: params.candidateId,
-        seedId: params.seedId,
-        seniority: params.seniority as any,
-        previousQuestions: params.previousQuestions,
-        previousPerformance: params.previousPerformance,
-        timeRemaining: params.timeRemaining,
-      });
-    }
-  }
-
-  // Default: Use TypeScript generator
   return incrementalQuestionGenerator.generateNextQuestionWithIRT({
     candidateId: params.candidateId,
     seedId: params.seedId,
@@ -155,121 +74,177 @@ async function generateIncrementalQuestionWithBackend(
 }
 
 /**
- * Generate dynamic question using LangGraph Python
- * Used when no seed is configured - calls /api/question-generation/generate
+ * Generate question using LangGraph SDK
  */
-async function generateDynamicQuestionWithLangGraph(params: {
+async function generateQuestionWithLangGraph(params: {
+  sessionId: string;
+  candidateId: string;
+  seedId?: string;
   role: string;
   seniority: string;
   assessmentType: string;
   techStack: string[];
-  previousQuestions: any[];
+  organizationId?: string;
+  previousQuestions?: any[];
+  previousPerformance?: any[];
+  timeRemaining?: number;
   questionNumber: number;
-}): Promise<{
-  title: string;
-  description: string;
-  requirements: string[];
-  difficulty: "EASY" | "MEDIUM" | "HARD";
-  estimatedTime: number;
-  language: string;
-  starterCode: any[];
-  testCases: any[];
-}> {
-  const langgraphUrl = process.env.LANGGRAPH_API_URL || 'http://localhost:8001';
-  const startTime = Date.now();
+}): Promise<any> {
+  const threadId = generateQuestionGenThreadId(params.sessionId, params.questionNumber);
 
-  logger.info('[Questions] Using LangGraph for dynamic question generation', {
-    role: params.role,
-    seniority: params.seniority,
-    questionNumber: params.questionNumber,
+  logger.info('[Questions] Using LangGraph SDK for question generation', {
+    candidateId: params.candidateId,
+    threadId,
+    isIncremental: !!params.seedId,
   });
 
-  try {
-    const response = await fetch(`${langgraphUrl}/api/question-generation/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        role: params.role,
-        seniority: params.seniority,
-        assessment_type: params.assessmentType,
-        tech_stack: params.techStack,
-      }),
-    });
+  const startTime = Date.now();
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`LangGraph API error: ${response.status} - ${errorText}`);
+  try {
+    // Build input state for the graph
+    const inputState: Record<string, any> = {
+      session_id: params.sessionId,
+      candidate_id: params.candidateId,
+      role: params.role,
+      seniority: params.seniority,
+      assessment_type: params.assessmentType,
+      tech_stack: params.techStack,
+      organization_id: params.organizationId,
+    };
+
+    // Add incremental context if present
+    if (params.seedId) {
+      inputState.seed_id = params.seedId;
+      inputState.previous_questions = params.previousQuestions || [];
+      inputState.previous_performance = params.previousPerformance || [];
+      inputState.time_remaining = params.timeRemaining || 3600;
     }
 
-    const result = await response.json();
-    const latencyMs = Date.now() - startTime;
-
-    logger.info('[Questions] LangGraph dynamic question generation complete', {
-      latencyMs,
-      title: result.title,
+    // Call LangGraph SDK
+    const result = await langGraphClient.runs.wait(threadId, "question_generation_agent", {
+      input: inputState,
+      config: {
+        configurable: {
+          session_id: params.sessionId,
+          candidate_id: params.candidateId,
+        },
+      },
     });
 
-    // Determine language from tech stack
-    const language = determineLanguageForGeneration(params.techStack);
-    const fileExt = language === 'python' ? 'py' : language === 'go' ? 'go' : 'ts';
+    const latencyMs = Date.now() - startTime;
+    const state = result as Record<string, any>;
 
-    // Map response to expected format
+    logger.info('[Questions] LangGraph question generation complete', {
+      candidateId: params.candidateId,
+      latencyMs,
+      hasQuestion: !!state.generated_question,
+      error: state.error,
+    });
+
+    if (state.error) {
+      throw new Error(state.error);
+    }
+
+    // Map snake_case to camelCase
+    const question = state.generated_question;
     return {
-      title: result.title || `${params.role} Challenge`,
-      description: result.description || '',
-      requirements: result.requirements || [],
-      difficulty: (result.difficulty?.toUpperCase() || 'MEDIUM') as "EASY" | "MEDIUM" | "HARD",
-      estimatedTime: result.estimated_time || 30,
-      language: language,
-      starterCode: result.starter_code ? [{
-        fileName: `solution.${fileExt}`,
-        content: result.starter_code,
-      }] : [{
-        fileName: `solution.${fileExt}`,
-        content: getDefaultStarterCode(language),
-      }],
-      testCases: [{
-        name: "Test case 1",
-        input: "test input",
-        expectedOutput: "expected output",
-        hidden: false,
-      }],
+      question: {
+        title: question.title,
+        description: question.description,
+        requirements: question.requirements,
+        estimatedTime: question.estimated_time,
+        starterCode: question.starter_code,
+        difficulty: question.difficulty,
+        difficultyAssessment: question.difficulty_assessment,
+      },
+      abilityEstimate: state.irt_ability_estimate ? {
+        theta: state.irt_ability_estimate.theta,
+        standardError: state.irt_ability_estimate.standard_error,
+        reliability: state.irt_ability_estimate.reliability,
+        questionsUsed: state.irt_ability_estimate.questions_used,
+      } : null,
+      difficultyTargeting: state.irt_difficulty_targeting ? {
+        targetDifficulty: state.irt_difficulty_targeting.target_difficulty,
+        reasoning: state.irt_difficulty_targeting.reasoning,
+      } : null,
+      strategy: state.generation_strategy,
     };
   } catch (error) {
-    logger.error('[Questions] LangGraph dynamic generation failed', error as Error);
-    throw error; // Let caller handle fallback
+    logger.error('[Questions] LangGraph question generation failed', error as Error);
+    throw error;
   }
 }
 
 /**
- * Helper to determine language from tech stack (for LangGraph generation)
+ * Generate question with backend selection
  */
-function determineLanguageForGeneration(techStack: string[]): string {
-  const lowerStack = techStack.map(t => t.toLowerCase());
+async function generateIncrementalQuestion(params: {
+  sessionId: string;
+  candidateId: string;
+  seedId: string;
+  seniority: string;
+  previousQuestions: any[];
+  previousPerformance: any[];
+  timeRemaining: number;
+  assessmentType?: string;
+  organizationId?: string;
+  assessmentId?: string;
+  role?: string;
+  techStack?: string[];
+  questionNumber: number;
+}): Promise<any> {
+  // Get backend assignment
+  const backendResult = await questionAssignmentService.getBackendForSession({
+    sessionId: params.sessionId,
+    candidateId: params.candidateId,
+    organizationId: params.organizationId,
+    assessmentId: params.assessmentId,
+    seniority: params.seniority,
+    role: params.role || 'backend',
+    assessmentType: params.assessmentType || 'REAL_WORLD',
+  });
 
-  if (lowerStack.some(t => ['python', 'fastapi', 'django', 'flask', 'pytest'].includes(t))) {
-    return 'python';
-  }
-  if (lowerStack.some(t => ['go', 'golang', 'gin', 'echo'].includes(t))) {
-    return 'go';
-  }
-  if (lowerStack.some(t => ['typescript', 'nestjs', 'ts-node'].includes(t))) {
-    return 'typescript';
-  }
-  return 'typescript';
-}
+  logger.info('[Questions] Backend selected for incremental question', {
+    candidateId: params.candidateId,
+    backend: backendResult.backend,
+    source: backendResult.source,
+  });
 
-/**
- * Get default starter code for a language
- */
-function getDefaultStarterCode(language: string): string {
-  if (language === 'python') {
-    return `# TODO: Implement your solution here\n\ndef solution():\n    # Your code here\n    pass\n`;
+  if (backendResult.backend === 'langgraph') {
+    try {
+      return await generateQuestionWithLangGraph({
+        sessionId: params.sessionId,
+        candidateId: params.candidateId,
+        seedId: params.seedId,
+        role: params.role || 'backend',
+        seniority: params.seniority,
+        assessmentType: params.assessmentType || 'REAL_WORLD',
+        techStack: params.techStack || [],
+        organizationId: params.organizationId,
+        previousQuestions: params.previousQuestions,
+        previousPerformance: params.previousPerformance,
+        timeRemaining: params.timeRemaining,
+        questionNumber: params.questionNumber,
+      });
+    } catch (error) {
+      logger.warn('[Questions] LangGraph failed, falling back to TypeScript', {
+        candidateId: params.candidateId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      // Fallback to TypeScript
+    }
   }
-  if (language === 'go') {
-    return `package main\n\n// TODO: Implement your solution here\nfunc solution() {\n\t// Your code here\n}\n`;
-  }
-  return `// TODO: Implement your solution here\n\nexport function solution() {\n  // Your code here\n}\n`;
+
+  // TypeScript IRT engine
+  return generateIncrementalQuestionTypeScript({
+    candidateId: params.candidateId,
+    seedId: params.seedId,
+    seniority: params.seniority,
+    previousQuestions: params.previousQuestions,
+    previousPerformance: params.previousPerformance,
+    timeRemaining: params.timeRemaining,
+    assessmentType: params.assessmentType,
+  });
 }
 
 /**
@@ -523,6 +498,67 @@ export const POST = withErrorHandling(async (
       throw new AuthorizationError("Access denied to this interview session");
     }
 
+    // IMPORTANT: Validate that evaluation agent approved before generating next question
+    // This prevents gaming the system by skipping evaluation
+    if (previousPerformance) {
+      // Get session recording to find evaluation events
+      const sessionRecording = await prisma.sessionRecording.findUnique({
+        where: { candidateId: id },
+        select: { id: true },
+      });
+
+      if (sessionRecording) {
+        // Find the most recent evaluation event for the previous question
+        const evaluationEvent = await prisma.sessionEvent.findFirst({
+          where: {
+            sessionId: sessionRecording.id,
+            type: "evaluation",
+          },
+          orderBy: { timestamp: "desc" },
+        });
+
+        if (!evaluationEvent) {
+          logger.warn("[Questions POST] No evaluation found for previous question", {
+            candidateId: id,
+            questionId: previousPerformance.questionId,
+          });
+          throw new ValidationError(
+            "Cannot proceed to next question: No evaluation found. Please run evaluation first."
+          );
+        }
+
+        // Check if evaluation passed
+        const evalData = evaluationEvent.data as { questionId?: string; passed?: boolean };
+
+        // Verify evaluation is for the correct question
+        if (evalData.questionId !== previousPerformance.questionId) {
+          logger.warn("[Questions POST] Evaluation question mismatch", {
+            candidateId: id,
+            expectedQuestionId: previousPerformance.questionId,
+            evalQuestionId: evalData.questionId,
+          });
+          throw new ValidationError(
+            "Cannot proceed: Most recent evaluation is not for the current question. Please re-evaluate."
+          );
+        }
+
+        if (!evalData.passed) {
+          logger.info("[Questions POST] Evaluation did not pass", {
+            candidateId: id,
+            questionId: previousPerformance.questionId,
+          });
+          throw new ValidationError(
+            "Cannot proceed to next question: Evaluation did not pass. Please improve your solution and re-evaluate."
+          );
+        }
+
+        logger.info("[Questions POST] Evaluation validation passed", {
+          candidateId: id,
+          questionId: previousPerformance.questionId,
+        });
+      }
+    }
+
     // Mark previous question as completed if provided
     if (previousPerformance) {
       const previousQuestion = candidate.generatedQuestions.find(
@@ -561,25 +597,9 @@ export const POST = withErrorHandling(async (
     let irtResult = null;
 
     if (seed && seed.seedType === 'incremental') {
-      // Get question backend assignment for incremental generation
-      const sessionRecording = await prisma.sessionRecording.findUnique({
-        where: { candidateId: id },
-      });
-
-      const questionBackend = await questionAssignmentService.getBackendForSession({
-        sessionId: sessionRecording?.id || id,
-        candidateId: id,
-        organizationId: candidate.organizationId,
-        assessmentId: candidate.assessment.id,
-        seniority: candidate.assessment.seniority.toLowerCase(),
-        role: candidate.assessment.role,
-        assessmentType: candidate.assessment.assessmentType,
-      });
-
       logger.info(`[Questions POST] Using IRT-enhanced incremental generator`, {
         candidateId: id,
         seedId,
-        questionBackend: questionBackend.backend,
       });
 
       // Build performance metrics array
@@ -613,8 +633,15 @@ export const POST = withErrorHandling(async (
         : 0;
       const timeRemaining = Math.max(0, (assessmentDuration - timeElapsed) * 60); // seconds
 
-      // Generate incremental question with backend selection
-      irtResult = await generateIncrementalQuestionWithBackend(questionBackend.backend, {
+      // Get session recording for session ID
+      const sessionRecording = await prisma.sessionRecording.findUnique({
+        where: { candidateId: id },
+        select: { id: true },
+      });
+
+      // Generate incremental question with backend selection (TypeScript or LangGraph)
+      irtResult = await generateIncrementalQuestion({
+        sessionId: sessionRecording?.id || id,
         candidateId: id,
         seedId: seedId!,
         seniority: candidate.assessment.seniority.toLowerCase(),
@@ -622,6 +649,11 @@ export const POST = withErrorHandling(async (
         previousPerformance: performanceMetrics,
         timeRemaining,
         assessmentType: candidate.assessment.assessmentType,
+        organizationId: candidate.organizationId,
+        assessmentId: candidate.assessmentId,
+        role: candidate.assessment.role,
+        techStack: candidate.assessment.techStack || [],
+        questionNumber: candidate.generatedQuestions.length + 1,
       });
 
       newQuestion = irtResult.question;
@@ -629,50 +661,31 @@ export const POST = withErrorHandling(async (
       // Log IRT decision
       logger.info('[Questions POST] IRT decision', {
         candidateId: id,
-        backend: questionBackend.backend,
         abilityEstimate: irtResult.abilityEstimate?.theta?.toFixed(2) ?? 'N/A',
         targetDifficulty: irtResult.difficultyTargeting?.targetDifficulty?.toFixed(2) ?? 'N/A',
         shouldContinue: irtResult.shouldContinue?.continue ?? true,
         reason: irtResult.shouldContinue?.reason ?? 'unknown',
       });
     } else {
-      // Use LangGraph Python for dynamic question generation
-      logger.info('[Questions POST] Using LangGraph dynamic question generator', { candidateId: id });
+      // Use TypeScript LLM generator for dynamic question generation
+      logger.info('[Questions POST] Using TypeScript dynamic question generator', { candidateId: id });
 
       const nextQuestionOrder = candidate.generatedQuestions.length;
       const techStack = candidate.assessment.techStack || ['TypeScript'];
 
-      let generatedProblem;
-      try {
-        // Try LangGraph Python first
-        generatedProblem = await generateDynamicQuestionWithLangGraph({
-          role: candidate.assessment.role,
-          seniority: candidate.assessment.seniority,
-          assessmentType: candidate.assessment.assessmentType,
-          techStack: techStack,
-          previousQuestions: candidate.generatedQuestions,
-          questionNumber: nextQuestionOrder + 1,
-        });
-      } catch (error) {
-        // Fallback to TypeScript generator if LangGraph fails
-        logger.warn('[Questions POST] LangGraph failed, falling back to TypeScript generator', {
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
+      const difficulty = determineNextDifficulty(
+        candidate.generatedQuestions,
+        previousPerformance
+      );
 
-        const difficulty = determineNextDifficulty(
-          candidate.generatedQuestions,
-          previousPerformance
-        );
-
-        generatedProblem = await generateProblemWithLLM(
-          candidate.assessment.role,
-          candidate.assessment.seniority,
-          difficulty,
-          candidate.generatedQuestions,
-          techStack,
-          nextQuestionOrder + 1
-        );
-      }
+      const generatedProblem = await generateProblemWithLLM(
+        candidate.assessment.role,
+        candidate.assessment.seniority,
+        difficulty,
+        candidate.generatedQuestions,
+        techStack,
+        nextQuestionOrder + 1
+      );
 
       // Normalize difficulty to expected enum value
       const normalizedDifficulty = (

@@ -278,7 +278,7 @@ def _get_sandbox_lock(sandbox_id: str) -> threading.Lock:
         return _sandbox_locks[sandbox_id]
 
 
-def run_in_sandbox(sandbox, *args, sandbox_id: str = None, **kwargs):
+def run_in_sandbox(sandbox, *args, sandbox_id: str = None, timeout: int = 60, **kwargs):
     """
     Run a command in a Modal Sandbox with serialized access.
 
@@ -289,10 +289,14 @@ def run_in_sandbox(sandbox, *args, sandbox_id: str = None, **kwargs):
         sandbox: Modal Sandbox instance
         *args: Command arguments (e.g., "bash", "-c", "ls")
         sandbox_id: Optional sandbox ID for lock selection
-        **kwargs: Additional options (e.g., timeout=60)
+        timeout: Maximum time to wait for command (default: 60 seconds)
+        **kwargs: Additional options passed to sandbox.exec
 
     Returns:
         Process result with stdout, stderr, returncode
+
+    Raises:
+        TimeoutError: If command exceeds timeout
     """
     # Get lock for this sandbox (use object id if no sandbox_id provided)
     lock_key = sandbox_id or str(id(sandbox))
@@ -304,15 +308,27 @@ def run_in_sandbox(sandbox, *args, sandbox_id: str = None, **kwargs):
 
     logger.debug(f"[SandboxLock] Thread {thread_id} waiting for lock {lock_key[:20]}... (cmd: {cmd_preview})")
 
+    # Use a reasonable max timeout to prevent infinite hangs
+    effective_timeout = min(timeout, 600)  # Cap at 10 minutes
+
     with lock:
-        logger.debug(f"[SandboxLock] Thread {thread_id} acquired lock {lock_key[:20]}, executing...")
+        logger.debug(f"[SandboxLock] Thread {thread_id} acquired lock {lock_key[:20]}, executing (timeout={effective_timeout}s)...")
         try:
             # Get the execute method from sandbox
             run_method = getattr(sandbox, "exec")
-            proc = run_method(*args, **kwargs)
-            proc.wait()
+            # Pass timeout to Modal's exec if supported
+            proc = run_method(*args, timeout=effective_timeout, **kwargs)
+            # wait() with timeout - Modal may not support this, but we try
+            try:
+                proc.wait(timeout=effective_timeout)
+            except TypeError:
+                # If wait() doesn't support timeout, just call it
+                proc.wait()
             logger.debug(f"[SandboxLock] Thread {thread_id} completed, releasing lock {lock_key[:20]}")
             return proc
+        except TimeoutError as e:
+            logger.error(f"[SandboxLock] Thread {thread_id} TIMEOUT after {effective_timeout}s: {cmd_preview}")
+            raise TimeoutError(f"Command timed out after {effective_timeout}s: {cmd_preview}") from e
         except Exception as e:
             logger.error(f"[SandboxLock] Thread {thread_id} error in sandbox exec: {e}")
             raise
