@@ -104,6 +104,14 @@ async function captureFilesInBackground(
     error?: string;
   }> = [];
 
+  // Get starting sequence number for events
+  const lastEvent = await prisma.sessionEventLog.findFirst({
+    where: { sessionId },
+    orderBy: { sequenceNumber: 'desc' },
+    select: { sequenceNumber: true },
+  });
+  let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
   for (const filePath of filesModified) {
     try {
       // Read file content from Modal sandbox
@@ -128,19 +136,25 @@ async function captureFilesInBackground(
           `${content.length} -> ${uploadResult.compressedSize} bytes)`
       );
 
-      // Record CodeSnapshot in database
+      // Record code snapshot event in event store
       try {
-        await prisma.codeSnapshot.create({
+        await prisma.sessionEventLog.create({
           data: {
             sessionId,
-            fileId: filePath,
-            fileName: filePath.split("/").pop() || filePath,
-            language: detectLanguage(filePath),
-            contentHash: uploadResult.checksum,
-            // Don't store fullContent - use contentHash to fetch from GCS
-            fullContent: null,
-            linesAdded: 0,
-            linesDeleted: 0,
+            sequenceNumber: nextSeq++,
+            timestamp: new Date(),
+            eventType: "code.snapshot",
+            category: "code",
+            filePath,
+            data: {
+              fileName: filePath.split("/").pop() || filePath,
+              language: detectLanguage(filePath),
+              contentHash: uploadResult.checksum,
+              // Don't store fullContent - use contentHash to fetch from GCS
+              linesAdded: 0,
+              linesDeleted: 0,
+            },
+            checkpoint: false,
           },
         });
       } catch (dbError) {

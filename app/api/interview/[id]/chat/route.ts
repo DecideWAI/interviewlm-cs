@@ -183,41 +183,58 @@ export const GET = withErrorHandling(async (
 
           const latency = Date.now() - startTime;
 
-          // Record interaction to database
-          const interaction = await prisma.claudeInteraction.create({
+          // Calculate prompt quality (simple heuristic)
+          const promptQuality = calculatePromptQuality(message, codeContext);
+
+          // Get next sequence numbers for events
+          const lastEvent = await prisma.sessionEventLog.findFirst({
+            where: { sessionId: sessionRecording.id },
+            orderBy: { sequenceNumber: 'desc' },
+            select: { sequenceNumber: true },
+          });
+          let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+          // Record user message to event store
+          await prisma.sessionEventLog.create({
             data: {
               sessionId: sessionRecording.id,
-              role: "user",
-              content: message,
-              model: "claude-sonnet-4-5-20250929",
-              inputTokens,
-              outputTokens,
-              latency,
+              sequenceNumber: nextSeq++,
+              timestamp: new Date(),
+              eventType: "chat.user_message",
+              category: "chat",
+              data: {
+                role: "user",
+                content: message,
+                model: "claude-sonnet-4-5-20250929",
+                inputTokens,
+                outputTokens,
+                latency,
+                promptQuality,
+              },
+              checkpoint: false,
             },
           });
 
           // Store assistant response with tool use metadata
-          await prisma.claudeInteraction.create({
+          await prisma.sessionEventLog.create({
             data: {
               sessionId: sessionRecording.id,
-              role: "assistant",
-              content: fullResponse,
-              model: "claude-sonnet-4-5-20250929",
-              metadata: toolBlocks.length > 0 ? {
-                toolBlocks,
-                toolsUsed,
-                filesModified,
-              } : undefined,
+              sequenceNumber: nextSeq++,
+              timestamp: new Date(),
+              eventType: "chat.assistant_message",
+              category: "chat",
+              data: {
+                role: "assistant",
+                content: fullResponse,
+                model: "claude-sonnet-4-5-20250929",
+                metadata: toolBlocks.length > 0 ? {
+                  toolBlocks,
+                  toolsUsed,
+                  filesModified,
+                } : undefined,
+              },
+              checkpoint: false,
             },
-          });
-
-          // Calculate prompt quality (simple heuristic)
-          const promptQuality = calculatePromptQuality(message, codeContext);
-
-          // Update prompt quality in the user's interaction record
-          await prisma.claudeInteraction.update({
-            where: { id: interaction.id },
-            data: { promptQuality },
           });
 
           // Publish AI interaction event to BullMQ for Interview Agent

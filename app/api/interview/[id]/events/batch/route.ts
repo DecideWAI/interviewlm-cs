@@ -78,17 +78,30 @@ export async function POST(
       });
     }
 
-    // Batch insert all events
-    const eventRecords = events.map((event) => ({
-      sessionId: sessionRecording.id,
-      type: event.type,
-      timestamp: event.timestamp ? new Date(event.timestamp) : new Date(),
-      data: event.data || {},
-      fileId: event.fileId,
-      checkpoint: event.checkpoint || false,
-    }));
+    // Get next sequence number for batch insert
+    const lastEvent = await prisma.sessionEventLog.findFirst({
+      where: { sessionId: sessionRecording.id },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
 
-    await prisma.sessionEvent.createMany({
+    // Batch insert all events
+    const eventRecords = events.map((event) => {
+      const seq = nextSeq++;
+      return {
+        sessionId: sessionRecording.id,
+        sequenceNumber: seq,
+        eventType: event.type,
+        category: event.type.split('.')[0] || 'session',
+        timestamp: event.timestamp ? new Date(event.timestamp) : new Date(),
+        data: event.data || {},
+        filePath: event.fileId,
+        checkpoint: event.checkpoint || false,
+      };
+    });
+
+    await prisma.sessionEventLog.createMany({
       data: eventRecords,
     });
 

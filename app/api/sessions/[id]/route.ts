@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { auth } from "@/auth";
+import { eventStore, type SessionEvent, type EventCategory } from "@/lib/services/event-store";
 
 /**
  * GET /api/sessions/[id]
@@ -8,10 +9,8 @@ import { auth } from "@/auth";
  *
  * Returns:
  * - Session metadata (candidate, assessment, timing)
- * - All events chronologically sorted
- * - Code snapshots with file content
- * - Claude interactions (AI chat history)
- * - Test results
+ * - All events from unified event store (chronologically sorted)
+ * - Session metrics calculated from events
  */
 export async function GET(
   request: NextRequest,
@@ -29,7 +28,7 @@ export async function GET(
 
     const { id } = await params;
 
-    // Fetch session recording with all related data
+    // Fetch session recording with related data (excluding deprecated event tables)
     // id can be either sessionRecordingId or candidateId (try both)
     let sessionRecording = await prisma.sessionRecording.findUnique({
       where: { id },
@@ -87,31 +86,7 @@ export async function GET(
             },
           },
         },
-        events: {
-          orderBy: {
-            timestamp: "asc",
-          },
-        },
-        claudeInteractions: {
-          orderBy: {
-            timestamp: "asc",
-          },
-        },
-        codeSnapshots: {
-          orderBy: {
-            timestamp: "asc",
-          },
-        },
-        testResults: {
-          orderBy: {
-            timestamp: "asc",
-          },
-        },
-        terminalCommands: {
-          orderBy: {
-            timestamp: "asc",
-          },
-        },
+        // NOTE: Old event tables removed - now using unified event store
       },
     });
 
@@ -173,31 +148,7 @@ export async function GET(
               },
             },
           },
-          events: {
-            orderBy: {
-              timestamp: "asc",
-            },
-          },
-          claudeInteractions: {
-            orderBy: {
-              timestamp: "asc",
-            },
-          },
-          codeSnapshots: {
-            orderBy: {
-              timestamp: "asc",
-            },
-          },
-          testResults: {
-            orderBy: {
-              timestamp: "asc",
-            },
-          },
-          terminalCommands: {
-            orderBy: {
-              timestamp: "asc",
-            },
-          },
+          // NOTE: Old event tables removed - now using unified event store
         },
       });
     }
@@ -236,17 +187,14 @@ export async function GET(
       );
     }
 
-    // Build comprehensive timeline by merging all event types
-    const timeline = buildTimeline({
-      events: sessionRecording.events,
-      claudeInteractions: sessionRecording.claudeInteractions,
-      codeSnapshots: sessionRecording.codeSnapshots,
-      testResults: sessionRecording.testResults,
-      terminalCommands: sessionRecording.terminalCommands,
-    });
+    // Fetch events from unified event store
+    const events = await eventStore.getEvents(sessionRecording.id);
 
-    // Calculate session metrics
-    const metrics = calculateSessionMetrics(sessionRecording);
+    // Build timeline from unified events
+    const timeline = buildTimeline(events);
+
+    // Calculate session metrics from events
+    const metrics = calculateSessionMetrics(events, sessionRecording);
 
     // Return comprehensive session data
     return NextResponse.json({
@@ -286,155 +234,137 @@ export async function GET(
 }
 
 /**
- * Build unified timeline from all event sources
- * Merges events, Claude interactions, code snapshots, test results, and terminal commands
+ * Build unified timeline from event store events
+ * Maps event types to legacy format for backwards compatibility with replay viewer
  */
-function buildTimeline(data: {
-  events: any[];
-  claudeInteractions: any[];
-  codeSnapshots: any[];
-  testResults: any[];
-  terminalCommands: any[];
-}) {
-  const timeline: any[] = [];
+function buildTimeline(events: SessionEvent[]) {
+  return events.map((event) => {
+    // Map new event types to legacy format for backwards compatibility
+    const legacyType = mapEventTypeToLegacy(event.eventType);
 
-  // Add session events
-  data.events.forEach((event) => {
-    timeline.push({
+    return {
       id: event.id,
       timestamp: event.timestamp,
-      type: event.type,
-      category: "event",
+      type: legacyType,
+      category: event.category,
       data: event.data,
       checkpoint: event.checkpoint,
-    });
+      questionIndex: event.questionIndex,
+      sequenceNumber: event.sequenceNumber.toString(),
+    };
   });
-
-  // Add Claude interactions (AI chat)
-  data.claudeInteractions.forEach((interaction) => {
-    timeline.push({
-      id: interaction.id,
-      timestamp: interaction.timestamp,
-      type: "ai_message",
-      category: "chat",
-      data: {
-        role: interaction.role,
-        content: interaction.content,
-        model: interaction.model,
-        inputTokens: interaction.inputTokens,
-        outputTokens: interaction.outputTokens,
-        latency: interaction.latency,
-        promptQuality: interaction.promptQuality,
-      },
-    });
-  });
-
-  // Add code snapshots
-  data.codeSnapshots.forEach((snapshot) => {
-    timeline.push({
-      id: snapshot.id,
-      timestamp: snapshot.timestamp,
-      type: "code_snapshot",
-      category: "code",
-      data: {
-        fileId: snapshot.fileId,
-        fileName: snapshot.fileName,
-        language: snapshot.language,
-        contentHash: snapshot.contentHash,
-        fullContent: snapshot.fullContent,
-        diffFromPrevious: snapshot.diffFromPrevious,
-        linesAdded: snapshot.linesAdded,
-        linesDeleted: snapshot.linesDeleted,
-      },
-    });
-  });
-
-  // Add test results
-  data.testResults.forEach((result) => {
-    timeline.push({
-      id: result.id,
-      timestamp: result.timestamp,
-      type: "test_result",
-      category: "test",
-      data: {
-        testName: result.testName,
-        passed: result.passed,
-        output: result.output,
-        error: result.error,
-        duration: result.duration,
-      },
-    });
-  });
-
-  // Add terminal commands
-  data.terminalCommands.forEach((command) => {
-    timeline.push({
-      id: command.id,
-      timestamp: command.timestamp,
-      type: "terminal_output",
-      category: "terminal",
-      data: {
-        command: command.command,
-        output: command.output,
-        exitCode: command.exitCode,
-        duration: command.duration,
-      },
-    });
-  });
-
-  // Sort by timestamp
-  timeline.sort((a, b) =>
-    new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-  );
-
-  return timeline;
 }
 
 /**
- * Calculate session metrics from recording data
+ * Map new event types (dot notation) to legacy format for backwards compatibility
  */
-function calculateSessionMetrics(sessionRecording: any) {
+function mapEventTypeToLegacy(eventType: string): string {
+  const typeMap: Record<string, string> = {
+    // Session events
+    "session.start": "session_start",
+    "session.end": "session_end",
+    "session.pause": "session_pause",
+    "session.resume": "session_resume",
+
+    // Question events
+    "question.start": "conversation_reset", // Legacy name used for question boundaries
+    "question.submit": "question_submit",
+    "question.evaluated": "evaluation_complete",
+    "question.skip": "question_skip",
+
+    // File events
+    "file.create": "file_create",
+    "file.update": "file_update",
+    "file.rename": "file_rename",
+    "file.delete": "file_delete",
+
+    // Code events
+    "code.snapshot": "code_snapshot",
+    "code.edit": "code_edit",
+
+    // Chat events
+    "chat.user_message": "ai_message",
+    "chat.assistant_message": "ai_message",
+    "chat.assistant_chunk": "ai_message",
+    "chat.tool_start": "tool_start",
+    "chat.tool_result": "tool_result",
+    "chat.reset": "conversation_reset",
+
+    // Terminal events
+    "terminal.command": "terminal_input",
+    "terminal.output": "terminal_output",
+    "terminal.clear": "terminal_clear",
+
+    // Test events
+    "test.run_start": "test_start",
+    "test.result": "test_result",
+    "test.run_complete": "test_result",
+
+    // Evaluation events
+    "evaluation.start": "evaluation_start",
+    "evaluation.complete": "evaluation_complete",
+    "evaluation.final": "evaluation_final",
+  };
+
+  return typeMap[eventType] || eventType;
+}
+
+/**
+ * Calculate session metrics from event store events
+ */
+function calculateSessionMetrics(events: SessionEvent[], sessionRecording: any) {
+  // Filter events by category
+  const chatEvents = events.filter((e) => e.category === "chat");
+  const codeEvents = events.filter((e) => e.category === "code");
+  const testEvents = events.filter((e) => e.category === "test");
+
+  // Code snapshots
+  const codeSnapshots = codeEvents.filter((e) => e.eventType === "code.snapshot");
+
+  // Test results
+  const testResults = testEvents.filter(
+    (e) => e.eventType === "test.result" || e.eventType === "test.run_complete"
+  );
+
   const metrics = {
-    totalEvents: sessionRecording.eventCount,
-    claudeInteractions: sessionRecording.claudeInteractions.length,
-    codeSnapshots: sessionRecording.codeSnapshots.length,
-    testRuns: sessionRecording.testResults.length,
+    totalEvents: events.length,
+    claudeInteractions: chatEvents.length,
+    codeSnapshots: codeSnapshots.length,
+    testRuns: testResults.length,
     totalTokens: 0,
     avgPromptQuality: 0,
     testPassRate: 0,
     codeActivityRate: 0,
   };
 
-  // Calculate token usage
-  metrics.totalTokens = sessionRecording.claudeInteractions.reduce(
-    (sum: number, interaction: any) =>
-      sum + (interaction.inputTokens || 0) + (interaction.outputTokens || 0),
+  // Calculate token usage from chat events
+  metrics.totalTokens = chatEvents.reduce(
+    (sum, event) => {
+      const data = event.data as any;
+      return sum + (data?.inputTokens || 0) + (data?.outputTokens || 0);
+    },
     0
   );
 
   // Calculate average prompt quality
-  const qualityScores = sessionRecording.claudeInteractions
-    .filter((i: any) => i.promptQuality !== null)
-    .map((i: any) => i.promptQuality);
+  const qualityScores = chatEvents
+    .filter((e) => (e.data as any)?.promptQuality !== null && (e.data as any)?.promptQuality !== undefined)
+    .map((e) => (e.data as any).promptQuality as number);
 
   if (qualityScores.length > 0) {
     metrics.avgPromptQuality =
-      qualityScores.reduce((sum: number, score: number) => sum + score, 0) /
-      qualityScores.length;
+      qualityScores.reduce((sum, score) => sum + score, 0) / qualityScores.length;
   }
 
   // Calculate test pass rate
-  if (sessionRecording.testResults.length > 0) {
-    const passedTests = sessionRecording.testResults.filter(
-      (t: any) => t.passed
-    ).length;
-    metrics.testPassRate = passedTests / sessionRecording.testResults.length;
+  if (testResults.length > 0) {
+    const passedTests = testResults.filter((t) => (t.data as any)?.passed).length;
+    metrics.testPassRate = passedTests / testResults.length;
   }
 
   // Calculate code activity rate (snapshots per minute)
   if (sessionRecording.duration && sessionRecording.duration > 0) {
-    metrics.codeActivityRate =
-      (sessionRecording.codeSnapshots.length / sessionRecording.duration) * 60;
+    metrics.codeActivityRate = (codeSnapshots.length / sessionRecording.duration) * 60;
   }
 
   return metrics;

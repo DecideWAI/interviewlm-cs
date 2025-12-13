@@ -175,16 +175,29 @@ export async function POST(
       })
     );
 
+    // Get next sequence number for batch insert
+    const lastEvent = await prisma.sessionEventLog.findFirst({
+      where: { sessionId: sessionRecording.id },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
     // Batch insert events
-    const createdEvents = await prisma.sessionEvent.createMany({
-      data: processedEvents.map((event) => ({
-        sessionId: sessionRecording.id,
-        type: event.type,
-        data: event.data,
-        timestamp: event.timestamp ? new Date(event.timestamp) : new Date(),
-        fileId: event.fileId,
-        checkpoint: event.checkpoint || false,
-      })),
+    const createdEvents = await prisma.sessionEventLog.createMany({
+      data: processedEvents.map((event) => {
+        const seq = nextSeq++;
+        return {
+          sessionId: sessionRecording.id,
+          sequenceNumber: seq,
+          eventType: event.type,
+          category: event.type.split('.')[0] || 'session',
+          data: event.data,
+          timestamp: event.timestamp ? new Date(event.timestamp) : new Date(),
+          filePath: event.fileId,
+          checkpoint: event.checkpoint || false,
+        };
+      }),
     });
 
     // Update event count in session recording
@@ -299,7 +312,7 @@ export async function GET(
     }
 
     if (eventType) {
-      where.type = eventType;
+      where.eventType = eventType;
     }
 
     if (checkpointsOnly) {
@@ -307,15 +320,15 @@ export async function GET(
     }
 
     // Fetch events
-    const events = await prisma.sessionEvent.findMany({
+    const events = await prisma.sessionEventLog.findMany({
       where,
-      orderBy: { timestamp: "asc" },
+      orderBy: { sequenceNumber: "asc" },
       skip: offset,
       take: limit,
     });
 
     // Get total count
-    const total = await prisma.sessionEvent.count({ where });
+    const total = await prisma.sessionEventLog.count({ where });
 
     return NextResponse.json(
       {

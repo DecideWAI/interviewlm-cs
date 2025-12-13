@@ -3,34 +3,28 @@
  *
  * Manages interview session recordings, including real-time event capture,
  * Claude interactions, code snapshots, and test results.
- * Integrates with Prisma for database persistence and S3 for long-term storage.
+ *
+ * Uses the unified event store with event origins (USER, AI, SYSTEM).
  */
 
 import prisma from "@/lib/prisma";
 import { z } from "zod";
 import * as diff from "diff";
 import * as crypto from "crypto";
+import { uploadSessionRecording } from "./s3";
 import {
-  uploadSessionRecording,
-  uploadCodeSnapshots,
-} from "./s3";
+  eventStore,
+  getCategoryFromEventType,
+  isCheckpointEvent,
+  type EventType,
+  type EventOrigin,
+} from "./event-store";
 import type {
   SessionRecording,
-  SessionEvent,
-  ClaudeInteraction,
-  CodeSnapshot,
-  TestResult,
   SessionStatus,
 } from "@/lib/prisma-types";
 
 // Validation schemas
-const sessionEventDataSchema = z.object({
-  type: z.string(),
-  fileId: z.string().optional(),
-  data: z.any(),
-  checkpoint: z.boolean().optional(),
-});
-
 const claudeMessageSchema = z.object({
   role: z.enum(["user", "assistant", "system"]),
   content: z.string(),
@@ -56,15 +50,12 @@ const testResultSchema = z.object({
   duration: z.number().optional(),
 });
 
-type SessionEventData = z.infer<typeof sessionEventDataSchema>;
 type ClaudeMessage = z.infer<typeof claudeMessageSchema>;
 type CodeSnapshotData = z.infer<typeof codeSnapshotSchema>;
 type TestResultData = z.infer<typeof testResultSchema>;
 
-// In-memory buffer for batching events (optimization)
-const eventBuffers = new Map<string, SessionEventData[]>();
-const BUFFER_FLUSH_INTERVAL = 10000; // Flush every 10 seconds
-const BUFFER_MAX_SIZE = 100; // Flush after 100 events
+// Note: Event batching is now handled by the unified event store.
+// The old eventBuffers map has been removed in favor of eventStore.emitBatched()
 
 /**
  * Create a new session recording
@@ -98,11 +89,17 @@ export async function createSession(candidateId: string): Promise<SessionRecordi
       },
     });
 
-    // Initialize event buffer
-    eventBuffers.set(session.id, []);
-
-    // Start periodic flush
-    startPeriodicFlush(session.id);
+    // Emit session.start event to unified event store
+    await eventStore.emit({
+      sessionId: session.id,
+      eventType: "session.start",
+      category: "session",
+      origin: "SYSTEM",
+      data: {
+        candidateId,
+        assessmentId: "", // Will be set when assessment is known
+      },
+    });
 
     console.log(`Session ${session.id} created for candidate ${candidateId}`);
 
@@ -117,52 +114,62 @@ export async function createSession(candidateId: string): Promise<SessionRecordi
 }
 
 /**
- * Record a session event
+ * Record a session event to the unified event store
  *
  * @param sessionId - Session identifier
- * @param event - Event data
- * @returns Created session event
+ * @param eventType - Event type (e.g., "code.edit", "chat.user_message")
+ * @param origin - Who triggered the event: USER, AI, or SYSTEM
+ * @param data - Event payload data
+ * @param options - Additional options (questionIndex, filePath, checkpoint, useBatch)
+ * @returns Created session event log ID
  *
  * @example
  * ```typescript
- * await recordEvent(sessionId, {
- *   type: "keystroke",
- *   fileId: "file_1",
- *   data: { key: "a", timestamp: Date.now() }
- * });
+ * await recordEvent(
+ *   sessionId,
+ *   "code.edit",
+ *   "USER",
+ *   { key: "a", timestamp: Date.now() },
+ *   { filePath: "main.ts" }
+ * );
  * ```
  */
 export async function recordEvent(
   sessionId: string,
-  event: SessionEventData
-): Promise<SessionEvent> {
+  eventType: EventType,
+  origin: EventOrigin,
+  data: Record<string, unknown>,
+  options?: {
+    questionIndex?: number;
+    filePath?: string;
+    checkpoint?: boolean;
+    useBatch?: boolean;
+  }
+): Promise<string> {
   try {
-    // Validate event data
-    sessionEventDataSchema.parse(event);
+    const category = getCategoryFromEventType(eventType);
 
-    // Add to buffer for batch insert
-    const buffer = eventBuffers.get(sessionId) || [];
-    buffer.push(event);
-    eventBuffers.set(sessionId, buffer);
+    const emitOptions = {
+      sessionId,
+      eventType,
+      category,
+      origin,
+      data,
+      questionIndex: options?.questionIndex,
+      filePath: options?.filePath,
+      checkpoint: options?.checkpoint ?? isCheckpointEvent(eventType),
+    };
 
-    // Flush if buffer is full
-    if (buffer.length >= BUFFER_MAX_SIZE) {
-      await flushEventBuffer(sessionId);
+    // Emit to unified event store (use batched for high-frequency events)
+    let eventId: string;
+    if (options?.useBatch) {
+      eventStore.emitBatched(emitOptions);
+      eventId = "batched"; // Batched events don't return IDs immediately
+    } else {
+      eventId = await eventStore.emit(emitOptions);
     }
 
-    // Create event in database
-    const sessionEvent = await prisma.sessionEvent.create({
-      data: {
-        sessionId,
-        type: event.type,
-        fileId: event.fileId,
-        data: event.data,
-        checkpoint: event.checkpoint || false,
-        timestamp: new Date(),
-      },
-    });
-
-    // Update event count
+    // Update event count on session
     await prisma.sessionRecording.update({
       where: { id: sessionId },
       data: {
@@ -170,7 +177,7 @@ export async function recordEvent(
       },
     });
 
-    return sessionEvent;
+    return eventId;
 
   } catch (error) {
     console.error("Error recording event:", error);
@@ -181,12 +188,12 @@ export async function recordEvent(
 }
 
 /**
- * Record a Claude AI interaction
+ * Record a Claude AI interaction to the unified event store
  *
  * @param sessionId - Session identifier
  * @param message - Claude message data
- * @param metadata - Additional metadata
- * @returns Created Claude interaction record
+ * @param metadata - Additional metadata (questionIndex, promptQuality)
+ * @returns Event log ID
  *
  * @example
  * ```typescript
@@ -203,15 +210,25 @@ export async function recordEvent(
 export async function recordClaudeInteraction(
   sessionId: string,
   message: ClaudeMessage,
-  metadata?: { promptQuality?: number }
-): Promise<ClaudeInteraction> {
+  metadata?: { promptQuality?: number; questionIndex?: number }
+): Promise<string> {
   try {
     // Validate message
     claudeMessageSchema.parse(message);
 
-    const interaction = await prisma.claudeInteraction.create({
+    // Determine event type and origin based on role
+    const eventType: EventType = message.role === "user"
+      ? "chat.user_message"
+      : "chat.assistant_message";
+    const origin: EventOrigin = message.role === "user" ? "USER" : "AI";
+
+    // Emit to unified event store
+    const eventId = await eventStore.emit({
+      sessionId,
+      eventType,
+      category: "chat",
+      origin,
       data: {
-        sessionId,
         role: message.role,
         content: message.content,
         model: message.model,
@@ -220,21 +237,11 @@ export async function recordClaudeInteraction(
         latency: message.latency,
         stopReason: message.stopReason,
         promptQuality: metadata?.promptQuality,
-        timestamp: new Date(),
       },
+      questionIndex: metadata?.questionIndex,
     });
 
-    // Also record as session event for replay
-    await recordEvent(sessionId, {
-      type: "claude_interaction",
-      data: {
-        role: message.role,
-        content: message.content,
-        model: message.model,
-      },
-    });
-
-    return interaction;
+    return eventId;
 
   } catch (error) {
     console.error("Error recording Claude interaction:", error);
@@ -245,29 +252,32 @@ export async function recordClaudeInteraction(
 }
 
 /**
- * Record a code snapshot with diff from previous version
+ * Record a code snapshot to the unified event store
  *
  * @param sessionId - Session identifier
- * @param fileId - File identifier
- * @param content - Current file content
- * @param previousContent - Previous file content for diff
- * @returns Created code snapshot
+ * @param snapshot - Code snapshot data
+ * @param origin - Who triggered the snapshot: USER (candidate edit), AI (agent code), SYSTEM (auto-save)
+ * @param previousContent - Previous file content for diff calculation
+ * @param options - Additional options (questionIndex)
+ * @returns Event log ID
  *
  * @example
  * ```typescript
  * await recordCodeSnapshot(
  *   sessionId,
- *   "file_1",
- *   "function add(a, b) { return a + b; }",
- *   "function add(a, b) { return a+b; }"
+ *   { fileId: "file_1", fileName: "main.ts", language: "typescript", content: "..." },
+ *   "USER",
+ *   previousContent
  * );
  * ```
  */
 export async function recordCodeSnapshot(
   sessionId: string,
   snapshot: CodeSnapshotData,
-  previousContent?: string
-): Promise<CodeSnapshot> {
+  origin: EventOrigin,
+  previousContent?: string,
+  options?: { questionIndex?: number }
+): Promise<string> {
   try {
     // Validate snapshot
     codeSnapshotSchema.parse(snapshot);
@@ -278,7 +288,7 @@ export async function recordCodeSnapshot(
       .update(snapshot.content)
       .digest("hex");
 
-    // Calculate line change metrics (but don't store full diff - content is in Modal volume)
+    // Calculate line change metrics
     let linesAdded = 0;
     let linesDeleted = 0;
 
@@ -295,34 +305,27 @@ export async function recordCodeSnapshot(
       });
     }
 
-    const codeSnapshot = await prisma.codeSnapshot.create({
+    // Emit to unified event store as a checkpoint event
+    const eventId = await eventStore.emit({
+      sessionId,
+      eventType: "code.snapshot",
+      category: "code",
+      origin,
       data: {
-        sessionId,
         fileId: snapshot.fileId,
         fileName: snapshot.fileName,
         language: snapshot.language,
         contentHash,
-        // Note: fullContent and diffFromPrevious not stored - content available in Modal volume
         linesAdded,
         linesDeleted,
-        timestamp: new Date(),
+        // Note: fullContent not stored in event - content available in Modal volume/GCS
       },
-    });
-
-    // Record as checkpoint event for fast seeking
-    await recordEvent(sessionId, {
-      type: "code_snapshot",
-      fileId: snapshot.fileId,
-      data: {
-        fileName: snapshot.fileName,
-        contentHash,
-        linesAdded,
-        linesDeleted,
-      },
+      questionIndex: options?.questionIndex,
+      filePath: snapshot.fileName,
       checkpoint: true,
     });
 
-    return codeSnapshot;
+    return eventId;
 
   } catch (error) {
     console.error("Error recording code snapshot:", error);
@@ -333,11 +336,12 @@ export async function recordCodeSnapshot(
 }
 
 /**
- * Record test execution result
+ * Record test execution result to the unified event store
  *
  * @param sessionId - Session identifier
  * @param testResult - Test result data
- * @returns Created test result record
+ * @param options - Additional options (questionIndex)
+ * @returns Event log ID
  *
  * @example
  * ```typescript
@@ -350,36 +354,32 @@ export async function recordCodeSnapshot(
  */
 export async function recordTestResult(
   sessionId: string,
-  testResult: TestResultData
-): Promise<TestResult> {
+  testResult: TestResultData,
+  options?: { questionIndex?: number }
+): Promise<string> {
   try {
     // Validate test result
     testResultSchema.parse(testResult);
 
-    const result = await prisma.testResult.create({
+    // Emit to unified event store as a checkpoint event
+    // Origin is SYSTEM because test results come from the test runner
+    const eventId = await eventStore.emit({
+      sessionId,
+      eventType: "test.result",
+      category: "test",
+      origin: "SYSTEM",
       data: {
-        sessionId,
         testName: testResult.testName,
         passed: testResult.passed,
         output: testResult.output,
         error: testResult.error,
         duration: testResult.duration,
-        timestamp: new Date(),
       },
-    });
-
-    // Record as checkpoint event
-    await recordEvent(sessionId, {
-      type: "test_result",
-      data: {
-        testName: testResult.testName,
-        passed: testResult.passed,
-        duration: testResult.duration,
-      },
+      questionIndex: options?.questionIndex,
       checkpoint: true,
     });
 
-    return result;
+    return eventId;
 
   } catch (error) {
     console.error("Error recording test result:", error);
@@ -391,7 +391,7 @@ export async function recordTestResult(
 
 /**
  * Close and finalize a session
- * Flushes all buffered events and uploads to S3
+ * Flushes all buffered events from the event store and uploads to S3
  *
  * @param sessionId - Session identifier
  * @param status - Final session status
@@ -407,20 +407,25 @@ export async function closeSession(
   status: SessionStatus = "COMPLETED"
 ): Promise<SessionRecording> {
   try {
-    // Flush any remaining buffered events
-    await flushEventBuffer(sessionId);
+    // Emit session completion event before flushing
+    const endTime = new Date();
+    await eventStore.emit({
+      sessionId,
+      eventType: "session.end",
+      category: "session",
+      origin: "SYSTEM",
+      data: {
+        reason: status === "COMPLETED" ? "completed" : "abandoned",
+        finalStatus: status,
+      },
+    });
+
+    // Flush any remaining buffered events from the event store
+    await eventStore.flushBatch();
 
     // Get session data
     const session = await prisma.sessionRecording.findUnique({
       where: { id: sessionId },
-      include: {
-        events: {
-          orderBy: { timestamp: "asc" },
-        },
-        codeSnapshots: {
-          orderBy: { timestamp: "asc" },
-        },
-      },
     });
 
     if (!session) {
@@ -428,39 +433,39 @@ export async function closeSession(
     }
 
     // Calculate duration
-    const endTime = new Date();
     const duration = Math.floor(
       (endTime.getTime() - session.startTime.getTime()) / 1000
     );
+
+    // Get all events from the unified event store for S3 upload
+    const events = await eventStore.getEvents(sessionId);
 
     // Upload events to S3
     let storagePath: string | undefined;
     let storageSize: number | undefined;
 
-    if (session.events.length > 0) {
+    if (events.length > 0) {
       const uploadResult = await uploadSessionRecording(
         sessionId,
-        session.events.map((e: any) => ({
+        events.map((e) => ({
           timestamp: e.timestamp.toISOString(),
-          type: e.type,
-          fileId: e.fileId || undefined,
+          type: e.eventType,
+          sequenceNumber: e.sequenceNumber.toString(),
+          category: e.category,
           data: e.data,
           checkpoint: e.checkpoint,
+          questionIndex: e.questionIndex,
+          filePath: e.filePath,
         })),
         {
           candidateId: session.candidateId,
-          eventCount: String(session.events.length),
+          eventCount: String(events.length),
           duration: String(duration),
         }
       );
 
       storagePath = uploadResult.key;
       storageSize = uploadResult.compressedSize;
-    }
-
-    // Upload code snapshots separately
-    if (session.codeSnapshots.length > 0) {
-      await uploadCodeSnapshots(sessionId, session.codeSnapshots);
     }
 
     // Update session with final state
@@ -472,11 +477,9 @@ export async function closeSession(
         duration,
         storagePath,
         storageSize,
+        eventCount: events.length,
       },
     });
-
-    // Clean up event buffer
-    eventBuffers.delete(sessionId);
 
     console.log(`Session ${sessionId} closed with status ${status}`);
 
@@ -491,43 +494,32 @@ export async function closeSession(
 }
 
 /**
- * Get session recording with all related data
+ * Get session recording with all events from the unified event store
  *
  * @param sessionId - Session identifier
- * @returns Complete session recording
+ * @returns Complete session recording with events
  */
 export async function getSessionRecording(
   sessionId: string
 ): Promise<SessionRecording & {
-  events: SessionEvent[];
-  claudeInteractions: ClaudeInteraction[];
-  codeSnapshots: CodeSnapshot[];
-  testResults: TestResult[];
+  eventLogs: Awaited<ReturnType<typeof eventStore.getEvents>>;
 }> {
   try {
     const session = await prisma.sessionRecording.findUnique({
       where: { id: sessionId },
-      include: {
-        events: {
-          orderBy: { timestamp: "asc" },
-        },
-        claudeInteractions: {
-          orderBy: { timestamp: "asc" },
-        },
-        codeSnapshots: {
-          orderBy: { timestamp: "asc" },
-        },
-        testResults: {
-          orderBy: { timestamp: "asc" },
-        },
-      },
     });
 
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    return session;
+    // Get all events from the unified event store
+    const eventLogs = await eventStore.getEvents(sessionId);
+
+    return {
+      ...session,
+      eventLogs,
+    };
 
   } catch (error) {
     console.error("Error fetching session recording:", error);
@@ -538,7 +530,36 @@ export async function getSessionRecording(
 }
 
 /**
+ * Get events filtered by category from the unified event store
+ *
+ * @param sessionId - Session identifier
+ * @param category - Event category to filter by
+ * @returns Events in the specified category
+ */
+export async function getSessionEventsByCategory(
+  sessionId: string,
+  category: "session" | "question" | "file" | "code" | "chat" | "terminal" | "test" | "evaluation"
+) {
+  return eventStore.getEvents(sessionId, { categories: [category] });
+}
+
+/**
+ * Get events for a specific question
+ *
+ * @param sessionId - Session identifier
+ * @param questionIndex - Question index (0-based)
+ * @returns Events for the specified question
+ */
+export async function getQuestionEvents(
+  sessionId: string,
+  questionIndex: number
+) {
+  return eventStore.getEvents(sessionId, { questionIndex });
+}
+
+/**
  * Get comprehensive session statistics for analytics and evaluation
+ * Now reads from the unified event store
  *
  * @param sessionId - Session identifier
  * @returns Detailed session statistics
@@ -605,41 +626,40 @@ export async function getSessionStats(sessionId: string): Promise<{
   try {
     const session = await prisma.sessionRecording.findUnique({
       where: { id: sessionId },
-      include: {
-        events: {
-          orderBy: { timestamp: "asc" },
-        },
-        claudeInteractions: {
-          orderBy: { timestamp: "asc" },
-        },
-        codeSnapshots: {
-          orderBy: { timestamp: "asc" },
-        },
-        testResults: {
-          orderBy: { timestamp: "asc" },
-        },
-      },
     });
 
     if (!session) {
       throw new Error(`Session ${sessionId} not found`);
     }
 
-    // File change metrics
-    const totalLinesAdded = session.codeSnapshots.reduce(
-      (sum: number, snap: any) => sum + (snap.linesAdded || 0),
+    // Get all events from the unified event store
+    const allEvents = await eventStore.getEvents(sessionId);
+
+    // Filter events by category for analysis
+    const codeEvents = allEvents.filter((e) => e.category === "code");
+    const chatEvents = allEvents.filter((e) => e.category === "chat");
+    const terminalEvents = allEvents.filter((e) => e.category === "terminal");
+    const testEvents = allEvents.filter((e) => e.category === "test");
+
+    // File change metrics from code.snapshot events
+    const codeSnapshots = codeEvents.filter((e) => e.eventType === "code.snapshot");
+    const totalLinesAdded = codeSnapshots.reduce(
+      (sum, snap) => sum + ((snap.data as any)?.linesAdded || 0),
       0
     );
-    const totalLinesDeleted = session.codeSnapshots.reduce(
-      (sum: number, snap: any) => sum + (snap.linesDeleted || 0),
+    const totalLinesDeleted = codeSnapshots.reduce(
+      (sum, snap) => sum + ((snap.data as any)?.linesDeleted || 0),
       0
     );
 
     // Count edits per file
     const fileEditCounts = new Map<string, number>();
-    session.codeSnapshots.forEach((snap: any) => {
-      const count = fileEditCounts.get(snap.fileName) || 0;
-      fileEditCounts.set(snap.fileName, count + 1);
+    codeSnapshots.forEach((snap) => {
+      const fileName = (snap.data as any)?.fileName || snap.filePath;
+      if (fileName) {
+        const count = fileEditCounts.get(fileName) || 0;
+        fileEditCounts.set(fileName, count + 1);
+      }
     });
 
     const mostEditedFiles = Array.from(fileEditCounts.entries())
@@ -647,51 +667,51 @@ export async function getSessionStats(sessionId: string): Promise<{
       .sort((a, b) => b.editCount - a.editCount)
       .slice(0, 5);
 
-    // Claude interaction metrics
-    const totalInputTokens = session.claudeInteractions.reduce(
-      (sum: number, interaction: any) => sum + (interaction.inputTokens || 0),
+    // Claude interaction metrics from chat events
+    const totalInputTokens = chatEvents.reduce(
+      (sum, event) => sum + ((event.data as any)?.inputTokens || 0),
       0
     );
-    const totalOutputTokens = session.claudeInteractions.reduce(
-      (sum: number, interaction: any) => sum + (interaction.outputTokens || 0),
+    const totalOutputTokens = chatEvents.reduce(
+      (sum, event) => sum + ((event.data as any)?.outputTokens || 0),
       0
     );
 
-    const interactionsWithLatency = session.claudeInteractions.filter(
-      (i: any) => i.latency !== null && i.latency !== undefined
+    const eventsWithLatency = chatEvents.filter(
+      (e) => (e.data as any)?.latency !== null && (e.data as any)?.latency !== undefined
     );
-    const averageLatency = interactionsWithLatency.length > 0
-      ? interactionsWithLatency.reduce((sum: number, i: any) => sum + i.latency, 0) / interactionsWithLatency.length
+    const averageLatency = eventsWithLatency.length > 0
+      ? eventsWithLatency.reduce((sum, e) => sum + ((e.data as any)?.latency || 0), 0) / eventsWithLatency.length
       : null;
 
-    const interactionsWithQuality = session.claudeInteractions.filter(
-      (i: any) => i.promptQuality !== null && i.promptQuality !== undefined
+    const eventsWithQuality = chatEvents.filter(
+      (e) => (e.data as any)?.promptQuality !== null && (e.data as any)?.promptQuality !== undefined
     );
-    const averagePromptQuality = interactionsWithQuality.length > 0
-      ? interactionsWithQuality.reduce((sum: number, i: any) => sum + (i.promptQuality || 0), 0) / interactionsWithQuality.length
+    const averagePromptQuality = eventsWithQuality.length > 0
+      ? eventsWithQuality.reduce((sum, e) => sum + ((e.data as any)?.promptQuality || 0), 0) / eventsWithQuality.length
       : null;
 
     const interactionsByRole = {
-      user: session.claudeInteractions.filter((i: any) => i.role === "user").length,
-      assistant: session.claudeInteractions.filter((i: any) => i.role === "assistant").length,
-      system: session.claudeInteractions.filter((i: any) => i.role === "system").length,
+      user: chatEvents.filter((e) => (e.data as any)?.role === "user").length,
+      assistant: chatEvents.filter((e) => (e.data as any)?.role === "assistant").length,
+      system: chatEvents.filter((e) => (e.data as any)?.role === "system").length,
     };
 
     // Terminal activity metrics
-    const terminalInputEvents = session.events.filter((e: any) => e.type === "terminal_input");
-    const commands = terminalInputEvents.map((e: any) => e.data?.command).filter(Boolean);
+    const terminalInputEvents = terminalEvents.filter((e) => e.eventType === "terminal.command");
+    const commands = terminalInputEvents.map((e) => (e.data as any)?.command).filter(Boolean) as string[];
     const uniqueCommands = new Set(commands).size;
 
     const commandCategories = {
-      test: commands.filter((cmd: string) =>
+      test: commands.filter((cmd) =>
         cmd.includes("test") || cmd.includes("jest") || cmd.includes("npm run test") || cmd.includes("pytest")
       ).length,
-      git: commands.filter((cmd: string) => cmd.startsWith("git")).length,
-      fileOps: commands.filter((cmd: string) =>
+      git: commands.filter((cmd) => cmd.startsWith("git")).length,
+      fileOps: commands.filter((cmd) =>
         cmd.startsWith("cat") || cmd.startsWith("ls") || cmd.startsWith("mkdir") ||
         cmd.startsWith("rm") || cmd.startsWith("cp") || cmd.startsWith("mv")
       ).length,
-      package: commands.filter((cmd: string) =>
+      package: commands.filter((cmd) =>
         cmd.includes("npm") || cmd.includes("pip") || cmd.includes("yarn") || cmd.includes("pnpm")
       ).length,
       other: 0,
@@ -701,41 +721,42 @@ export async function getSessionStats(sessionId: string): Promise<{
       commandCategories.fileOps + commandCategories.package
     );
 
-    // Test execution metrics
-    const passedTests = session.testResults.filter((t: any) => t.passed).length;
-    const failedTests = session.testResults.length - passedTests;
-    const passRate = session.testResults.length > 0
-      ? (passedTests / session.testResults.length) * 100
+    // Test execution metrics from test events
+    const testCompletedEvents = testEvents.filter((e) => e.eventType === "test.result" || e.eventType === "test.run_complete");
+    const passedTests = testCompletedEvents.filter((t) => (t.data as any)?.passed).length;
+    const failedTests = testCompletedEvents.length - passedTests;
+    const passRate = testCompletedEvents.length > 0
+      ? (passedTests / testCompletedEvents.length) * 100
       : 0;
 
-    const testsWithDuration = session.testResults.filter(
-      (t: any) => t.duration !== null && t.duration !== undefined
+    const testsWithDuration = testCompletedEvents.filter(
+      (t) => (t.data as any)?.duration !== null && (t.data as any)?.duration !== undefined
     );
     const averageTestDuration = testsWithDuration.length > 0
-      ? testsWithDuration.reduce((sum: number, t: any) => sum + (t.duration || 0), 0) / testsWithDuration.length
+      ? testsWithDuration.reduce((sum, t) => sum + ((t.data as any)?.duration || 0), 0) / testsWithDuration.length
       : null;
 
     // Find first test pass
-    const firstPassedTest = session.testResults.find((t: any) => t.passed);
+    const firstPassedTest = testCompletedEvents.find((t) => (t.data as any)?.passed);
     const firstPassTime = firstPassedTest && session.startTime
       ? Math.floor((new Date(firstPassedTest.timestamp).getTime() - session.startTime.getTime()) / 1000)
       : null;
 
     // Activity timeline
-    const firstEventTime = session.events.length > 0
-      ? session.events[0].timestamp
+    const firstEventTime = allEvents.length > 0
+      ? allEvents[0].timestamp
       : null;
-    const lastEventTime = session.events.length > 0
-      ? session.events[session.events.length - 1].timestamp
+    const lastEventTime = allEvents.length > 0
+      ? allEvents[allEvents.length - 1].timestamp
       : null;
 
     // Calculate active time (time between events with gaps > 5 minutes considered idle)
     let totalActiveTime: number | null = null;
-    if (session.events.length > 1) {
+    if (allEvents.length > 1) {
       let activeSeconds = 0;
-      for (let i = 1; i < session.events.length; i++) {
-        const gap = (new Date(session.events[i].timestamp).getTime() -
-                     new Date(session.events[i - 1].timestamp).getTime()) / 1000;
+      for (let i = 1; i < allEvents.length; i++) {
+        const gap = (new Date(allEvents[i].timestamp).getTime() -
+                     new Date(allEvents[i - 1].timestamp).getTime()) / 1000;
         // Only count gaps < 5 minutes as active time
         if (gap < 300) {
           activeSeconds += gap;
@@ -746,12 +767,12 @@ export async function getSessionStats(sessionId: string): Promise<{
 
     return {
       // Basic metrics
-      eventCount: session.eventCount,
+      eventCount: allEvents.length,
       duration: session.duration,
 
       // File change metrics
       fileChanges: {
-        totalSnapshots: session.codeSnapshots.length,
+        totalSnapshots: codeSnapshots.length,
         uniqueFiles: fileEditCounts.size,
         totalLinesAdded,
         totalLinesDeleted,
@@ -760,7 +781,7 @@ export async function getSessionStats(sessionId: string): Promise<{
 
       // Claude interaction metrics
       claudeInteractions: {
-        totalInteractions: session.claudeInteractions.length,
+        totalInteractions: chatEvents.length,
         totalTokensUsed: totalInputTokens + totalOutputTokens,
         inputTokens: totalInputTokens,
         outputTokens: totalOutputTokens,
@@ -778,7 +799,7 @@ export async function getSessionStats(sessionId: string): Promise<{
 
       // Test execution metrics
       testExecution: {
-        totalTests: session.testResults.length,
+        totalTests: testCompletedEvents.length,
         passedTests,
         failedTests,
         passRate,
@@ -802,58 +823,10 @@ export async function getSessionStats(sessionId: string): Promise<{
   }
 }
 
-/**
- * Flush buffered events to database
- */
-async function flushEventBuffer(sessionId: string): Promise<void> {
-  const buffer = eventBuffers.get(sessionId);
-  if (!buffer || buffer.length === 0) {
-    return;
-  }
-
-  try {
-    // Batch insert events
-    await prisma.sessionEvent.createMany({
-      data: buffer.map((event) => ({
-        sessionId,
-        type: event.type,
-        fileId: event.fileId,
-        data: event.data,
-        checkpoint: event.checkpoint || false,
-        timestamp: new Date(),
-      })),
-    });
-
-    // Clear buffer
-    eventBuffers.set(sessionId, []);
-
-  } catch (error) {
-    console.error("Error flushing event buffer:", error);
-  }
-}
-
-/**
- * Start periodic buffer flush for a session
- */
-function startPeriodicFlush(sessionId: string): void {
-  const interval = setInterval(async () => {
-    await flushEventBuffer(sessionId);
-  }, BUFFER_FLUSH_INTERVAL);
-
-  // Store interval reference for cleanup
-  (global as any)[`flush_${sessionId}`] = interval;
-}
-
-/**
- * Stop periodic buffer flush
- */
-function stopPeriodicFlush(sessionId: string): void {
-  const interval = (global as any)[`flush_${sessionId}`];
-  if (interval) {
-    clearInterval(interval);
-    delete (global as any)[`flush_${sessionId}`];
-  }
-}
+// Note: The following deprecated functions have been removed:
+// - flushEventBuffer (replaced by eventStore.flushBatch)
+// - startPeriodicFlush (event store handles its own batching)
+// - stopPeriodicFlush (event store handles its own cleanup)
 
 /**
  * Add a file path to the tracked files list for a session

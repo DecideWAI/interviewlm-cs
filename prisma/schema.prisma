@@ -68,36 +68,36 @@ model VerificationToken {
 }
 
 model Organization {
-  id                   String               @id @default(cuid())
-  name                 String
-  slug                 String               @unique
-  description          String?
-  image                String?
-  plan                 Plan                 @default(FREE)
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
-  credits              Int                  @default(0)
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  image       String?
+  plan        Plan     @default(FREE)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  credits     Int      @default(0)
 
   // Subscription fields
-  subscriptionStatus   String?              @map("subscription_status")
-  paddleSubscriptionId String?              @unique @map("paddle_subscription_id")
-  billingInterval      String?              @map("billing_interval")
-  subscriptionEndsAt   DateTime?            @map("subscription_ends_at")
+  subscriptionStatus   String?   @map("subscription_status")
+  paddleSubscriptionId String?   @unique @map("paddle_subscription_id")
+  billingInterval      String?   @map("billing_interval")
+  subscriptionEndsAt   DateTime? @map("subscription_ends_at")
 
-  assessments          Assessment[]
-  candidates           Candidate[]
-  creditTransactions   CreditTransaction[]
-  members              OrganizationMember[]
-  problemSeeds         ProblemSeed[]
-  complexityProfiles   ComplexityProfile[]
-  agentConfigs         AgentConfig[]
+  assessments        Assessment[]
+  candidates         Candidate[]
+  creditTransactions CreditTransaction[]
+  members            OrganizationMember[]
+  problemSeeds       ProblemSeed[]
+  complexityProfiles ComplexityProfile[]
+  agentConfigs       AgentConfig[]
 
   // Config system relations
-  configOverrides      ConfigOverride[]
-  roleConfigs          RoleConfig[]
-  seniorityConfigs     SeniorityConfig[]
-  technologies         Technology[]
-  assessmentTemplates  AssessmentTemplateConfig[]
+  configOverrides     ConfigOverride[]
+  roleConfigs         RoleConfig[]
+  seniorityConfigs    SeniorityConfig[]
+  technologies        Technology[]
+  assessmentTemplates AssessmentTemplateConfig[]
 
   @@map("organizations")
 }
@@ -117,37 +117,37 @@ model OrganizationMember {
 }
 
 model Assessment {
-  id                  String               @id @default(cuid())
-  organizationId      String               @map("organization_id")
-  createdById         String               @map("created_by_id")
+  id                  String           @id @default(cuid())
+  organizationId      String           @map("organization_id")
+  createdById         String           @map("created_by_id")
   title               String
   description         String?
   role                String
   seniority           Seniority
   duration            Int
-  techStack           String[]             @default([])
-  status              AssessmentStatus     @default(DRAFT)
-  enableCoding        Boolean              @default(true) @map("enable_coding")
-  enableTerminal      Boolean              @default(true) @map("enable_terminal")
-  enableAI            Boolean              @default(true) @map("enable_ai")
-  createdAt           DateTime             @default(now()) @map("created_at")
-  updatedAt           DateTime             @updatedAt @map("updated_at")
-  publishedAt         DateTime?            @map("published_at")
-  previewLimit        Int                  @default(10) @map("preview_limit")
-  previewSessionsUsed Int                  @default(0) @map("preview_sessions_used")
+  techStack           String[]         @default([])
+  status              AssessmentStatus @default(DRAFT)
+  enableCoding        Boolean          @default(true) @map("enable_coding")
+  enableTerminal      Boolean          @default(true) @map("enable_terminal")
+  enableAI            Boolean          @default(true) @map("enable_ai")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+  publishedAt         DateTime?        @map("published_at")
+  previewLimit        Int              @default(10) @map("preview_limit")
+  previewSessionsUsed Int              @default(0) @map("preview_sessions_used")
 
   // Evaluation settings
-  evaluationThreshold Int                  @default(70) @map("evaluation_threshold")
-  requireEvaluation   Boolean              @default(true) @map("require_evaluation")
+  evaluationThreshold Int     @default(70) @map("evaluation_threshold")
+  requireEvaluation   Boolean @default(true) @map("require_evaluation")
 
   // Assessment type (Real World vs System Design)
-  assessmentType      AssessmentType       @default(REAL_WORLD) @map("assessment_type")
-  selectedSeedId      String?              @map("selected_seed_id")
+  assessmentType AssessmentType @default(REAL_WORLD) @map("assessment_type")
+  selectedSeedId String?        @map("selected_seed_id")
 
-  questions           AssessmentQuestion[]
-  createdBy           User                 @relation(fields: [createdById], references: [id])
-  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  candidates          Candidate[]
+  questions    AssessmentQuestion[]
+  createdBy    User                 @relation(fields: [createdById], references: [id])
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidates   Candidate[]
 
   @@map("assessments")
 }
@@ -169,57 +169,57 @@ model AssessmentQuestion {
 }
 
 model ProblemSeed {
-  id                String               @id @default(cuid())
-  organizationId    String               @map("organization_id")
-  title             String
-  description       String
-  difficulty        Difficulty
-  category          String
-  tags              String[]             @default([])
-  starterCode       String?              @map("starter_code")
-  testCode          String?              @map("test_code")
-  language          String               @default("javascript")
+  id             String     @id @default(cuid())
+  organizationId String     @map("organization_id")
+  title          String
+  description    String
+  difficulty     Difficulty
+  category       String
+  tags           String[]   @default([])
+  starterCode    String?    @map("starter_code")
+  testCode       String?    @map("test_code")
+  language       String     @default("javascript")
 
   // Seed management fields
-  createdBy         String?              @map("created_by") // User ID who created this seed
-  status            String               @default("active") // active, draft, archived
-  instructions      String?              // Detailed instructions for AI question generation
-  topics            String[]             @default([]) // e.g., ["arrays", "recursion", "dynamic-programming"]
-  estimatedTime     Int                  @default(30) @map("estimated_time") // Estimated time in minutes
-  usageCount        Int                  @default(0) @map("usage_count") // Number of times used in assessments
-  avgCandidateScore Float?               @map("avg_candidate_score") // Average candidate score (0-100)
-  parentSeedId      String?              @map("parent_seed_id") // For cloned seeds (copy-on-write)
-  isSystemSeed      Boolean              @default(false) @map("is_system_seed") // True for default system seeds
+  createdBy         String?  @map("created_by") // User ID who created this seed
+  status            String   @default("active") // active, draft, archived
+  instructions      String? // Detailed instructions for AI question generation
+  topics            String[] @default([]) // e.g., ["arrays", "recursion", "dynamic-programming"]
+  estimatedTime     Int      @default(30) @map("estimated_time") // Estimated time in minutes
+  usageCount        Int      @default(0) @map("usage_count") // Number of times used in assessments
+  avgCandidateScore Float?   @map("avg_candidate_score") // Average candidate score (0-100)
+  parentSeedId      String?  @map("parent_seed_id") // For cloned seeds (copy-on-write)
+  isSystemSeed      Boolean  @default(false) @map("is_system_seed") // True for default system seeds
 
   // NEW: Incremental question generation fields
-  seedType          String               @default("legacy") @map("seed_type") // "legacy" or "incremental"
-  domain            String?              // e.g., "e-commerce", "social-media", "fintech"
-  requiredTech      Json?                @map("required_tech") // { languages: [], frameworks: [], databases: [], tools: [] }
-  baseProblem       Json?                @map("base_problem") // { title, description, starterCode, estimatedTime }
-  progressionHints  Json?                @map("progression_hints") // { extensionTopics: [], simplificationTopics: [] }
-  seniorityExpectations Json?            @map("seniority_expectations") // { junior: [], mid: [], senior: [], staff: [], principal: [] }
+  seedType              String  @default("legacy") @map("seed_type") // "legacy" or "incremental"
+  domain                String? // e.g., "e-commerce", "social-media", "fintech"
+  requiredTech          Json?   @map("required_tech") // { languages: [], frameworks: [], databases: [], tools: [] }
+  baseProblem           Json?   @map("base_problem") // { title, description, starterCode, estimatedTime }
+  progressionHints      Json?   @map("progression_hints") // { extensionTopics: [], simplificationTopics: [] }
+  seniorityExpectations Json?   @map("seniority_expectations") // { junior: [], mid: [], senior: [], staff: [], principal: [] }
 
   // NEW: Assessment type targeting fields
-  targetRole        String?              @map("target_role")        // "backend", "frontend", "fullstack"
-  targetSeniority   String?              @map("target_seniority")   // "junior", "mid", "senior", "staff", "principal"
-  assessmentType    AssessmentType?      @map("assessment_type")    // REAL_WORLD or SYSTEM_DESIGN
-  isDefaultSeed     Boolean              @default(false) @map("is_default_seed") // Canonical default for this combination
+  targetRole      String?         @map("target_role") // "backend", "frontend", "fullstack"
+  targetSeniority String?         @map("target_seniority") // "junior", "mid", "senior", "staff", "principal"
+  assessmentType  AssessmentType? @map("assessment_type") // REAL_WORLD or SYSTEM_DESIGN
+  isDefaultSeed   Boolean         @default(false) @map("is_default_seed") // Canonical default for this combination
 
   // NEW: System Design specific fields
-  designDocTemplate   Json?              @map("design_doc_template")   // { sections: [], tradeoffs: [], constraints: [] }
-  architectureHints   Json?              @map("architecture_hints")    // { components: [], patterns: [], scalabilityGoals: [] }
-  implementationScope String?            @map("implementation_scope")  // "api_skeleton", "core_service", "integration_layer"
+  designDocTemplate   Json?   @map("design_doc_template") // { sections: [], tradeoffs: [], constraints: [] }
+  architectureHints   Json?   @map("architecture_hints") // { components: [], patterns: [], scalabilityGoals: [] }
+  implementationScope String? @map("implementation_scope") // "api_skeleton", "core_service", "integration_layer"
 
   // NEW: Type-specific evaluation rubric
-  evaluationRubric    Json?              @map("evaluation_rubric")     // { type, criteria: [{ name, weight, description }] }
+  evaluationRubric Json? @map("evaluation_rubric") // { type, criteria: [{ name, weight, description }] }
 
-  createdAt         DateTime             @default(now()) @map("created_at")
-  updatedAt         DateTime             @updatedAt @map("updated_at")
-  questions         AssessmentQuestion[]
-  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  parentSeed        ProblemSeed?         @relation("SeedClones", fields: [parentSeedId], references: [id], onDelete: SetNull)
-  clonedSeeds       ProblemSeed[]        @relation("SeedClones")
-  poolStats         QuestionPoolStats?
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+  questions    AssessmentQuestion[]
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parentSeed   ProblemSeed?         @relation("SeedClones", fields: [parentSeedId], references: [id], onDelete: SetNull)
+  clonedSeeds  ProblemSeed[]        @relation("SeedClones")
+  poolStats    QuestionPoolStats?
 
   @@index([targetRole, targetSeniority])
   @@index([assessmentType])
@@ -265,138 +265,101 @@ model Candidate {
 }
 
 model SessionRecording {
-  id                 String              @id @default(cuid())
-  candidateId        String              @unique @map("candidate_id")
-  startTime          DateTime            @default(now()) @map("start_time")
-  endTime            DateTime?           @map("end_time")
-  duration           Int?
-  status             SessionStatus       @default(ACTIVE)
-  eventCount         Int                 @default(0) @map("event_count")
-  storagePath        String?             @map("storage_path")
-  storageSize        Int?                @map("storage_size")
-  trackedFiles       Json                @default("[]") @map("tracked_files") // Array of file paths created during session
+  id           String        @id @default(cuid())
+  candidateId  String        @unique @map("candidate_id")
+  startTime    DateTime      @default(now()) @map("start_time")
+  endTime      DateTime?     @map("end_time")
+  duration     Int?
+  status       SessionStatus @default(ACTIVE)
+  eventCount   Int           @default(0) @map("event_count")
+  storagePath  String?       @map("storage_path")
+  storageSize  Int?          @map("storage_size")
+  trackedFiles Json          @default("[]") @map("tracked_files") // Array of file paths created during session
 
   // Agent backend assignment - persisted for entire session
-  agentBackend       AgentBackend?       @map("agent_backend") // null = use default from AgentConfig
-  experimentId       String?             @map("experiment_id") // If assigned via experiment
+  agentBackend AgentBackend? @map("agent_backend") // null = use default from AgentConfig
+  experimentId String?       @map("experiment_id") // If assigned via experiment
 
   // Question generation backend assignment - persisted for entire session
-  questionBackend      AgentBackend?     @map("question_backend") // null = use default from AgentConfig
-  questionExperimentId String?           @map("question_experiment_id") // If assigned via experiment
+  questionBackend      AgentBackend? @map("question_backend") // null = use default from AgentConfig
+  questionExperimentId String?       @map("question_experiment_id") // If assigned via experiment
 
-  createdAt          DateTime            @default(now()) @map("created_at")
-  updatedAt          DateTime            @updatedAt @map("updated_at")
-  claudeInteractions ClaudeInteraction[]
-  codeSnapshots      CodeSnapshot[]
-  events             SessionEvent[]
-  candidate          Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  testResults        TestResult[]
-  terminalCommands   TerminalCommand[]
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  candidate Candidate         @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  eventLog  SessionEventLog[] // Unified event store - single source of truth
 
   @@index([candidateId])
   @@index([agentBackend])
   @@map("session_recordings")
 }
 
-model SessionEvent {
-  id         String           @id @default(cuid())
-  sessionId  String           @map("session_id")
-  timestamp  DateTime         @default(now())
-  type       String
-  fileId     String?          @map("file_id")
-  data       Json
-  checkpoint Boolean          @default(false)
-  session    SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+/// Unified Event Store - Single source of truth for all session events
+/// Enables perfect replay fidelity, comprehensive evaluation, and rich analytics
+model SessionEventLog {
+  id             String      @id @default(cuid())
+  sessionId      String      @map("session_id")
+  sequenceNumber BigInt      @map("sequence_number") // Monotonically increasing per session
+  timestamp      DateTime    // When the event occurred
+  eventType      String      @map("event_type") @db.VarChar(50) // e.g., 'file.create', 'code.snapshot'
+  category       String      @db.VarChar(20) // 'file', 'code', 'chat', 'terminal', 'test', 'session'
+  origin         EventOrigin @default(SYSTEM) // Who triggered: USER, AI, or SYSTEM
+  data           Json        // Event-specific payload
+  questionIndex  Int?        @map("question_index") // Which question this event relates to
+  filePath       String?     @map("file_path") @db.VarChar(500) // For file-related events
+  checkpoint     Boolean     @default(false) // Marks significant moments for quick seeking
+  createdAt      DateTime    @default(now()) @map("created_at")
 
+  session SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, sequenceNumber])
   @@index([sessionId, timestamp])
-  @@index([sessionId, checkpoint])
-  @@map("session_events")
+  @@index([sessionId, sequenceNumber])
+  @@index([eventType])
+  @@index([category])
+  @@index([origin])
+  @@index([sessionId, questionIndex])
+  @@map("session_event_log")
 }
 
-model ClaudeInteraction {
-  id            String           @id @default(cuid())
-  sessionId     String           @map("session_id")
-  timestamp     DateTime         @default(now())
-  role          String
-  content       String
-  model         String?
-  inputTokens   Int?             @map("input_tokens")
-  outputTokens  Int?             @map("output_tokens")
-  latency       Int?
-  stopReason    String?          @map("stop_reason")
-  promptQuality Float?           @map("prompt_quality")
-  metadata      Json?            // Stores tool use blocks, file modifications, etc.
-  session       SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-  @@index([sessionId, timestamp])
-  @@map("claude_interactions")
-}
-
-model CodeSnapshot {
-  id               String           @id @default(cuid())
-  sessionId        String           @map("session_id")
-  timestamp        DateTime         @default(now())
-  fileId           String           @map("file_id")
-  fileName         String           @map("file_name")
-  language         String
-  contentHash      String           @map("content_hash")
-  fullContent      String?          @map("full_content")
-  diffFromPrevious Json?            @map("diff_from_previous")
-  linesAdded       Int              @default(0) @map("lines_added")
-  linesDeleted     Int              @default(0) @map("lines_deleted")
-  session          SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-  @@index([sessionId, timestamp])
-  @@index([sessionId, fileId])
-  @@map("code_snapshots")
-}
-
-model TestResult {
-  id        String           @id @default(cuid())
-  sessionId String           @map("session_id")
-  timestamp DateTime         @default(now())
-  testName  String           @map("test_name")
-  passed    Boolean
-  output    String?
-  error     String?
-  duration  Int?
-  session   SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-  @@index([sessionId, timestamp])
-  @@map("test_results")
-}
+// DEPRECATED: Old event tables removed in favor of unified SessionEventLog
+// The following tables were removed:
+// - SessionEvent (now: session_event_log with eventType like 'session.*')
+// - ClaudeInteraction (now: session_event_log with eventType like 'chat.*')
+// - CodeSnapshot (now: session_event_log with eventType 'code.snapshot')
+// - TestResult (now: session_event_log with eventType like 'test.*')
 
 model GeneratedQuestion {
-  id                    String         @id @default(cuid())
-  candidateId           String         @map("candidate_id")
-  questionSeedId        String?        @map("question_seed_id")
-  order                 Int
-  title                 String
-  description           String
-  difficulty            Difficulty
-  language              String         @default("typescript")
-  requirements          String[]       @default([])
-  estimatedTime         Int            @map("estimated_time")
-  starterCode           Json           @map("starter_code")
-  testCases             Json           @map("test_cases")
-  status                QuestionStatus @default(PENDING)
-  startedAt             DateTime?      @map("started_at")
-  completedAt           DateTime?      @map("completed_at")
-  score                 Float?
-  createdAt             DateTime       @default(now()) @map("created_at")
+  id             String         @id @default(cuid())
+  candidateId    String         @map("candidate_id")
+  questionSeedId String?        @map("question_seed_id")
+  order          Int
+  title          String
+  description    String
+  difficulty     Difficulty
+  language       String         @default("typescript")
+  requirements   String[]       @default([])
+  estimatedTime  Int            @map("estimated_time")
+  starterCode    Json           @map("starter_code")
+  testCases      Json           @map("test_cases")
+  status         QuestionStatus @default(PENDING)
+  startedAt      DateTime?      @map("started_at")
+  completedAt    DateTime?      @map("completed_at")
+  score          Float?
+  createdAt      DateTime       @default(now()) @map("created_at")
 
   // NEW: LLM difficulty assessment for fair scoring
-  difficultyAssessment  Json?          @map("difficulty_assessment")
+  difficultyAssessment Json? @map("difficulty_assessment")
 
   // Infinite question generation fields
-  fingerprint           String?        // Hash for deduplication
-  reuseCount            Int            @default(0) @map("reuse_count")
-  parentQuestionId      String?        @map("parent_question_id")
-  iterationNumber       Int            @default(0) @map("iteration_number") // 0 = original, 1+ = iteration
+  fingerprint      String? // Hash for deduplication
+  reuseCount       Int     @default(0) @map("reuse_count")
+  parentQuestionId String? @map("parent_question_id")
+  iterationNumber  Int     @default(0) @map("iteration_number") // 0 = original, 1+ = iteration
 
-  candidate             Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  parentQuestion        GeneratedQuestion?  @relation("QuestionIterations", fields: [parentQuestionId], references: [id], onDelete: SetNull)
-  iterations            GeneratedQuestion[] @relation("QuestionIterations")
+  candidate      Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  parentQuestion GeneratedQuestion?  @relation("QuestionIterations", fields: [parentQuestionId], references: [id], onDelete: SetNull)
+  iterations     GeneratedQuestion[] @relation("QuestionIterations")
 
   @@index([candidateId, order])
   @@index([questionSeedId, fingerprint])
@@ -428,17 +391,17 @@ model CreditTransaction {
 }
 
 model FailedJob {
-  id            String   @id @default(cuid())
-  jobId         String   @map("job_id")
-  queueName     String   @map("queue_name")
-  jobName       String   @map("job_name")
-  jobData       Json     @map("job_data")
-  error         Json     @map("error")
-  errorMessage  String?  @map("error_message")
-  errorStack    String?  @map("error_stack")
-  attemptsMade  Int      @map("attempts_made")
-  failedAt      DateTime @map("failed_at")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id           String   @id @default(cuid())
+  jobId        String   @map("job_id")
+  queueName    String   @map("queue_name")
+  jobName      String   @map("job_name")
+  jobData      Json     @map("job_data")
+  error        Json     @map("error")
+  errorMessage String?  @map("error_message")
+  errorStack   String?  @map("error_stack")
+  attemptsMade Int      @map("attempts_made")
+  failedAt     DateTime @map("failed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
 
   @@index([queueName])
   @@index([jobName])
@@ -491,8 +454,8 @@ enum QuestionType {
 }
 
 enum AssessmentType {
-  REAL_WORLD     // Practical coding (implementation, tests, edge cases)
-  SYSTEM_DESIGN  // Hybrid (design doc + partial implementation)
+  REAL_WORLD // Practical coding (implementation, tests, edge cases)
+  SYSTEM_DESIGN // Hybrid (design doc + partial implementation)
 }
 
 enum CandidateStatus {
@@ -511,6 +474,13 @@ enum SessionStatus {
   ABANDONED
 }
 
+// Event origin - who/what triggered the event
+enum EventOrigin {
+  USER     // Candidate actions (typing, clicking, sending messages)
+  AI       // AI agent actions (tool calls, responses)
+  SYSTEM   // Platform actions (auto-save, timeouts, evaluations)
+}
+
 enum QuestionStatus {
   PENDING
   IN_PROGRESS
@@ -526,40 +496,40 @@ enum TransactionType {
 }
 
 enum AgentBackend {
-  CLAUDE_SDK    // TypeScript Anthropic SDK agents
-  LANGGRAPH     // Python LangGraph agents
+  CLAUDE_SDK // TypeScript Anthropic SDK agents
+  LANGGRAPH // Python LangGraph agents
 }
 
 model Technology {
-  id                String   @id @default(cuid())
-  slug              String   // e.g., "python", "react"
-  name              String
-  category          String   // "language", "framework", "database", "tool", "testing"
-  icon              String?  // Lucide icon name
-  description       String?
-  color             String?  // Hex color code
+  id          String  @id @default(cuid())
+  slug        String // e.g., "python", "react"
+  name        String
+  category    String // "language", "framework", "database", "tool", "testing"
+  icon        String? // Lucide icon name
+  description String?
+  color       String? // Hex color code
 
   // Detection patterns (expanded from detectionPatterns JSON)
   detectionPatterns Json?    @default("[]") @map("detection_patterns") // Legacy JSON format
-  fileExtensions    String[] @default([]) @map("file_extensions")    // [".py", ".pyi"]
-  importPatterns    String[] @default([]) @map("import_patterns")    // ["import ", "from "]
-  contentPatterns   String[] @default([]) @map("content_patterns")   // Additional detection patterns
+  fileExtensions    String[] @default([]) @map("file_extensions") // [".py", ".pyi"]
+  importPatterns    String[] @default([]) @map("import_patterns") // ["import ", "from "]
+  contentPatterns   String[] @default([]) @map("content_patterns") // Additional detection patterns
 
   // Relationships
-  pairedWithIds     String[] @default([]) @map("paired_with_ids") // Array of IDs this tech is commonly paired with
+  pairedWithIds String[] @default([]) @map("paired_with_ids") // Array of IDs this tech is commonly paired with
 
   // Role-based relevance
-  suggestedForRoles Json?    @map("suggested_for_roles") // { backend: "critical", frontend: "optional" }
+  suggestedForRoles Json? @map("suggested_for_roles") // { backend: "critical", frontend: "optional" }
 
   // Multi-tenancy
-  isActive          Boolean  @default(true) @map("is_active")
-  isSystem          Boolean  @default(true) @map("is_system") // System = cannot delete
-  organizationId    String?  @map("organization_id") // null = system-wide
+  isActive       Boolean @default(true) @map("is_active")
+  isSystem       Boolean @default(true) @map("is_system") // System = cannot delete
+  organizationId String? @map("organization_id") // null = system-wide
 
-  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([slug, organizationId])
   @@index([category])
@@ -573,59 +543,59 @@ model Technology {
 // =====================================================
 
 model Evaluation {
-  id                       String   @id @default(cuid())
-  candidateId              String   @unique @map("candidate_id")
-  sessionId                String   @unique @map("session_id")
+  id          String @id @default(cuid())
+  candidateId String @unique @map("candidate_id")
+  sessionId   String @unique @map("session_id")
 
   // 4-dimension scores (0-100)
-  codeQualityScore         Int      @map("code_quality_score")
-  codeQualityEvidence      Json     @map("code_quality_evidence")
-  codeQualityConfidence    Float    @default(0.5) @map("code_quality_confidence")
+  codeQualityScore      Int   @map("code_quality_score")
+  codeQualityEvidence   Json  @map("code_quality_evidence")
+  codeQualityConfidence Float @default(0.5) @map("code_quality_confidence")
 
-  problemSolvingScore      Int      @map("problem_solving_score")
-  problemSolvingEvidence   Json     @map("problem_solving_evidence")
-  problemSolvingConfidence Float    @default(0.5) @map("problem_solving_confidence")
+  problemSolvingScore      Int   @map("problem_solving_score")
+  problemSolvingEvidence   Json  @map("problem_solving_evidence")
+  problemSolvingConfidence Float @default(0.5) @map("problem_solving_confidence")
 
-  aiCollaborationScore     Int      @map("ai_collaboration_score")
-  aiCollaborationEvidence  Json     @map("ai_collaboration_evidence")
-  aiCollaborationConfidence Float   @default(0.5) @map("ai_collaboration_confidence")
+  aiCollaborationScore      Int   @map("ai_collaboration_score")
+  aiCollaborationEvidence   Json  @map("ai_collaboration_evidence")
+  aiCollaborationConfidence Float @default(0.5) @map("ai_collaboration_confidence")
 
-  communicationScore       Int      @map("communication_score")
-  communicationEvidence    Json     @map("communication_evidence")
-  communicationConfidence  Float    @default(0.5) @map("communication_confidence")
+  communicationScore      Int   @map("communication_score")
+  communicationEvidence   Json  @map("communication_evidence")
+  communicationConfidence Float @default(0.5) @map("communication_confidence")
 
   // Overall metrics
-  overallScore             Int      @map("overall_score")
-  confidence               Float    @default(0.5)
+  overallScore Int   @map("overall_score")
+  confidence   Float @default(0.5)
 
   // Progressive scoring (multi-question assessments)
-  progressiveScoreResult   Json?    @map("progressive_score_result")
-  expertiseLevel           String?  @map("expertise_level") // beginner, intermediate, advanced, expert
-  expertiseGrowth          Float?   @map("expertise_growth") // percentage point change
-  expertiseGrowthTrend     String?  @map("expertise_growth_trend") // improving, declining, stable
+  progressiveScoreResult Json?   @map("progressive_score_result")
+  expertiseLevel         String? @map("expertise_level") // beginner, intermediate, advanced, expert
+  expertiseGrowth        Float?  @map("expertise_growth") // percentage point change
+  expertiseGrowthTrend   String? @map("expertise_growth_trend") // improving, declining, stable
 
   // Bias detection & fairness
-  biasFlags                String[] @default([])
-  confidenceMetrics        Json?    @map("confidence_metrics")
-  biasDetection            Json?    @map("bias_detection")
-  fairnessReport           String?  @map("fairness_report")
+  biasFlags         String[] @default([])
+  confidenceMetrics Json?    @map("confidence_metrics")
+  biasDetection     Json?    @map("bias_detection")
+  fairnessReport    String?  @map("fairness_report")
 
   // Hiring recommendation
-  hiringRecommendation     String?  @map("hiring_recommendation") // strong_yes, yes, maybe, no, strong_no
-  hiringConfidence         Float?   @map("hiring_confidence")
-  hiringReasoning          Json?    @map("hiring_reasoning")
+  hiringRecommendation String? @map("hiring_recommendation") // strong_yes, yes, maybe, no, strong_no
+  hiringConfidence     Float?  @map("hiring_confidence")
+  hiringReasoning      Json?   @map("hiring_reasoning")
 
   // Actionable report (skills gap matrix, development roadmap, insights)
-  actionableReport         Json?    @map("actionable_report")
+  actionableReport Json? @map("actionable_report")
 
   // Metadata
-  model                    String   @default("claude-sonnet-4-20250514")
-  evaluatedAt              DateTime @default(now()) @map("evaluated_at")
-  createdAt                DateTime @default(now()) @map("created_at")
-  updatedAt                DateTime @updatedAt @map("updated_at")
+  model       String   @default("claude-sonnet-4-20250514")
+  evaluatedAt DateTime @default(now()) @map("evaluated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   // Relations
-  candidate                Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
 
   @@index([candidateId])
   @@index([sessionId])
@@ -634,20 +604,8 @@ model Evaluation {
   @@map("evaluations")
 }
 
-model TerminalCommand {
-  id        String           @id @default(cuid())
-  sessionId String           @map("session_id")
-  timestamp DateTime         @default(now())
-  command   String
-  output    String?
-  exitCode  Int              @default(0) @map("exit_code")
-  duration  Int?             // Execution duration in ms
-  category  String?          // Categorized command type
-  session   SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-
-  @@index([sessionId, timestamp])
-  @@map("terminal_commands")
-}
+// DEPRECATED: TerminalCommand table removed in favor of unified SessionEventLog
+// Terminal commands are now stored as session_event_log with eventType like 'terminal.*'
 
 // =====================================================
 // INFINITE QUESTION GENERATION SYSTEM
@@ -655,22 +613,22 @@ model TerminalCommand {
 // =====================================================
 
 model QuestionPoolStats {
-  id                String       @id @default(cuid())
-  seedId            String       @unique @map("seed_id")
-  totalGenerated    Int          @default(0) @map("total_generated")
-  uniqueQuestions   Int          @default(0) @map("unique_questions")
-  avgReuseCount     Float        @default(0) @map("avg_reuse_count")
-  lastGeneratedAt   DateTime?    @map("last_generated_at")
-  threshold         Int          @default(100) // Per-seed threshold for reuse mode
+  id              String    @id @default(cuid())
+  seedId          String    @unique @map("seed_id")
+  totalGenerated  Int       @default(0) @map("total_generated")
+  uniqueQuestions Int       @default(0) @map("unique_questions")
+  avgReuseCount   Float     @default(0) @map("avg_reuse_count")
+  lastGeneratedAt DateTime? @map("last_generated_at")
+  threshold       Int       @default(100) // Per-seed threshold for reuse mode
 
   // Stats for marketing/reporting
-  totalCandidatesServed Int      @default(0) @map("total_candidates_served")
-  avgUniquenessScore    Float    @default(1.0) @map("avg_uniqueness_score")
+  totalCandidatesServed Int   @default(0) @map("total_candidates_served")
+  avgUniquenessScore    Float @default(1.0) @map("avg_uniqueness_score")
 
-  createdAt         DateTime     @default(now()) @map("created_at")
-  updatedAt         DateTime     @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  seed              ProblemSeed  @relation(fields: [seedId], references: [id], onDelete: Cascade)
+  seed ProblemSeed @relation(fields: [seedId], references: [id], onDelete: Cascade)
 
   @@map("question_pool_stats")
 }
@@ -681,25 +639,25 @@ model QuestionPoolStats {
 // =====================================================
 
 model BiasAuditLog {
-  id              String   @id @default(cuid())
-  sessionId       String   @map("session_id")
-  candidateId     String   @map("candidate_id")
-  evaluationId    String?  @map("evaluation_id")
+  id           String  @id @default(cuid())
+  sessionId    String  @map("session_id")
+  candidateId  String  @map("candidate_id")
+  evaluationId String? @map("evaluation_id")
 
-  checkType       String   @map("check_type") // 'full_evaluation', 'dimension_check', 'pre_hire'
-  inputs          Json     // Sanitized inputs to bias detection
-  result          Json     // Full BiasDetectionResult
-  riskLevel       String   @map("risk_level") // 'low' | 'medium' | 'high'
-  biasesDetected  String[] @default([]) @map("biases_detected") // Array of bias type codes
+  checkType      String   @map("check_type") // 'full_evaluation', 'dimension_check', 'pre_hire'
+  inputs         Json // Sanitized inputs to bias detection
+  result         Json // Full BiasDetectionResult
+  riskLevel      String   @map("risk_level") // 'low' | 'medium' | 'high'
+  biasesDetected String[] @default([]) @map("biases_detected") // Array of bias type codes
 
   // Human review workflow
-  humanReviewed   Boolean  @default(false) @map("human_reviewed")
-  reviewerId      String?  @map("reviewer_id")
-  reviewNotes     String?  @map("review_notes")
-  reviewedAt      DateTime? @map("reviewed_at")
-  reviewOutcome   String?  @map("review_outcome") // 'approved', 'flagged', 'adjusted'
+  humanReviewed Boolean   @default(false) @map("human_reviewed")
+  reviewerId    String?   @map("reviewer_id")
+  reviewNotes   String?   @map("review_notes")
+  reviewedAt    DateTime? @map("reviewed_at")
+  reviewOutcome String?   @map("review_outcome") // 'approved', 'flagged', 'adjusted'
 
-  createdAt       DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([candidateId])
   @@index([riskLevel])
@@ -714,42 +672,42 @@ model BiasAuditLog {
 // =====================================================
 
 model ComplexityProfile {
-  id                String         @id @default(cuid())
+  id String @id @default(cuid())
 
   // Targeting - defines which assessments use this profile
-  role              String         // "backend", "frontend", "fullstack"
-  seniority         String         // "junior", "mid", "senior", "staff", "principal"
-  assessmentType    AssessmentType
+  role           String // "backend", "frontend", "fullstack"
+  seniority      String // "junior", "mid", "senior", "staff", "principal"
+  assessmentType AssessmentType
 
   // Complexity dimensions - what makes a problem harder
-  entityCountMin    Int            @default(1) @map("entity_count_min")
-  entityCountMax    Int            @default(2) @map("entity_count_max")
-  integrationPoints Int            @default(0) @map("integration_points")
-  businessLogic     String         @default("simple") @map("business_logic")     // simple, moderate, complex, strategic
-  ambiguityLevel    String         @default("clear") @map("ambiguity_level")     // clear, some_decisions, open_ended, strategic
-  timeMinutes       Int            @default(45) @map("time_minutes")
+  entityCountMin    Int    @default(1) @map("entity_count_min")
+  entityCountMax    Int    @default(2) @map("entity_count_max")
+  integrationPoints Int    @default(0) @map("integration_points")
+  businessLogic     String @default("simple") @map("business_logic") // simple, moderate, complex, strategic
+  ambiguityLevel    String @default("clear") @map("ambiguity_level") // clear, some_decisions, open_ended, strategic
+  timeMinutes       Int    @default(45) @map("time_minutes")
 
   // Skill configuration (JSON arrays)
-  requiredSkills    Json           @map("required_skills")      // ["crud", "validation", "error_handling"]
-  optionalSkillPool Json           @map("optional_skill_pool")  // ["auth", "caching", "pagination"]
-  avoidSkills       Json           @map("avoid_skills")         // ["ml", "realtime"]
-  pickOptionalCount Int            @default(2) @map("pick_optional_count")
+  requiredSkills    Json @map("required_skills") // ["crud", "validation", "error_handling"]
+  optionalSkillPool Json @map("optional_skill_pool") // ["auth", "caching", "pagination"]
+  avoidSkills       Json @map("avoid_skills") // ["ml", "realtime"]
+  pickOptionalCount Int  @default(2) @map("pick_optional_count")
 
   // Domain pool - LLM picks randomly from this list
-  domainPool        Json           @map("domain_pool")          // ["e-commerce", "healthcare", "fintech", ...]
+  domainPool Json @map("domain_pool") // ["e-commerce", "healthcare", "fintech", ...]
 
   // Structural constraints (JSON object)
-  constraints       Json           // { mustInclude: [], shouldConsider: [], bonus: [] }
+  constraints Json // { mustInclude: [], shouldConsider: [], bonus: [] }
 
   // Profile metadata
-  isDefault         Boolean        @default(false) @map("is_default")
-  organizationId    String?        @map("organization_id")     // null = system default, set = org override
+  isDefault      Boolean @default(false) @map("is_default")
+  organizationId String? @map("organization_id") // null = system default, set = org override
 
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  organization      Organization?  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@unique([role, seniority, assessmentType, organizationId])
   @@index([role, seniority, assessmentType])
@@ -762,40 +720,40 @@ model ComplexityProfile {
 // =====================================================
 
 model AgentConfig {
-  id                String         @id @default(cuid())
+  id String @id @default(cuid())
 
   // Scope - determines which sessions use this config
-  organizationId    String?        @map("organization_id") // null = global default
-  assessmentId      String?        @map("assessment_id")   // optional: per-assessment override
+  organizationId String? @map("organization_id") // null = global default
+  assessmentId   String? @map("assessment_id") // optional: per-assessment override
 
   // Default backend when no experiment is active
-  defaultBackend    AgentBackend   @default(LANGGRAPH) @map("default_backend")
+  defaultBackend AgentBackend @default(LANGGRAPH) @map("default_backend")
 
   // Feature flags
-  enableExperiments Boolean        @default(false) @map("enable_experiments")
-  fallbackBackend   AgentBackend   @default(LANGGRAPH) @map("fallback_backend") // Used if experiment errors
+  enableExperiments Boolean      @default(false) @map("enable_experiments")
+  fallbackBackend   AgentBackend @default(LANGGRAPH) @map("fallback_backend") // Used if experiment errors
 
   // Rate limiting / load balancing (for coding agent)
-  langGraphWeight   Int            @default(100) @map("langgraph_weight")   // 0-100 weight for LangGraph
-  claudeSdkWeight   Int            @default(0)   @map("claude_sdk_weight")  // 0-100 weight for Claude SDK
+  langGraphWeight Int @default(100) @map("langgraph_weight") // 0-100 weight for LangGraph
+  claudeSdkWeight Int @default(0) @map("claude_sdk_weight") // 0-100 weight for Claude SDK
 
   // Question Generation Backend Configuration
-  questionDefaultBackend    AgentBackend   @default(CLAUDE_SDK) @map("question_default_backend")
-  questionEnableExperiments Boolean        @default(false) @map("question_enable_experiments")
-  questionLangGraphWeight   Int            @default(0)   @map("question_langgraph_weight")   // 0-100 weight for LangGraph
-  questionClaudeSdkWeight   Int            @default(100) @map("question_claude_sdk_weight")  // 0-100 weight for TypeScript
+  questionDefaultBackend    AgentBackend @default(CLAUDE_SDK) @map("question_default_backend")
+  questionEnableExperiments Boolean      @default(false) @map("question_enable_experiments")
+  questionLangGraphWeight   Int          @default(0) @map("question_langgraph_weight") // 0-100 weight for LangGraph
+  questionClaudeSdkWeight   Int          @default(100) @map("question_claude_sdk_weight") // 0-100 weight for TypeScript
 
   // Metadata
-  description       String?
-  isActive          Boolean        @default(true) @map("is_active")
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
-  createdBy         String?        @map("created_by")
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdBy   String?  @map("created_by")
 
   // Relations
-  organization         Organization?  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  experiments          AgentExperiment[]
-  questionExperiments  QuestionExperiment[]
+  organization        Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  experiments         AgentExperiment[]
+  questionExperiments QuestionExperiment[]
 
   @@unique([organizationId, assessmentId])
   @@index([isActive])
@@ -803,40 +761,40 @@ model AgentConfig {
 }
 
 model AgentExperiment {
-  id                String         @id @default(cuid())
-  configId          String         @map("config_id")
-  name              String
-  description       String?
+  id          String  @id @default(cuid())
+  configId    String  @map("config_id")
+  name        String
+  description String?
 
   // Experiment variants
-  controlBackend    AgentBackend   @default(LANGGRAPH) @map("control_backend")
-  treatmentBackend  AgentBackend   @default(CLAUDE_SDK) @map("treatment_backend")
+  controlBackend   AgentBackend @default(LANGGRAPH) @map("control_backend")
+  treatmentBackend AgentBackend @default(CLAUDE_SDK) @map("treatment_backend")
 
   // Traffic allocation (percentage 0-100)
-  controlPercent    Int            @default(50) @map("control_percent")
-  treatmentPercent  Int            @default(50) @map("treatment_percent")
+  controlPercent   Int @default(50) @map("control_percent")
+  treatmentPercent Int @default(50) @map("treatment_percent")
 
   // Experiment lifecycle
-  status            ExperimentStatus @default(DRAFT)
-  startedAt         DateTime?      @map("started_at")
-  endedAt           DateTime?      @map("ended_at")
+  status    ExperimentStatus @default(DRAFT)
+  startedAt DateTime?        @map("started_at")
+  endedAt   DateTime?        @map("ended_at")
 
   // Metrics tracking
-  controlSessions   Int            @default(0) @map("control_sessions")
-  treatmentSessions Int            @default(0) @map("treatment_sessions")
-  controlAvgScore   Float?         @map("control_avg_score")
-  treatmentAvgScore Float?         @map("treatment_avg_score")
+  controlSessions   Int    @default(0) @map("control_sessions")
+  treatmentSessions Int    @default(0) @map("treatment_sessions")
+  controlAvgScore   Float? @map("control_avg_score")
+  treatmentAvgScore Float? @map("treatment_avg_score")
 
   // Targeting rules (JSON)
-  targetingRules    Json?          @map("targeting_rules") // { seniorityIn: [], roleIn: [], assessmentTypeIn: [] }
+  targetingRules Json? @map("targeting_rules") // { seniorityIn: [], roleIn: [], assessmentTypeIn: [] }
 
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
-  createdBy         String?        @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by")
 
   // Relations
-  config            AgentConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
-  assignments       AgentExperimentAssignment[]
+  config      AgentConfig                 @relation(fields: [configId], references: [id], onDelete: Cascade)
+  assignments AgentExperimentAssignment[]
 
   @@index([configId, status])
   @@index([status])
@@ -844,23 +802,23 @@ model AgentExperiment {
 }
 
 model AgentExperimentAssignment {
-  id                String         @id @default(cuid())
-  experimentId      String         @map("experiment_id")
-  sessionId         String         @unique @map("session_id") // Links to SessionRecording.id
-  candidateId       String         @map("candidate_id")
+  id           String @id @default(cuid())
+  experimentId String @map("experiment_id")
+  sessionId    String @unique @map("session_id") // Links to SessionRecording.id
+  candidateId  String @map("candidate_id")
 
   // Assignment details
-  variant           String         // "control" or "treatment"
-  assignedBackend   AgentBackend   @map("assigned_backend")
-  assignedAt        DateTime       @default(now()) @map("assigned_at")
+  variant         String // "control" or "treatment"
+  assignedBackend AgentBackend @map("assigned_backend")
+  assignedAt      DateTime     @default(now()) @map("assigned_at")
 
   // Outcome tracking (populated after session)
-  sessionCompleted  Boolean        @default(false) @map("session_completed")
-  overallScore      Float?         @map("overall_score")
-  completedAt       DateTime?      @map("completed_at")
+  sessionCompleted Boolean   @default(false) @map("session_completed")
+  overallScore     Float?    @map("overall_score")
+  completedAt      DateTime? @map("completed_at")
 
   // Relations
-  experiment        AgentExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  experiment AgentExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
 
   @@index([experimentId, variant])
   @@index([candidateId])
@@ -881,40 +839,40 @@ enum ExperimentStatus {
 // =====================================================
 
 model QuestionExperiment {
-  id                String         @id @default(cuid())
-  configId          String         @map("config_id")
-  name              String
-  description       String?
+  id          String  @id @default(cuid())
+  configId    String  @map("config_id")
+  name        String
+  description String?
 
   // Experiment variants (CLAUDE_SDK = TypeScript, LANGGRAPH = Python)
-  controlBackend    AgentBackend   @default(CLAUDE_SDK) @map("control_backend")
-  treatmentBackend  AgentBackend   @default(LANGGRAPH) @map("treatment_backend")
+  controlBackend   AgentBackend @default(CLAUDE_SDK) @map("control_backend")
+  treatmentBackend AgentBackend @default(LANGGRAPH) @map("treatment_backend")
 
   // Traffic allocation (percentage 0-100)
-  controlPercent    Int            @default(50) @map("control_percent")
-  treatmentPercent  Int            @default(50) @map("treatment_percent")
+  controlPercent   Int @default(50) @map("control_percent")
+  treatmentPercent Int @default(50) @map("treatment_percent")
 
   // Experiment lifecycle
-  status            ExperimentStatus @default(DRAFT)
-  startedAt         DateTime?      @map("started_at")
-  endedAt           DateTime?      @map("ended_at")
+  status    ExperimentStatus @default(DRAFT)
+  startedAt DateTime?        @map("started_at")
+  endedAt   DateTime?        @map("ended_at")
 
   // Metrics tracking
-  controlSessions   Int            @default(0) @map("control_sessions")
-  treatmentSessions Int            @default(0) @map("treatment_sessions")
-  controlAvgLatency Float?         @map("control_avg_latency")    // ms
-  treatmentAvgLatency Float?       @map("treatment_avg_latency")  // ms
+  controlSessions     Int    @default(0) @map("control_sessions")
+  treatmentSessions   Int    @default(0) @map("treatment_sessions")
+  controlAvgLatency   Float? @map("control_avg_latency") // ms
+  treatmentAvgLatency Float? @map("treatment_avg_latency") // ms
 
   // Targeting rules (JSON)
-  targetingRules    Json?          @map("targeting_rules") // { seniorityIn: [], roleIn: [], assessmentTypeIn: [] }
+  targetingRules Json? @map("targeting_rules") // { seniorityIn: [], roleIn: [], assessmentTypeIn: [] }
 
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
-  createdBy         String?        @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by")
 
   // Relations
-  config            AgentConfig    @relation(fields: [configId], references: [id], onDelete: Cascade)
-  assignments       QuestionExperimentAssignment[]
+  config      AgentConfig                    @relation(fields: [configId], references: [id], onDelete: Cascade)
+  assignments QuestionExperimentAssignment[]
 
   @@index([configId, status])
   @@index([status])
@@ -922,22 +880,22 @@ model QuestionExperiment {
 }
 
 model QuestionExperimentAssignment {
-  id                String         @id @default(cuid())
-  experimentId      String         @map("experiment_id")
-  sessionId         String         @unique @map("session_id") // Links to SessionRecording.id
-  candidateId       String         @map("candidate_id")
+  id           String @id @default(cuid())
+  experimentId String @map("experiment_id")
+  sessionId    String @unique @map("session_id") // Links to SessionRecording.id
+  candidateId  String @map("candidate_id")
 
   // Assignment details
-  variant           String         // "control" or "treatment"
-  assignedBackend   AgentBackend   @map("assigned_backend")
-  assignedAt        DateTime       @default(now()) @map("assigned_at")
+  variant         String // "control" or "treatment"
+  assignedBackend AgentBackend @map("assigned_backend")
+  assignedAt      DateTime     @default(now()) @map("assigned_at")
 
   // Outcome tracking (populated after question generation)
-  generationLatency Float?         @map("generation_latency") // ms
-  questionId        String?        @map("question_id") // Generated question ID
+  generationLatency Float?  @map("generation_latency") // ms
+  questionId        String? @map("question_id") // Generated question ID
 
   // Relations
-  experiment        QuestionExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  experiment QuestionExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
 
   @@index([experimentId, variant])
   @@index([candidateId])
@@ -950,68 +908,68 @@ model QuestionExperimentAssignment {
 // =====================================================
 
 enum OverridePolicy {
-  SYSTEM_ONLY         // Cannot be overridden by organizations
-  BOUNDED             // Can be overridden within min/max constraints
-  FULLY_CUSTOMIZABLE  // Full organization control
+  SYSTEM_ONLY // Cannot be overridden by organizations
+  BOUNDED // Can be overridden within min/max constraints
+  FULLY_CUSTOMIZABLE // Full organization control
 }
 
 model ConfigCategory {
-  id              String         @id @default(cuid())
-  name            String         @unique // e.g., "security", "models", "tech_catalog"
-  description     String?
-  overridePolicy  OverridePolicy @default(SYSTEM_ONLY)
+  id             String         @id @default(cuid())
+  name           String         @unique // e.g., "security", "models", "tech_catalog"
+  description    String?
+  overridePolicy OverridePolicy @default(SYSTEM_ONLY)
 
-  configItems     ConfigItem[]
+  configItems ConfigItem[]
 
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("config_categories")
 }
 
 model ConfigItem {
-  id              String         @id @default(cuid())
-  categoryId      String         @map("category_id")
-  key             String         // e.g., "RATE_LIMITS.aiMessagesPerMinute"
-  value           Json           // Actual config value
-  valueType       String         // "number", "string", "array", "object"
+  id         String @id @default(cuid())
+  categoryId String @map("category_id")
+  key        String // e.g., "RATE_LIMITS.aiMessagesPerMinute"
+  value      Json // Actual config value
+  valueType  String // "number", "string", "array", "object"
 
   // Constraints for BOUNDED configs
-  minValue        Float?         @map("min_value")
-  maxValue        Float?         @map("max_value")
-  allowedValues   Json?          @map("allowed_values") // For enum-like constraints
+  minValue      Float? @map("min_value")
+  maxValue      Float? @map("max_value")
+  allowedValues Json?  @map("allowed_values") // For enum-like constraints
 
   // Metadata
-  description     String?
-  isActive        Boolean        @default(true) @map("is_active")
+  description String?
+  isActive    Boolean @default(true) @map("is_active")
 
-  category        ConfigCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-  overrides       ConfigOverride[]
+  category  ConfigCategory   @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  overrides ConfigOverride[]
 
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([categoryId, key])
   @@map("config_items")
 }
 
 model ConfigOverride {
-  id              String       @id @default(cuid())
-  configItemId    String       @map("config_item_id")
-  organizationId  String       @map("organization_id")
-  value           Json         // Override value
+  id             String @id @default(cuid())
+  configItemId   String @map("config_item_id")
+  organizationId String @map("organization_id")
+  value          Json // Override value
 
   // Audit trail
-  createdBy       String?      @map("created_by")
-  approvedBy      String?      @map("approved_by") // For sensitive configs
-  approvedAt      DateTime?    @map("approved_at")
-  reason          String?
+  createdBy  String?   @map("created_by")
+  approvedBy String?   @map("approved_by") // For sensitive configs
+  approvedAt DateTime? @map("approved_at")
+  reason     String?
 
-  configItem      ConfigItem   @relation(fields: [configItemId], references: [id], onDelete: Cascade)
-  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  configItem   ConfigItem   @relation(fields: [configItemId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  createdAt       DateTime     @default(now()) @map("created_at")
-  updatedAt       DateTime     @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([configItemId, organizationId])
   @@map("config_overrides")
@@ -1023,13 +981,13 @@ model ConfigOverride {
 // =====================================================
 
 model SecurityConfig {
-  id          String   @id @default(cuid())
-  configType  String   @unique @map("config_type") // "blocked_patterns", "allowed_commands", "rate_limits", "session_timeouts"
+  id          String  @id @default(cuid())
+  configType  String  @unique @map("config_type") // "blocked_patterns", "allowed_commands", "rate_limits", "session_timeouts"
   value       Json
   description String?
 
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("security_configs")
 }
@@ -1040,22 +998,22 @@ model SecurityConfig {
 // =====================================================
 
 model ModelConfig {
-  id                    String   @id @default(cuid())
-  modelId               String   @unique @map("model_id") // e.g., "claude-sonnet-4-5-20250929"
-  name                  String
-  inputPricePerMToken   Float    @map("input_price_per_m_token")
-  outputPricePerMToken  Float    @map("output_price_per_m_token")
-  maxTokens             Int      @map("max_tokens")
-  contextWindow         Int      @map("context_window")
-  description           String?
-  useCase               String?  @map("use_case")
+  id                   String  @id @default(cuid())
+  modelId              String  @unique @map("model_id") // e.g., "claude-sonnet-4-5-20250929"
+  name                 String
+  inputPricePerMToken  Float   @map("input_price_per_m_token")
+  outputPricePerMToken Float   @map("output_price_per_m_token")
+  maxTokens            Int     @map("max_tokens")
+  contextWindow        Int     @map("context_window")
+  description          String?
+  useCase              String? @map("use_case")
 
   // Agent recommendations
-  recommendedFor        String[] @default([]) @map("recommended_for") // ["codingAgent", "evaluationAgent"]
+  recommendedFor String[] @default([]) @map("recommended_for") // ["codingAgent", "evaluationAgent"]
 
-  isActive              Boolean  @default(true) @map("is_active")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("model_configs")
 }
@@ -1066,23 +1024,23 @@ model ModelConfig {
 // =====================================================
 
 model SandboxConfig {
-  id                  String   @id @default(cuid())
-  language            String   @unique // e.g., "python", "javascript", "default"
-  dockerImage         String   @map("docker_image")
+  id          String @id @default(cuid())
+  language    String @unique // e.g., "python", "javascript", "default"
+  dockerImage String @map("docker_image")
 
   // Resource limits
-  cpu                 Float    @default(2.0)
-  memoryMb            Int      @default(2048) @map("memory_mb")
-  timeoutSeconds      Int      @default(3600) @map("timeout_seconds")
+  cpu            Float @default(2.0)
+  memoryMb       Int   @default(2048) @map("memory_mb")
+  timeoutSeconds Int   @default(3600) @map("timeout_seconds")
 
   // Constraints for BOUNDED org overrides
-  maxCpu              Float    @default(4.0) @map("max_cpu")
-  maxMemoryMb         Int      @default(4096) @map("max_memory_mb")
-  maxTimeoutSeconds   Int      @default(7200) @map("max_timeout_seconds")
+  maxCpu            Float @default(4.0) @map("max_cpu")
+  maxMemoryMb       Int   @default(4096) @map("max_memory_mb")
+  maxTimeoutSeconds Int   @default(7200) @map("max_timeout_seconds")
 
-  isActive            Boolean  @default(true) @map("is_active")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("sandbox_configs")
 }
@@ -1093,23 +1051,23 @@ model SandboxConfig {
 // =====================================================
 
 model RoleConfig {
-  id                String        @id @default(cuid())
-  roleId            String        @map("role_id") // "backend", "frontend", "fullstack", etc.
-  name              String
-  description       String?
-  icon              String?       // Lucide icon name
-  defaultDuration   Int           @default(60) @map("default_duration")
-  availableInTiers  String[]      @default([]) @map("available_in_tiers")
-  status            String        @default("active") // "active", "coming_soon"
+  id               String   @id @default(cuid())
+  roleId           String   @map("role_id") // "backend", "frontend", "fullstack", etc.
+  name             String
+  description      String?
+  icon             String? // Lucide icon name
+  defaultDuration  Int      @default(60) @map("default_duration")
+  availableInTiers String[] @default([]) @map("available_in_tiers")
+  status           String   @default("active") // "active", "coming_soon"
 
   // Multi-tenancy
-  isSystem          Boolean       @default(true) @map("is_system")
-  organizationId    String?       @map("organization_id")
+  isSystem       Boolean @default(true) @map("is_system")
+  organizationId String? @map("organization_id")
 
-  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([roleId, organizationId])
   @@index([isSystem])
@@ -1122,27 +1080,27 @@ model RoleConfig {
 // =====================================================
 
 model SeniorityConfig {
-  id                String        @id @default(cuid())
-  seniorityId       String        @map("seniority_id") // "junior", "mid", "senior", "staff", "principal"
-  name              String
-  description       String?
-  experienceYears   String?       @map("experience_years")
-  defaultDuration   Int           @default(60) @map("default_duration")
+  id              String  @id @default(cuid())
+  seniorityId     String  @map("seniority_id") // "junior", "mid", "senior", "staff", "principal"
+  name            String
+  description     String?
+  experienceYears String? @map("experience_years")
+  defaultDuration Int     @default(60) @map("default_duration")
 
   // Difficulty distribution
-  difficultyMix     Json          @map("difficulty_mix") // { easy: 60, medium: 30, hard: 10 }
+  difficultyMix Json @map("difficulty_mix") // { easy: 60, medium: 30, hard: 10 }
 
   // Scoring weights (from scoring.ts)
-  scoringWeights    Json?         @map("scoring_weights") // { technical: 0.35, aiCollaboration: 0.30, ... }
+  scoringWeights Json? @map("scoring_weights") // { technical: 0.35, aiCollaboration: 0.30, ... }
 
   // Multi-tenancy
-  isSystem          Boolean       @default(true) @map("is_system")
-  organizationId    String?       @map("organization_id")
+  isSystem       Boolean @default(true) @map("is_system")
+  organizationId String? @map("organization_id")
 
-  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@unique([seniorityId, organizationId])
   @@index([isSystem])
@@ -1151,21 +1109,21 @@ model SeniorityConfig {
 
 // Tier configuration - pricing tiers and their limits
 model TierConfig {
-  id                       String   @id @default(cuid())
-  tierId                   String   @unique @map("tier_id") // "payg", "small", "medium", "large", "enterprise"
-  name                     String
-  price                    Float // per assessment
-  description              String?
-  maxCustomQuestions       Int?     @map("max_custom_questions") // null = unlimited
-  maxTeamMembers           Int?     @map("max_team_members") // null = unlimited
-  customRolesAllowed       Boolean  @default(false) @map("custom_roles_allowed")
+  id                        String  @id @default(cuid())
+  tierId                    String  @unique @map("tier_id") // "payg", "small", "medium", "large", "enterprise"
+  name                      String
+  price                     Float // per assessment
+  description               String?
+  maxCustomQuestions        Int?    @map("max_custom_questions") // null = unlimited
+  maxTeamMembers            Int?    @map("max_team_members") // null = unlimited
+  customRolesAllowed        Boolean @default(false) @map("custom_roles_allowed")
   customInstructionsAllowed Boolean @default(false) @map("custom_instructions_allowed")
-  advancedAnalytics        Boolean  @default(false) @map("advanced_analytics")
-  previewTestRuns          Int?     @map("preview_test_runs") // null = unlimited
-  isActive                 Boolean  @default(true) @map("is_active")
+  advancedAnalytics         Boolean @default(false) @map("advanced_analytics")
+  previewTestRuns           Int?    @map("preview_test_runs") // null = unlimited
+  isActive                  Boolean @default(true) @map("is_active")
 
-  createdAt                DateTime @default(now()) @map("created_at")
-  updatedAt                DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("tier_configs")
 }
@@ -1177,42 +1135,42 @@ model TierConfig {
 // =====================================================
 
 model PricingPlan {
-  id                String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Plan identification
-  slug              String   @unique // "single", "medium", "enterprise"
-  name              String   // "Single Assessment", "50 Assessments", etc.
-  description       String?
+  slug        String  @unique // "single", "medium", "enterprise"
+  name        String // "Single Assessment", "50 Assessments", etc.
+  description String?
 
   // Paddle integration
-  paddleProductId   String   @map("paddle_product_id") // Paddle price ID (e.g., "pri_01hzf9kj")
-  paddlePriceId     String?  @map("paddle_price_id")   // Optional: separate price ID if different
+  paddleProductId String  @map("paddle_product_id") // Paddle price ID (e.g., "pri_01hzf9kj")
+  paddlePriceId   String? @map("paddle_price_id") // Optional: separate price ID if different
 
   // Pricing details
-  credits           Int      // Number of credits included
-  price             Decimal  @db.Decimal(10, 2) // Display price (e.g., 20.00, 750.00)
-  currency          String   @default("USD")
-  pricePerCredit    Decimal  @map("price_per_credit") @db.Decimal(10, 2) // For display (e.g., 20.00, 15.00)
+  credits        Int // Number of credits included
+  price          Decimal @db.Decimal(10, 2) // Display price (e.g., 20.00, 750.00)
+  currency       String  @default("USD")
+  pricePerCredit Decimal @map("price_per_credit") @db.Decimal(10, 2) // For display (e.g., 20.00, 15.00)
 
   // Display configuration
-  sortOrder         Int      @default(0) @map("sort_order")
-  isPopular         Boolean  @default(false) @map("is_popular") // Highlight badge
-  badge             String?  // Optional badge text ("Best Value", "Most Popular")
-  features          Json     @default("[]") // Array of feature strings for display
+  sortOrder Int     @default(0) @map("sort_order")
+  isPopular Boolean @default(false) @map("is_popular") // Highlight badge
+  badge     String? // Optional badge text ("Best Value", "Most Popular")
+  features  Json    @default("[]") // Array of feature strings for display
 
   // Plan type
-  planType          PlanType @default(ONE_TIME) @map("plan_type")
-  billingInterval   String?  @map("billing_interval") // "monthly", "yearly" for subscriptions
+  planType        PlanType @default(ONE_TIME) @map("plan_type")
+  billingInterval String?  @map("billing_interval") // "monthly", "yearly" for subscriptions
 
   // Availability
-  isActive          Boolean  @default(true) @map("is_active")
-  availableFrom     DateTime? @map("available_from")
-  availableUntil    DateTime? @map("available_until")
+  isActive       Boolean   @default(true) @map("is_active")
+  availableFrom  DateTime? @map("available_from")
+  availableUntil DateTime? @map("available_until")
 
   // Audit trail
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-  createdBy         String?  @map("created_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdBy String?  @map("created_by")
 
   @@index([isActive, sortOrder])
   @@index([planType])
@@ -1220,8 +1178,8 @@ model PricingPlan {
 }
 
 enum PlanType {
-  ONE_TIME      // Credit pack purchase
-  SUBSCRIPTION  // Recurring subscription
+  ONE_TIME // Credit pack purchase
+  SUBSCRIPTION // Recurring subscription
 }
 
 // =====================================================
@@ -1231,31 +1189,31 @@ enum PlanType {
 // =====================================================
 
 model AssessmentAddOn {
-  id              String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // Add-on identification
-  slug            String   @unique  // "video-recording", "live-proctoring"
-  name            String   // "Video Recording", "Live Proctoring"
-  description     String?
+  slug        String  @unique // "video-recording", "live-proctoring"
+  name        String // "Video Recording", "Live Proctoring"
+  description String?
 
   // Pricing
-  price           Decimal  @db.Decimal(10, 2) // Per-assessment price
-  currency        String   @default("USD")
+  price    Decimal @db.Decimal(10, 2) // Per-assessment price
+  currency String  @default("USD")
 
   // Display
-  icon            String?  // Lucide icon name (e.g., "Video", "Shield")
-  sortOrder       Int      @default(0) @map("sort_order")
-  features        Json     @default("[]") // Feature bullet points
+  icon      String? // Lucide icon name (e.g., "Video", "Shield")
+  sortOrder Int     @default(0) @map("sort_order")
+  features  Json    @default("[]") // Feature bullet points
 
   // Paddle integration (if separate product)
-  paddleProductId String?  @map("paddle_product_id")
+  paddleProductId String? @map("paddle_product_id")
 
   // Availability
-  isActive        Boolean  @default(true) @map("is_active")
+  isActive Boolean @default(true) @map("is_active")
 
   // Audit
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([isActive, sortOrder])
   @@map("assessment_addons")
@@ -1263,24 +1221,24 @@ model AssessmentAddOn {
 
 // Assessment templates - pre-built question templates
 model AssessmentTemplateConfig {
-  id                String   @id @default(cuid())
-  templateId        String   @unique @map("template_id") // "backend-junior", etc.
+  id                String  @id @default(cuid())
+  templateId        String  @unique @map("template_id") // "backend-junior", etc.
   name              String
   role              String // "backend", "frontend", etc.
   seniority         String // "junior", "mid", "senior", etc.
   description       String?
-  estimatedDuration Int      @map("estimated_duration")
-  problemCount      Int      @map("problem_count")
-  minTier           String   @map("min_tier") // minimum tier required
-  questionSeeds     Json     @map("question_seeds") // Array of question seed objects
-  isActive          Boolean  @default(true) @map("is_active")
-  isSystem          Boolean  @default(true) @map("is_system")
-  organizationId    String?  @map("organization_id")
+  estimatedDuration Int     @map("estimated_duration")
+  problemCount      Int     @map("problem_count")
+  minTier           String  @map("min_tier") // minimum tier required
+  questionSeeds     Json    @map("question_seeds") // Array of question seed objects
+  isActive          Boolean @default(true) @map("is_active")
+  isSystem          Boolean @default(true) @map("is_system")
+  organizationId    String? @map("organization_id")
 
-  organization      Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@index([role, seniority])
   @@index([isSystem])

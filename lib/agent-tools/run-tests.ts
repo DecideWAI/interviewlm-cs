@@ -129,21 +129,33 @@ export async function executeRunTests(
       }))
     );
 
-    // Record results to database
-    await Promise.all(
-      result.testResults.map((tr: any) =>
-        prisma.testResult.create({
+    // Record results to event store
+    const lastEvent = await prisma.sessionEventLog.findFirst({
+      where: { sessionId },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+    for (const tr of result.testResults) {
+      await prisma.sessionEventLog.create({
+        data: {
+          sessionId,
+          sequenceNumber: nextSeq++,
+          timestamp: new Date(),
+          eventType: "test.result",
+          category: "test",
           data: {
-            sessionId,
             testName: tr.name,
             passed: tr.passed,
             output: tr.output || null,
             error: tr.error || null,
             duration: tr.duration || 0,
           },
-        })
-      )
-    );
+          checkpoint: false,
+        },
+      });
+    }
 
     return {
       success: true,

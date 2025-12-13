@@ -163,14 +163,16 @@ export async function POST(
 
           // Record terminal input event
           if (candidate.sessionRecording) {
-            await sessions.recordEvent(candidate.sessionRecording.id, {
-              type: "terminal_input",
-              data: {
+            await sessions.recordEvent(
+              candidate.sessionRecording.id,
+              "terminal.command",
+              "USER",
+              {
                 command,
                 workingDirectory: "/workspace",
                 timestamp: new Date().toISOString(),
-              },
-            });
+              }
+            );
           }
 
           // Execute command in Modal sandbox (from /workspace directory)
@@ -200,16 +202,18 @@ export async function POST(
 
           // Record terminal output event
           if (candidate.sessionRecording) {
-            await sessions.recordEvent(candidate.sessionRecording.id, {
-              type: "terminal_output",
-              data: {
+            await sessions.recordEvent(
+              candidate.sessionRecording.id,
+              "terminal.output",
+              "SYSTEM", // Output comes from the system
+              {
                 output,
                 stdout: result.stdout || "",
                 stderr: result.stderr || "",
                 exitCode: result.exitCode,
                 timestamp: new Date().toISOString(),
-              },
-            });
+              }
+            );
           }
 
           // Add prompt to output

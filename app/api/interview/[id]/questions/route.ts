@@ -509,12 +509,12 @@ export const POST = withErrorHandling(async (
 
       if (sessionRecording) {
         // Find the most recent evaluation event for the previous question
-        const evaluationEvent = await prisma.sessionEvent.findFirst({
+        const evaluationEvent = await prisma.sessionEventLog.findFirst({
           where: {
             sessionId: sessionRecording.id,
-            type: "evaluation",
+            eventType: "evaluation.complete",
           },
-          orderBy: { timestamp: "desc" },
+          orderBy: { sequenceNumber: "desc" },
         });
 
         if (!evaluationEvent) {

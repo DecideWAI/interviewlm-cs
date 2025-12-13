@@ -243,7 +243,7 @@ export async function POST(
 
             if (checkpointId) {
               // Update existing checkpoint
-              await prisma.sessionEvent.update({
+              await prisma.sessionEventLog.update({
                 where: { id: checkpointId },
                 data: {
                   timestamp: new Date(),
@@ -251,11 +251,21 @@ export async function POST(
                 },
               });
             } else {
-              // Create new checkpoint
-              const checkpoint = await prisma.sessionEvent.create({
+              // Create new checkpoint - get next sequence number
+              const lastEvent = await prisma.sessionEventLog.findFirst({
+                where: { sessionId: sessionRecording!.id },
+                orderBy: { sequenceNumber: 'desc' },
+                select: { sequenceNumber: true },
+              });
+              const nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+              const checkpoint = await prisma.sessionEventLog.create({
                 data: {
                   sessionId: sessionRecording!.id,
-                  type: CHECKPOINT_EVENT_TYPE,
+                  sequenceNumber: nextSeq,
+                  timestamp: new Date(),
+                  eventType: CHECKPOINT_EVENT_TYPE,
+                  category: 'chat',
                   data: checkpointData as any,
                   checkpoint: true,
                 },
@@ -286,7 +296,7 @@ export async function POST(
         const clearCheckpoint = async () => {
           if (checkpointId) {
             try {
-              await prisma.sessionEvent.delete({
+              await prisma.sessionEventLog.delete({
                 where: { id: checkpointId },
               });
               console.log('[AgentStream] Checkpoint cleared');
@@ -306,11 +316,19 @@ export async function POST(
             sessionRecording!.id, // sessionId (used as thread_id to group all messages from same session)
             id, // candidateId
             async () => {
-              // Load conversation history
-              const previousInteractions = await prisma.claudeInteraction.findMany({
-                where: { sessionId: sessionRecording!.id },
-                orderBy: { timestamp: "asc" },
-                select: { role: true, content: true },
+              // Load conversation history from event store
+              const chatEvents = await prisma.sessionEventLog.findMany({
+                where: {
+                  sessionId: sessionRecording!.id,
+                  category: "chat",
+                  eventType: { in: ["chat.user_message", "chat.assistant_message"] },
+                },
+                orderBy: { sequenceNumber: "asc" },
+                select: { data: true },
+              });
+              const previousInteractions = chatEvents.map((e) => {
+                const data = e.data as any;
+                return { role: data.role || "user", content: data.content || "" };
               });
 
               // Route based on agent assignment
@@ -415,33 +433,53 @@ export async function POST(
           const modelName = agentResponse.metadata?.model as string | undefined;
           const usage = agentResponse.metadata?.usage as { input_tokens?: number; output_tokens?: number } | undefined;
 
-          // Record interactions to database
-          const interaction = await prisma.claudeInteraction.create({
-            data: {
-              sessionId: sessionRecording!.id,
-              role: "user",
-              content: message,
-              model: modelName,
-              inputTokens: usage?.input_tokens,
-              outputTokens: usage?.output_tokens,
-              latency,
-            },
-          });
-
-          await prisma.claudeInteraction.create({
-            data: {
-              sessionId: sessionRecording!.id,
-              role: "assistant",
-              content: agentResponse.text,
-              model: modelName,
-            },
-          });
-
           // Calculate prompt quality
           const promptQuality = calculatePromptQuality(message, codeContext);
-          await prisma.claudeInteraction.update({
-            where: { id: interaction.id },
-            data: { promptQuality },
+
+          // Get next sequence numbers for events
+          const lastEventForChat = await prisma.sessionEventLog.findFirst({
+            where: { sessionId: sessionRecording!.id },
+            orderBy: { sequenceNumber: 'desc' },
+            select: { sequenceNumber: true },
+          });
+          let nextSeqChat = (lastEventForChat?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+          // Record user message to event store
+          await prisma.sessionEventLog.create({
+            data: {
+              sessionId: sessionRecording!.id,
+              sequenceNumber: nextSeqChat++,
+              timestamp: new Date(),
+              eventType: "chat.user_message",
+              category: "chat",
+              data: {
+                role: "user",
+                content: message,
+                model: modelName,
+                inputTokens: usage?.input_tokens,
+                outputTokens: usage?.output_tokens,
+                latency,
+                promptQuality,
+              },
+              checkpoint: false,
+            },
+          });
+
+          // Record assistant response to event store
+          await prisma.sessionEventLog.create({
+            data: {
+              sessionId: sessionRecording!.id,
+              sequenceNumber: nextSeqChat++,
+              timestamp: new Date(),
+              eventType: "chat.assistant_message",
+              category: "chat",
+              data: {
+                role: "assistant",
+                content: agentResponse.text,
+                model: modelName,
+              },
+              checkpoint: false,
+            },
           });
 
           // Publish event for Interview Agent

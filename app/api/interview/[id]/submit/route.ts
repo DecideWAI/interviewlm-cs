@@ -83,14 +83,7 @@ export const POST = withErrorHandling(async (
           },
         },
         assessment: true,
-        sessionRecording: {
-          include: {
-            events: true,
-            claudeInteractions: true,
-            testResults: true,
-            codeSnapshots: true,
-          },
-        },
+        sessionRecording: true,
         generatedQuestions: true,
       },
     });
@@ -117,7 +110,82 @@ export const POST = withErrorHandling(async (
       throw new ValidationError("No session recording found");
     }
 
-    const sessionRecording = candidate.sessionRecording;
+    const baseSessionRecording = candidate.sessionRecording;
+
+    // Fetch events from unified event store and transform for compatibility
+    const allEvents = await prisma.sessionEventLog.findMany({
+      where: { sessionId: baseSessionRecording.id },
+      orderBy: { sequenceNumber: "asc" },
+    });
+
+    // Transform events into legacy format structures
+    const events = allEvents.map(e => ({
+      id: e.id,
+      type: e.eventType,
+      timestamp: e.timestamp,
+      data: e.data,
+    }));
+
+    const claudeInteractions = allEvents
+      .filter(e => e.category === "chat")
+      .reduce((acc: any[], e) => {
+        const data = e.data as Record<string, unknown>;
+        if (data?.role === "user") {
+          acc.push({
+            id: e.id,
+            role: "user",
+            content: data?.content as string || "",
+            promptQuality: (data?.promptQuality as number) || 3,
+            timestamp: e.timestamp,
+          });
+        } else if (data?.role === "assistant") {
+          acc.push({
+            id: e.id,
+            role: "assistant",
+            content: data?.content as string || "",
+            timestamp: e.timestamp,
+          });
+        }
+        return acc;
+      }, []);
+
+    const testResults = allEvents
+      .filter(e => e.eventType === "test.result")
+      .map(e => {
+        const data = e.data as Record<string, unknown>;
+        return {
+          id: e.id,
+          testName: data?.testName as string || "",
+          passed: data?.passed as boolean || false,
+          output: data?.output as string | null,
+          error: data?.error as string | null,
+          duration: data?.duration as number || 0,
+          timestamp: e.timestamp,
+        };
+      });
+
+    const codeSnapshots = allEvents
+      .filter(e => e.eventType === "code.snapshot")
+      .map(e => {
+        const data = e.data as Record<string, unknown>;
+        return {
+          id: e.id,
+          fileName: data?.fileName as string || e.filePath || "",
+          language: data?.language as string || "",
+          fullContent: data?.fullContent as string | null,
+          contentHash: data?.contentHash as string || "",
+          timestamp: e.timestamp,
+        };
+      });
+
+    // Create enhanced session recording with event data
+    const sessionRecording = {
+      ...baseSessionRecording,
+      events,
+      claudeInteractions,
+      testResults,
+      codeSnapshots,
+    };
 
     // Run final test execution to ensure we have latest results
     let finalTestResults: any = null;
@@ -157,20 +225,34 @@ export const POST = withErrorHandling(async (
             { candidateId: id, testCount: testCases.length }
           );
 
-          // Record final test results
-          const testResultPromises = finalTestResults.testResults.map((result: any) =>
-            prisma.testResult.create({
+          // Get next sequence number for test result events
+          const lastEvent = await prisma.sessionEventLog.findFirst({
+            where: { sessionId: sessionRecording.id },
+            orderBy: { sequenceNumber: 'desc' },
+            select: { sequenceNumber: true },
+          });
+          let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+          // Record final test results to event store
+          for (const result of finalTestResults.testResults) {
+            await prisma.sessionEventLog.create({
               data: {
                 sessionId: sessionRecording.id,
-                testName: result.name,
-                passed: result.passed,
-                output: result.output || null,
-                error: result.error || null,
-                duration: result.duration,
+                sequenceNumber: nextSeq++,
+                timestamp: new Date(),
+                eventType: "test.result",
+                category: "test",
+                data: {
+                  testName: result.name,
+                  passed: result.passed,
+                  output: result.output || null,
+                  error: result.error || null,
+                  duration: result.duration,
+                },
+                checkpoint: false,
               },
-            })
-          );
-          await Promise.all(testResultPromises);
+            });
+          }
         }
       } catch (error) {
         logger.warn("Error running final tests", {
@@ -370,9 +452,11 @@ export const POST = withErrorHandling(async (
     }
 
     // Record session_submit event
-    await sessions.recordEvent(sessionRecording.id, {
-      type: "session_submit",
-      data: {
+    await sessions.recordEvent(
+      sessionRecording.id,
+      "question.submit",
+      "USER", // User submitted their solution
+      {
         finalCode,
         testsPassed: finalTestResults?.passed || 0,
         testsFailed: finalTestResults?.failed || 0,
@@ -381,8 +465,8 @@ export const POST = withErrorHandling(async (
         duration: metrics.timeUsed,
         timestamp: new Date().toISOString(),
       },
-      checkpoint: true, // Mark as checkpoint for replay seeking
-    });
+      { checkpoint: true } // Mark as checkpoint for replay seeking
+    );
 
     // Update session recording
     await prisma.sessionRecording.update({

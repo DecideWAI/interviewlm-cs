@@ -709,9 +709,11 @@ module.exports = longestPalindrome;`,
 
   // Record session_start event (only if this is a new session)
   if (!sessionRecording.startTime) {
-    await sessions.recordEvent(sessionRecording.id, {
-      type: "session_start",
-      data: {
+    await sessions.recordEvent(
+      sessionRecording.id,
+      "session.start",
+      "SYSTEM",
+      {
         questionId: question.id,
         questionTitle: question.title,
         difficulty: question.difficulty,
@@ -719,8 +721,8 @@ module.exports = longestPalindrome;`,
         timeLimit,
         startTime: startedAt.toISOString(),
       },
-      checkpoint: true, // Mark as checkpoint for replay seeking
-    });
+      { checkpoint: true } // Mark as checkpoint for replay seeking
+    );
   }
   const elapsedSeconds = Math.floor(
     (Date.now() - startedAt.getTime()) / 1000

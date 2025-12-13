@@ -308,14 +308,20 @@ export default function InterviewPage() {
 
   // Handle horizontal panel layout changes
   const handleHorizontalLayout = useCallback((sizes: number[]) => {
-    const newSizes = { ...panelSizes, horizontal: sizes };
+    const newSizes: PanelSizes = {
+      ...panelSizes,
+      horizontal: sizes as [number, number, number],
+    };
     setPanelSizes(newSizes);
     localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
   }, [candidateId, panelSizes]);
 
   // Handle vertical panel layout changes
   const handleVerticalLayout = useCallback((sizes: number[]) => {
-    const newSizes = { ...panelSizes, vertical: sizes };
+    const newSizes: PanelSizes = {
+      ...panelSizes,
+      vertical: sizes as [number, number],
+    };
     setPanelSizes(newSizes);
     localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
   }, [candidateId, panelSizes]);

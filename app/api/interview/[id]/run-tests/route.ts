@@ -205,15 +205,17 @@ export const POST = withErrorHandling(async (
     await modal.writeFile(id, fileToWrite, code);
 
     // Record test_run_start event
-    await sessions.recordEvent(sessionRecording.id, {
-      type: "test_run_start",
-      data: {
+    await sessions.recordEvent(
+      sessionRecording.id,
+      "test.run_start",
+      "USER", // User triggered the test run
+      {
         testCount: resolvedTestCases.length,
         language,
         fileName: fileToWrite,
         timestamp: new Date().toISOString(),
-      },
-    });
+      }
+    );
 
     // Execute tests in Modal sandbox with performance timing
     const executionResult = await logger.time(
@@ -233,31 +235,51 @@ export const POST = withErrorHandling(async (
 
     const executionTime = Date.now() - executionStart;
 
-    // Record test results to database
-    const testResultPromises = executionResult.testResults.map((result) =>
-      prisma.testResult.create({
+    // Get next sequence number for events
+    const lastEvent = await prisma.sessionEventLog.findFirst({
+      where: { sessionId: sessionRecording.id },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+    // Record test results to event store
+    for (const result of executionResult.testResults) {
+      await prisma.sessionEventLog.create({
         data: {
           sessionId: sessionRecording.id,
-          testName: result.name,
-          passed: result.passed,
-          output: result.output || null,
-          error: result.error || null,
-          duration: result.duration,
+          sequenceNumber: nextSeq++,
+          timestamp: new Date(),
+          eventType: "test.result",
+          category: "test",
+          data: {
+            testName: result.name,
+            passed: result.passed,
+            output: result.output || null,
+            error: result.error || null,
+            duration: result.duration,
+          },
+          checkpoint: false,
         },
-      })
-    );
-
-    await Promise.all(testResultPromises);
+      });
+    }
 
     // Record code snapshot
-    await prisma.codeSnapshot.create({
+    await prisma.sessionEventLog.create({
       data: {
         sessionId: sessionRecording.id,
-        fileId: fileName || "main",
-        fileName: fileName || "main",
-        language,
-        contentHash: hashCode(code),
-        fullContent: code,
+        sequenceNumber: nextSeq++,
+        timestamp: new Date(),
+        eventType: "code.snapshot",
+        category: "code",
+        filePath: fileName || "main",
+        data: {
+          fileName: fileName || "main",
+          language,
+          contentHash: hashCode(code),
+          fullContent: code,
+        },
+        checkpoint: false,
       },
     });
 
@@ -403,15 +425,30 @@ Return ONLY valid JSON (no markdown):
       evaluationTime,
     });
 
+    // Get next sequence number for event
+    const lastEventForAI = await prisma.sessionEventLog.findFirst({
+      where: { sessionId: recording.id },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    const nextSeqForAI = (lastEventForAI?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
     // Record code snapshot
-    await prisma.codeSnapshot.create({
+    await prisma.sessionEventLog.create({
       data: {
         sessionId: recording.id,
-        fileId: fileName || "main",
-        fileName: fileName || "main",
-        language,
-        contentHash: hashCode(code),
-        fullContent: code,
+        sequenceNumber: nextSeqForAI,
+        timestamp: new Date(),
+        eventType: "code.snapshot",
+        category: "code",
+        filePath: fileName || "main",
+        data: {
+          fileName: fileName || "main",
+          language,
+          contentHash: hashCode(code),
+          fullContent: code,
+        },
+        checkpoint: false,
       },
     });
 

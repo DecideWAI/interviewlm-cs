@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
 import { CandidateProfile } from "@/types/analytics";
@@ -7,6 +7,7 @@ import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError }
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
+import { eventStore } from "@/lib/services/event-store";
 
 /**
  * GET /api/candidates/[id]
@@ -61,23 +62,7 @@ export const GET = withErrorHandling(async (
             description: true,
           },
         },
-        sessionRecording: {
-          include: {
-            claudeInteractions: {
-              orderBy: { timestamp: "asc" },
-            },
-            testResults: {
-              orderBy: { timestamp: "asc" },
-            },
-            codeSnapshots: {
-              orderBy: { timestamp: "asc" },
-            },
-            events: {
-              orderBy: { timestamp: "asc" },
-              take: 100, // Limit events to avoid huge payload
-            },
-          },
-        },
+        sessionRecording: true,
         generatedQuestions: {
           orderBy: { order: "asc" },
         },
@@ -100,6 +85,50 @@ export const GET = withErrorHandling(async (
   const sessionData = candidate.sessionRecording;
   const questions = candidate.generatedQuestions;
 
+  // Fetch events from unified event store if session exists
+  const events = sessionData ? await eventStore.getEvents(sessionData.id) : [];
+
+  // Extract data from events
+  const chatEvents = events.filter((e) => e.category === "chat");
+  const testEvents = events.filter((e) => e.eventType === "test.result" || e.eventType === "test.run_complete");
+  const codeSnapshotEvents = events.filter((e) => e.eventType === "code.snapshot");
+
+  // Transform events to legacy format for metrics calculation
+  const interactions = chatEvents.map((e) => {
+    const data = e.data as any;
+    return {
+      id: e.id,
+      role: data.role || "user",
+      timestamp: e.timestamp,
+      promptQuality: data.promptQuality,
+      inputTokens: data.inputTokens,
+      outputTokens: data.outputTokens,
+    };
+  });
+
+  const testResults = testEvents.map((e) => {
+    const data = e.data as any;
+    return {
+      id: e.id,
+      testName: data.testName || "test",
+      passed: data.passed ?? false,
+      duration: data.duration,
+      timestamp: e.timestamp,
+    };
+  });
+
+  const codeSnapshots = codeSnapshotEvents.map((e) => {
+    const data = e.data as any;
+    return {
+      id: e.id,
+      fileName: data.fileName || e.filePath || "unknown",
+      language: data.language || "typescript",
+      linesAdded: data.linesAdded || 0,
+      linesDeleted: data.linesDeleted || 0,
+      timestamp: e.timestamp,
+    };
+  });
+
   // Calculate comprehensive metrics
   const timeUsed = sessionData?.duration ? Math.round(sessionData.duration / 60) : undefined;
   const timeAllocated = candidate.assessment.duration;
@@ -111,23 +140,20 @@ export const GET = withErrorHandling(async (
   const problemsSolved = questions.filter((q) => q.status === "COMPLETED").length;
   const completionRate = problemsAttempted > 0 ? problemsSolved / problemsAttempted : 0;
 
-  // Test results
-  const testResults = sessionData?.testResults || [];
+  // Test results metrics
   const testsPassed = testResults.filter((t) => t.passed).length;
   const testsFailed = testResults.filter((t) => !t.passed).length;
 
-  // Claude interactions
-  const interactions = sessionData?.claudeInteractions || [];
-  const claudeInteractions = interactions.filter((i) => i.role === "user").length;
+  // Claude interactions metrics
+  const claudeInteractionCount = interactions.filter((i) => i.role === "user").length;
   const avgPromptQuality = interactions.length > 0
     ? interactions
-        .filter((i) => i.promptQuality !== null)
+        .filter((i) => i.promptQuality !== null && i.promptQuality !== undefined)
         .reduce((sum, i) => sum + (i.promptQuality || 0), 0) /
-      interactions.filter((i) => i.promptQuality !== null).length
+      Math.max(1, interactions.filter((i) => i.promptQuality !== null && i.promptQuality !== undefined).length)
     : undefined;
 
   // Code metrics
-  const codeSnapshots = sessionData?.codeSnapshots || [];
   const totalLinesAdded = codeSnapshots.reduce((sum, s) => sum + s.linesAdded, 0);
   const totalLinesDeleted = codeSnapshots.reduce((sum, s) => sum + s.linesDeleted, 0);
 
@@ -138,10 +164,10 @@ export const GET = withErrorHandling(async (
 
   // AI usage pattern detection
   let aiUsagePattern: "goal-oriented" | "trial-and-error" | "copy-paste" | "ai-avoidant" = "ai-avoidant";
-  if (claudeInteractions > 0) {
+  if (claudeInteractionCount > 0) {
     if (avgPromptQuality && avgPromptQuality >= 4.0) {
       aiUsagePattern = "goal-oriented";
-    } else if (claudeInteractions > 15) {
+    } else if (claudeInteractionCount > 15) {
       aiUsagePattern = "trial-and-error";
     } else {
       aiUsagePattern = "copy-paste";
@@ -182,7 +208,7 @@ export const GET = withErrorHandling(async (
     testsPassed,
     testsFailed,
     completionRate,
-    claudeInteractions,
+    claudeInteractions: claudeInteractionCount,
   } as any);
 
   const greenFlags = detectGreenFlags({
@@ -251,7 +277,7 @@ export const GET = withErrorHandling(async (
     testsPassed,
     testsFailed,
 
-    claudeInteractions,
+    claudeInteractions: claudeInteractionCount,
     avgPromptQuality,
     aiAcceptanceRate,
     aiUsagePattern,
@@ -289,12 +315,12 @@ export const GET = withErrorHandling(async (
 
     // Session timeline
     timeline: {
-      events: sessionData?.events.map((e) => ({
+      events: events.slice(0, 100).map((e) => ({
         id: e.id,
-        type: e.type,
+        type: e.eventType,
         timestamp: e.timestamp.toISOString(),
         data: e.data,
-      })) || [],
+      })),
       claudeInteractions: interactions.map((i) => ({
         id: i.id,
         role: i.role,
@@ -343,7 +369,7 @@ export const GET = withErrorHandling(async (
     aiCollaborationScore,
     problemsSolved,
     problemsAttempted,
-    claudeInteractions,
+    claudeInteractions: claudeInteractionCount,
     testsPassed,
     testsFailed,
     redFlagsCount: redFlags.length,

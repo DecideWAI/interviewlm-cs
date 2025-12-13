@@ -360,6 +360,80 @@ This pricing is based on realistic COGS analysis documented in the `docs/` and v
 
 Currently uses React's built-in state management (`useState`, `useEffect`). No external state management library is used yet.
 
+## Unified Event Store
+
+All session activity is recorded to a single `SessionEventLog` table using event sourcing. This provides a single source of truth for session replay, evaluation, and analytics.
+
+### Event Origins
+
+Every event tracks who/what triggered it:
+
+| Origin | Description | Examples |
+|--------|-------------|----------|
+| `USER` | Candidate actions | Code edits, chat messages, terminal commands, test runs |
+| `AI` | AI agent actions | Assistant responses, AI-generated code, tool calls |
+| `SYSTEM` | Platform actions | Session start/end, test results, evaluations, auto-saves |
+
+### Event Type Naming
+
+Events use dot-notation organized by category:
+
+```typescript
+// Categories: session, question, file, code, chat, terminal, test, evaluation
+"session.start"        // Session begins
+"code.snapshot"        // Code version saved
+"chat.user_message"    // User sends chat message
+"chat.assistant_message" // AI responds
+"terminal.command"     // Terminal command entered
+"test.result"          // Individual test result
+"evaluation.complete"  // Evaluation finished
+```
+
+### Key Functions
+
+**Recording events** (`lib/services/sessions.ts`):
+```typescript
+// General event recording
+await recordEvent(
+  sessionId,
+  "code.edit",      // eventType
+  "USER",           // origin
+  { key: "a" },     // data payload
+  { filePath: "solution.ts" }  // options
+);
+
+// Chat interactions (origin auto-determined by role)
+await recordClaudeInteraction(sessionId, {
+  role: "assistant",
+  content: "Here's how to solve this...",
+});
+
+// Code snapshots (explicit origin for USER vs AI code)
+await recordCodeSnapshot(sessionId, snapshot, "USER");
+await recordCodeSnapshot(sessionId, snapshot, "AI");  // AI-generated
+
+// Test results (always SYSTEM origin)
+await recordTestResult(sessionId, { testName: "test", passed: true });
+```
+
+### Checkpoint Events
+
+These event types are automatically marked as checkpoints for efficient replay seeking:
+- `session.start`, `session.end`
+- `question.start`, `question.submit`
+- `code.snapshot`
+- `test.result`, `test.run_complete`
+- `evaluation.complete`
+
+### Full Documentation
+
+See `docs/EVENT_STORE_ARCHITECTURE.md` for comprehensive documentation including:
+- Complete Prisma schema
+- All event types and data schemas
+- API usage examples
+- Event batching for high-frequency events
+- Analytics and session replay patterns
+
 ## Important Development Notes
 
 1. **xterm.js SSR Issue**: Always import Terminal component dynamically:

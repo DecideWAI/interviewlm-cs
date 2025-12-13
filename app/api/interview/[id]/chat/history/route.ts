@@ -63,40 +63,41 @@ export const GET = withErrorHandling(async (
     return success({ messages: [] });
   }
 
-  // Fetch all interactions for this session, ordered by creation time
-  const interactions = await prisma.claudeInteraction.findMany({
+  // Fetch all chat interactions from event store, ordered by sequence number
+  const chatEvents = await prisma.sessionEventLog.findMany({
     where: {
       sessionId: candidate.sessionRecording.id,
+      category: "chat",
+      eventType: { in: ["chat.user_message", "chat.assistant_message"] },
     },
     orderBy: {
-      timestamp: "asc",
+      sequenceNumber: "asc",
     },
     select: {
       id: true,
-      role: true,
-      content: true,
       timestamp: true,
-      inputTokens: true,
-      outputTokens: true,
-      metadata: true,
+      data: true,
     },
   });
 
   // Transform to frontend message format
-  const messages = interactions.map((interaction) => ({
-    id: interaction.id,
-    role: interaction.role as "user" | "assistant",
-    content: interaction.content,
-    timestamp: interaction.timestamp,
-    tokenUsage:
-      interaction.inputTokens || interaction.outputTokens
-        ? {
-            inputTokens: interaction.inputTokens || 0,
-            outputTokens: interaction.outputTokens || 0,
-          }
-        : undefined,
-    metadata: interaction.metadata as any,
-  }));
+  const messages = chatEvents.map((event) => {
+    const data = event.data as any;
+    return {
+      id: event.id,
+      role: (data.role || "user") as "user" | "assistant",
+      content: data.content || "",
+      timestamp: event.timestamp,
+      tokenUsage:
+        data.inputTokens || data.outputTokens
+          ? {
+              inputTokens: data.inputTokens || 0,
+              outputTokens: data.outputTokens || 0,
+            }
+          : undefined,
+      metadata: data.metadata,
+    };
+  });
 
   logger.info('[Chat History] History retrieved', {
     candidateId: id,

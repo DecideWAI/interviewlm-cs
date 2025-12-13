@@ -31,6 +31,8 @@ import type {
   EvaluationAnalyzeEventData,
   SessionRecording,
   ScoringWeights,
+  AIInteraction,
+  AgentTool,
 } from '../lib/types';
 import { DEFAULT_SCORING_WEIGHTS } from '../lib/types';
 import prisma from '../lib/prisma';
@@ -997,17 +999,15 @@ IMPORTANT: Respond with ONLY a single number between 0-100. No explanations.`;
   private async getSessionRecording(sessionId: string): Promise<SessionRecording | null> {
     const session = await prisma.sessionRecording.findUnique({
       where: { id: sessionId },
-      include: {
-        claudeInteractions: true,
-        codeSnapshots: true,
-        terminalCommands: true,
-        testResults: {
-          orderBy: { timestamp: 'asc' },
-        },
-      },
     });
 
     if (!session) return null;
+
+    // Fetch all events from the unified event store
+    const allEvents = await prisma.sessionEventLog.findMany({
+      where: { sessionId },
+      orderBy: { sequenceNumber: 'asc' },
+    });
 
     // Get question details from candidate
     const candidate = await prisma.candidate.findUnique({
@@ -1039,6 +1039,92 @@ IMPORTANT: Respond with ONLY a single number between 0-100. No explanations.`;
 
     const questionTopic = question?.problemSeed?.category || 'general';
 
+    // Extract code snapshots from events
+    const codeSnapshotEvents = allEvents.filter(e => e.eventType === 'code.snapshot');
+    const codeSnapshots = codeSnapshotEvents.map((e) => {
+      const data = e.data as Record<string, unknown>;
+      return {
+        timestamp: e.timestamp,
+        files: (data?.files as Record<string, string>) || { [e.filePath || 'main']: (data?.fullContent as string) || '' },
+        trigger: (data?.trigger as any) || 'unknown',
+      };
+    });
+
+    // Extract Claude interactions from chat events
+    const chatEvents = allEvents.filter(e => e.category === 'chat');
+    const claudeInteractions: AIInteraction[] = [];
+
+    let currentInteraction: AIInteraction | null = null;
+    for (const event of chatEvents) {
+      const data = event.data as Record<string, unknown>;
+      if (data?.role === 'user') {
+        if (currentInteraction) {
+          claudeInteractions.push(currentInteraction);
+        }
+        currentInteraction = {
+          timestamp: event.timestamp,
+          candidateMessage: (data?.content as string) || '',
+          aiResponse: '',
+          toolsUsed: [] as AgentTool[],
+          filesModified: [],
+          promptQuality: data?.promptQuality as number,
+        };
+      } else if (data?.role === 'assistant' && currentInteraction) {
+        currentInteraction.aiResponse = (data?.content as string) || '';
+        const metadata = data?.metadata as Record<string, unknown>;
+        // Cast toolsUsed to AgentTool[] - these should be valid tool names from the agent
+        currentInteraction.toolsUsed = ((metadata?.toolsUsed as string[]) || []) as AgentTool[];
+        currentInteraction.filesModified = (metadata?.filesModified as string[]) || [];
+      }
+    }
+    if (currentInteraction) {
+      claudeInteractions.push(currentInteraction);
+    }
+
+    // Extract test results from events
+    const testEvents = allEvents.filter(e => e.eventType === 'test.result');
+    const testResultsRaw = testEvents.map((e) => {
+      const data = e.data as Record<string, unknown>;
+      return {
+        timestamp: e.timestamp,
+        passed: data?.passed as boolean || false,
+        output: data?.output as string || '',
+      };
+    });
+
+    // Group by timestamp (approximate - within 1 minute)
+    const testResults: Array<{ timestamp: Date; passed: number; failed: number; total: number; output: string }> = [];
+    const grouped: Record<string, typeof testResultsRaw> = {};
+    testResultsRaw.forEach((t) => {
+      const key = t.timestamp.toISOString().slice(0, 16); // Group by minute
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(t);
+    });
+
+    for (const [key, groupTests] of Object.entries(grouped)) {
+      const passed = groupTests.filter((t) => t.passed).length;
+      const failed = groupTests.filter((t) => !t.passed).length;
+      testResults.push({
+        timestamp: new Date(key),
+        passed,
+        failed,
+        total: passed + failed,
+        output: groupTests.map((t) => t.output || '').join('\n'),
+      });
+    }
+
+    // Extract terminal commands from events
+    const terminalEvents = allEvents.filter(e => e.eventType === 'terminal.input' || e.eventType === 'terminal_input');
+    const terminalCommands = terminalEvents.map((e) => {
+      const data = e.data as Record<string, unknown>;
+      return {
+        timestamp: e.timestamp,
+        command: (data?.command as string) || '',
+        output: data?.output as string,
+        exitCode: data?.exitCode as number,
+      };
+    });
+
     // Build SessionRecording object
     const recording: SessionRecording = {
       sessionId: session.id,
@@ -1047,50 +1133,10 @@ IMPORTANT: Respond with ONLY a single number between 0-100. No explanations.`;
       startTime: session.startTime || new Date(),
       endTime: session.endTime || new Date(),
       duration: session.duration || 0,
-      codeSnapshots: session.codeSnapshots.map((s: any) => ({
-        timestamp: s.timestamp,
-        files: s.files as Record<string, string>,
-        trigger: s.trigger as any,
-      })),
-      claudeInteractions: session.claudeInteractions.map((i: any) => ({
-        timestamp: i.timestamp || new Date(),
-        candidateMessage: i.role === 'user' ? i.content : '',
-        aiResponse: i.role === 'assistant' ? i.content : '',
-        toolsUsed: [],
-        filesModified: [],
-        promptQuality: i.promptQuality,
-      })),
-      testResults: (() => {
-        // Aggregate individual test results into TestResult format
-        const tests = session.testResults || [];
-        if (tests.length === 0) return [];
-
-        // Group by timestamp (approximate - within 1 minute)
-        const grouped: Record<string, typeof tests> = {};
-        tests.forEach((t: any) => {
-          const key = new Date(t.timestamp).toISOString().slice(0, 16); // Group by minute
-          if (!grouped[key]) grouped[key] = [];
-          grouped[key].push(t);
-        });
-
-        return Object.entries(grouped).map(([key, groupTests]) => {
-          const passed = groupTests.filter((t: any) => t.passed).length;
-          const failed = groupTests.filter((t: any) => !t.passed).length;
-          return {
-            timestamp: new Date(key),
-            passed,
-            failed,
-            total: passed + failed,
-            output: groupTests.map((t: any) => t.output || '').join('\n'),
-          };
-        });
-      })(),
-      terminalCommands: session.terminalCommands.map((c: any) => ({
-        timestamp: c.timestamp,
-        command: c.command,
-        output: c.output,
-        exitCode: c.exitCode,
-      })),
+      codeSnapshots,
+      claudeInteractions,
+      testResults,
+      terminalCommands,
       questionDifficulty,
       questionTopic,
     };

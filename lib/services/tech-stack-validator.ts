@@ -179,23 +179,31 @@ export class TechStackValidator {
   private async getRecentCodeSnapshots(candidateId: string): Promise<CodeSnapshot[]> {
     const sessionRecording = await prisma.sessionRecording.findFirst({
       where: { candidateId },
-      include: {
-        codeSnapshots: {
-          orderBy: { timestamp: 'desc' },
-          take: 10, // Get last 10 snapshots
-        },
-      },
+      select: { id: true },
     });
 
     if (!sessionRecording) {
       return [];
     }
 
-    return sessionRecording.codeSnapshots.map((snapshot) => ({
-      fileName: snapshot.fileName,
-      content: snapshot.fullContent || '',
-      language: snapshot.language,
-    }));
+    // Fetch code snapshots from unified event store
+    const snapshotEvents = await prisma.sessionEventLog.findMany({
+      where: {
+        sessionId: sessionRecording.id,
+        eventType: 'code.snapshot',
+      },
+      orderBy: { sequenceNumber: 'desc' },
+      take: 10, // Get last 10 snapshots
+    });
+
+    return snapshotEvents.map((event) => {
+      const data = event.data as Record<string, unknown>;
+      return {
+        fileName: (data?.fileName as string) || event.filePath || '',
+        content: (data?.fullContent as string) || '',
+        language: (data?.language as string) || '',
+      };
+    });
   }
 
   /**

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { auth } from "@/auth";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
-import { createCheckout, PADDLE_PRODUCTS } from "@/lib/services/paddle";
+import { createCheckout, getLegacyProducts } from "@/lib/services/paddle";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
@@ -29,8 +29,11 @@ export const POST = withErrorHandling(async (req: NextRequest) => {
   const body = await req.json();
   const { productId, quantity } = checkoutSchema.parse(body);
 
+  // Get products from database
+  const products = await getLegacyProducts();
+
   // Validate product exists
-  const product = Object.values(PADDLE_PRODUCTS).find(
+  const product = Object.values(products).find(
     (p) => p.id === productId
   );
 

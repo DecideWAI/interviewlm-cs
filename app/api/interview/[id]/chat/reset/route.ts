@@ -67,11 +67,22 @@ export async function POST(
       });
     }
 
+    // Get next sequence number
+    const lastEvent = await prisma.sessionEventLog.findFirst({
+      where: { sessionId: sessionRecording.id },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    const nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
     // Record conversation reset event
-    await prisma.sessionEvent.create({
+    await prisma.sessionEventLog.create({
       data: {
         sessionId: sessionRecording.id,
-        type: "conversation_reset",
+        sequenceNumber: nextSeq,
+        timestamp: new Date(),
+        eventType: "chat.conversation_reset",
+        category: "chat",
         data: {
           questionId,
           reason: "Moving to next question - conversation context cleared",

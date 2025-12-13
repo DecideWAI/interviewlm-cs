@@ -204,23 +204,40 @@ class InterviewAgentWorker {
     proactiveAssistance.recordCodeChange(sessionId, Math.max(1, Math.floor(totalLines / 10)));
 
     // Track code snapshots for evaluation later
+    // Get next sequence number for events
+    const lastEvent = await prisma.sessionEventLog.findFirst({
+      where: { sessionId },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
     // Create individual snapshots for each file
     for (const [fileName, content] of Object.entries(files)) {
       if (typeof content !== 'string') continue;
       const contentStr = content;
-      await prisma.codeSnapshot.create({
+      const language = fileName.endsWith('.ts') ? 'typescript' :
+                       fileName.endsWith('.js') ? 'javascript' :
+                       fileName.endsWith('.py') ? 'python' : 'unknown';
+
+      await prisma.sessionEventLog.create({
         data: {
           sessionId,
-          fileId: `${sessionId}-${fileName}`,
-          fileName,
-          language: fileName.endsWith('.ts') ? 'typescript' :
-                   fileName.endsWith('.js') ? 'javascript' :
-                   fileName.endsWith('.py') ? 'python' : 'unknown',
-          contentHash: Buffer.from(contentStr).toString('base64').slice(0, 64),
-          fullContent: contentStr.slice(0, 100000), // Limit size
-          linesAdded: contentStr.split('\n').length,
-          linesDeleted: 0,
+          sequenceNumber: nextSeq++,
           timestamp: new Date(),
+          eventType: 'code.snapshot',
+          category: 'code',
+          filePath: fileName,
+          data: {
+            fileName,
+            language,
+            contentHash: Buffer.from(contentStr).toString('base64').slice(0, 64),
+            fullContent: contentStr.slice(0, 100000), // Limit size
+            linesAdded: contentStr.split('\n').length,
+            linesDeleted: 0,
+            trigger,
+          },
+          checkpoint: false,
         },
       });
     }

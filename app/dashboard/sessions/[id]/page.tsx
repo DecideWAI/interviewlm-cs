@@ -467,17 +467,11 @@ export default function SessionReplayPage() {
             initialCode = starterCode;
           }
 
-          // Build file list from trackedFiles (authoritative source)
-          // and add starter code file if not already included
-          const trackedFiles = data.session.trackedFiles || [];
-          const allFiles = new Set<string>(trackedFiles);
-
-          // Ensure starter code file is in the list
+          // Start with ONLY the starter code file
+          // Files will be added progressively during replay via timeline events
+          // This ensures replay fidelity - files appear in the order they were created
           const starterPath = initialFileName.startsWith('/') ? initialFileName : `/${initialFileName}`;
-          allFiles.add(starterPath);
-
-          // Build nested folder structure from flat file paths
-          const initialFiles = buildFileTree(Array.from(allFiles));
+          const initialFiles = buildFileTree([starterPath]);
 
           const initialTabs = [{
             id: initialFileName,
@@ -884,7 +878,7 @@ export default function SessionReplayPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-sm font-semibold text-text-primary">{sessionData.candidate.name}</h1>
-              <Badge variant="outline" className="text-xs">Replay</Badge>
+              <Badge variant="default" className="text-xs">Replay</Badge>
             </div>
             <p className="text-xs text-text-secondary">{sessionData.assessment.title}</p>
           </div>
@@ -973,7 +967,7 @@ export default function SessionReplayPage() {
             <Zap className={`h-3 w-3 ${playback.skipInactivity ? "text-yellow-400" : ""}`} />
             <span className="ml-1 text-xs">Smart Skip</span>
           </Button>
-          <Badge variant="outline" className="text-xs">
+          <Badge variant="default" className="text-xs">
             {playback.playbackSpeed}x
           </Badge>
         </div>

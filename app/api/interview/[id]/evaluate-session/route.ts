@@ -95,13 +95,7 @@ export async function POST(
             },
           },
         },
-        sessionRecording: {
-          include: {
-            events: {
-              orderBy: { timestamp: "asc" },
-            },
-          },
-        },
+        sessionRecording: true,
       },
     });
 
@@ -128,16 +122,20 @@ export async function POST(
       terminalCommands: requestData.terminalCommands,
     };
 
-    // If no data provided, try to extract from session events
+    // If no data provided, try to extract from session event log
     if (
       sessionData.codeSnapshots.length === 0 &&
-      candidate.sessionRecording?.events
+      candidate.sessionRecording
     ) {
-      const events = candidate.sessionRecording.events;
+      // Fetch events from unified event store
+      const events = await prisma.sessionEventLog.findMany({
+        where: { sessionId: candidate.sessionRecording.id },
+        orderBy: { sequenceNumber: "asc" },
+      });
 
       // Extract code snapshots from events
       const codeSnapshots = events
-        .filter((e) => e.type === "code_snapshot")
+        .filter((e) => e.eventType === "code.snapshot")
         .map((e) => ({
           timestamp: e.timestamp.toISOString(),
           files: (e.data as Record<string, unknown>)?.files as Record<string, string> || {},
@@ -149,7 +147,7 @@ export async function POST(
 
       // Extract test results from events
       const testResults = events
-        .filter((e) => e.type === "test_run")
+        .filter((e) => e.eventType === "test.run_complete" || e.eventType === "test_run")
         .map((e) => {
           const data = e.data as Record<string, unknown>;
           return {
@@ -165,18 +163,29 @@ export async function POST(
         sessionData.testResults = testResults;
       }
 
-      // Extract AI interactions from events
+      // Extract AI interactions from events (chat messages)
       const aiInteractions = events
-        .filter((e) => e.type === "ai_interaction")
-        .map((e) => {
+        .filter((e) => e.category === "chat" && (e.eventType === "chat.user_message" || e.eventType === "chat.assistant_message"))
+        .reduce((acc: any[], e) => {
           const data = e.data as Record<string, unknown>;
-          return {
-            candidateMessage: (data?.candidateMessage as string) || (data?.userMessage as string) || "",
-            assistantMessage: data?.assistantMessage as string | undefined,
-            timestamp: e.timestamp.toISOString(),
-            toolsUsed: data?.toolsUsed as string[] | undefined,
-          };
-        });
+          if (data?.role === "user") {
+            acc.push({
+              candidateMessage: (data?.content as string) || "",
+              assistantMessage: undefined,
+              timestamp: e.timestamp.toISOString(),
+              toolsUsed: undefined,
+            });
+          } else if (data?.role === "assistant" && acc.length > 0) {
+            // Associate assistant message with previous user message
+            const lastInteraction = acc[acc.length - 1];
+            if (!lastInteraction.assistantMessage) {
+              lastInteraction.assistantMessage = data?.content as string;
+              const metadata = data?.metadata as Record<string, unknown>;
+              lastInteraction.toolsUsed = metadata?.toolsUsed as string[] | undefined;
+            }
+          }
+          return acc;
+        }, []);
 
       if (aiInteractions.length > 0) {
         sessionData.claudeInteractions = aiInteractions;
@@ -184,7 +193,7 @@ export async function POST(
 
       // Extract terminal commands from events
       const terminalCommands = events
-        .filter((e) => e.type === "terminal_input")
+        .filter((e) => e.eventType === "terminal.input" || e.eventType === "terminal_input")
         .map((e) => {
           const data = e.data as Record<string, unknown>;
           return {

@@ -360,14 +360,18 @@ export async function POST(
 
       // Record folder creation event and track the folder
       if (candidate.sessionRecording) {
-        await sessions.recordEvent(candidate.sessionRecording.id, {
-          type: "folder_create",
-          data: {
+        await sessions.recordEvent(
+          candidate.sessionRecording.id,
+          "file.create",
+          "USER",
+          {
             folderPath: path,
             folderName: path.split("/").pop() || path,
+            isFolder: true,
             timestamp: new Date().toISOString(),
           },
-        });
+          { filePath: path }
+        );
 
         // Track new folder
         const fullPath = path.startsWith('/workspace') ? path : `/workspace/${path}`;
@@ -397,9 +401,11 @@ export async function POST(
     // Record file change events after write
     if (candidate.sessionRecording) {
       // Record file write event (for session replay timeline)
-      await sessions.recordEvent(candidate.sessionRecording.id, {
-        type: "file_write",
-        data: {
+      await sessions.recordEvent(
+        candidate.sessionRecording.id,
+        previousContent ? "file.update" : "file.create",
+        "USER",
+        {
           filePath: path,
           fileName: path.split("/").pop() || path,
           language: language || getLanguageFromExtension(path),
@@ -410,7 +416,8 @@ export async function POST(
             : content.split("\n").length,
           timestamp: new Date().toISOString(),
         },
-      });
+        { filePath: path }
+      );
 
       // ALWAYS create code snapshot (no "significant change" filter)
       // Every file write is important for comprehensive session replay
@@ -422,6 +429,7 @@ export async function POST(
           language: language || getLanguageFromExtension(path),
           content,
         },
+        "USER", // Origin: user edited the file
         previousContent // Pass previous content for diff calculation
       );
 
@@ -543,14 +551,17 @@ export async function DELETE(
 
     // Record file deletion event and remove from tracked files
     if (candidate.sessionRecording) {
-      await sessions.recordEvent(candidate.sessionRecording.id, {
-        type: "file_delete",
-        data: {
+      await sessions.recordEvent(
+        candidate.sessionRecording.id,
+        "file.delete",
+        "USER",
+        {
           filePath: path,
           fileName: path.split("/").pop() || path,
           timestamp: new Date().toISOString(),
         },
-      });
+        { filePath: path }
+      );
 
       // Remove from tracked files
       const fullPath = path.startsWith('/workspace') ? path : `/workspace/${path}`;

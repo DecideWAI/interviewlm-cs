@@ -637,23 +637,41 @@ export const POST = withErrorHandling(async (
     evaluationTime,
   });
 
-  // Record code snapshot
-  await prisma.codeSnapshot.create({
+  // Get next sequence number for events
+  const lastEvent = await prisma.sessionEventLog.findFirst({
+    where: { sessionId: sessionRecording.id },
+    orderBy: { sequenceNumber: 'desc' },
+    select: { sequenceNumber: true },
+  });
+  let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+  // Record code snapshot event
+  await prisma.sessionEventLog.create({
     data: {
       sessionId: sessionRecording.id,
-      fileId: fileName || "main",
-      fileName: fileName || "main",
-      language,
-      contentHash: hashCode(code),
-      fullContent: code,
+      sequenceNumber: nextSeq++,
+      timestamp: new Date(),
+      eventType: "code.snapshot",
+      category: "code",
+      filePath: fileName || "main",
+      data: {
+        fileName: fileName || "main",
+        language,
+        contentHash: hashCode(code),
+        fullContent: code,
+      },
+      checkpoint: false,
     },
   });
 
   // Record evaluation event
-  await prisma.sessionEvent.create({
+  await prisma.sessionEventLog.create({
     data: {
       sessionId: sessionRecording.id,
-      type: "evaluation",
+      sequenceNumber: nextSeq++,
+      timestamp: new Date(),
+      eventType: "evaluation.complete",
+      category: "evaluation",
       data: {
         questionId,
         overallScore: aiResult.overallScore,
@@ -662,6 +680,7 @@ export const POST = withErrorHandling(async (
         evaluationTime,
         timestamp: new Date().toISOString(),
       },
+      checkpoint: false,
     },
   });
 

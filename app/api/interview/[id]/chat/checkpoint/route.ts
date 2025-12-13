@@ -85,14 +85,14 @@ export const GET = withErrorHandling(async (
     return success({ checkpoint: null });
   }
 
-  // Find the latest stream checkpoint
-  const checkpoint = await prisma.sessionEvent.findFirst({
+  // Find the latest stream checkpoint from event store
+  const checkpoint = await prisma.sessionEventLog.findFirst({
     where: {
       sessionId: candidate.sessionRecording.id,
-      type: CHECKPOINT_EVENT_TYPE,
+      eventType: CHECKPOINT_EVENT_TYPE,
     },
     orderBy: {
-      timestamp: 'desc',
+      sequenceNumber: 'desc',
     },
   });
 
@@ -191,10 +191,10 @@ export const DELETE = withErrorHandling(async (
   }
 
   // Delete all stream checkpoints for this session
-  const result = await prisma.sessionEvent.deleteMany({
+  const result = await prisma.sessionEventLog.deleteMany({
     where: {
       sessionId: candidate.sessionRecording.id,
-      type: CHECKPOINT_EVENT_TYPE,
+      eventType: CHECKPOINT_EVENT_TYPE,
     },
   });
 
@@ -291,10 +291,10 @@ export const POST = withErrorHandling(async (
   };
 
   // Upsert the checkpoint - one checkpoint per messageId
-  const existingCheckpoint = await prisma.sessionEvent.findFirst({
+  const existingCheckpoint = await prisma.sessionEventLog.findFirst({
     where: {
       sessionId: candidate.sessionRecording.id,
-      type: CHECKPOINT_EVENT_TYPE,
+      eventType: CHECKPOINT_EVENT_TYPE,
       data: {
         path: ['messageId'],
         equals: messageId,
@@ -305,7 +305,7 @@ export const POST = withErrorHandling(async (
   let checkpoint;
   if (existingCheckpoint) {
     // Update existing checkpoint
-    checkpoint = await prisma.sessionEvent.update({
+    checkpoint = await prisma.sessionEventLog.update({
       where: { id: existingCheckpoint.id },
       data: {
         timestamp: new Date(),
@@ -314,11 +314,21 @@ export const POST = withErrorHandling(async (
       },
     });
   } else {
-    // Create new checkpoint
-    checkpoint = await prisma.sessionEvent.create({
+    // Create new checkpoint - get next sequence number
+    const lastEvent = await prisma.sessionEventLog.findFirst({
+      where: { sessionId: candidate.sessionRecording.id },
+      orderBy: { sequenceNumber: 'desc' },
+      select: { sequenceNumber: true },
+    });
+    const nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+
+    checkpoint = await prisma.sessionEventLog.create({
       data: {
         sessionId: candidate.sessionRecording.id,
-        type: CHECKPOINT_EVENT_TYPE,
+        sequenceNumber: nextSeq,
+        timestamp: new Date(),
+        eventType: CHECKPOINT_EVENT_TYPE,
+        category: 'chat',
         data: checkpointData as any,
         checkpoint: true,
       },

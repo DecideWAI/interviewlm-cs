@@ -105,35 +105,13 @@ export async function GET(request: NextRequest) {
             duration: true,
           },
         },
+        // Session recording without old relation tables - metrics computed from event store
         sessionRecording: {
-          include: {
-            claudeInteractions: {
-              select: {
-                id: true,
-                role: true,
-                promptQuality: true,
-                inputTokens: true,
-                outputTokens: true,
-                timestamp: true,
-              },
-            },
-            testResults: {
-              select: {
-                id: true,
-                passed: true,
-                testName: true,
-                duration: true,
-                timestamp: true,
-              },
-            },
-            codeSnapshots: {
-              select: {
-                id: true,
-                linesAdded: true,
-                linesDeleted: true,
-                timestamp: true,
-              },
-            },
+          select: {
+            id: true,
+            duration: true,
+            eventCount: true,
+            status: true,
           },
         },
         generatedQuestions: {
@@ -183,74 +161,42 @@ export async function GET(request: NextRequest) {
       const problemsSolved = questions.filter((q) => q.status === "COMPLETED").length;
       const completionRate = problemsAttempted > 0 ? problemsSolved / problemsAttempted : 0;
 
-      // Test results
-      const testResults = session?.testResults || [];
-      const testsPassed = testResults.filter((t) => t.passed).length;
-      const testsFailed = testResults.filter((t) => !t.passed).length;
+      // For list view, we use simplified metrics from candidate record
+      // Detailed metrics from event store are loaded only in detail view
+      const testsPassed = 0; // Not available without event store fetch
+      const testsFailed = 0;
+      const claudeInteractionCount = 0; // Simplified - detailed view loads from events
+      const avgPromptQuality = undefined; // Not available in list view
+      const aiAcceptanceRate = undefined;
 
-      // Claude interactions
-      const interactions = session?.claudeInteractions || [];
-      const claudeInteractions = interactions.filter((i) => i.role === "user").length;
-      const avgPromptQuality = interactions.length > 0
-        ? interactions
-            .filter((i) => i.promptQuality !== null)
-            .reduce((sum, i) => sum + (i.promptQuality || 0), 0) /
-          interactions.filter((i) => i.promptQuality !== null).length
-        : undefined;
+      // AI usage pattern detection (simplified - use default for list)
+      const aiUsagePattern: "goal-oriented" | "trial-and-error" | "copy-paste" | "ai-avoidant" = "ai-avoidant";
 
-      // AI acceptance rate (simplified - based on code snapshots after AI interactions)
-      const codeSnapshots = session?.codeSnapshots || [];
-      const aiAcceptanceRate = interactions.length > 0 && codeSnapshots.length > 0
-        ? Math.min(1, codeSnapshots.length / interactions.length)
-        : undefined;
-
-      // AI usage pattern detection (simplified heuristic)
-      let aiUsagePattern: "goal-oriented" | "trial-and-error" | "copy-paste" | "ai-avoidant" = "ai-avoidant";
-      if (claudeInteractions > 0) {
-        if (avgPromptQuality && avgPromptQuality >= 4.0) {
-          aiUsagePattern = "goal-oriented";
-        } else if (claudeInteractions > 15) {
-          aiUsagePattern = "trial-and-error";
-        } else {
-          aiUsagePattern = "copy-paste";
-        }
-      }
-
-      // Calculate scores
-      const technicalScore = candidate.codingScore ||
+      // Calculate scores from candidate record (convert null to undefined)
+      const technicalScore = candidate.codingScore ??
         (questions.length > 0
           ? questions
               .filter((q) => q.score !== null)
               .reduce((sum, q) => sum + (q.score || 0), 0) / questions.filter((q) => q.score !== null).length
           : undefined);
 
-      const aiCollaborationScore = avgPromptQuality ? avgPromptQuality * 20 : undefined; // Convert 1-5 to 0-100
+      const aiCollaborationScore = candidate.communicationScore ?? undefined;
 
-      const codeQualityScore = testsPassed > 0
-        ? Math.round((testsPassed / (testsPassed + testsFailed)) * 100)
-        : undefined;
+      const codeQualityScore = candidate.codingScore ?? undefined;
 
-      const problemSolvingScore = candidate.problemSolvingScore ||
+      const problemSolvingScore = candidate.problemSolvingScore ??
         (problemsAttempted > 0 ? Math.round((problemsSolved / problemsAttempted) * 100) : undefined);
 
-      // Overall score (weighted average or from DB)
-      const overallScore = candidate.overallScore ||
-        (technicalScore && aiCollaborationScore && codeQualityScore && problemSolvingScore
-          ? Math.round(
-              technicalScore * 0.35 +
-              aiCollaborationScore * 0.25 +
-              codeQualityScore * 0.25 +
-              problemSolvingScore * 0.15
-            )
-          : undefined);
+      // Overall score from DB (convert null to undefined)
+      const overallScore = candidate.overallScore ?? undefined;
 
-      // Detect flags using scoring utilities
+      // Simplified flag detection for list view
       const redFlags = detectRedFlags({
         avgPromptQuality,
         testsPassed,
         testsFailed,
         completionRate,
-        claudeInteractions,
+        claudeInteractions: claudeInteractionCount,
       } as any);
 
       const greenFlags = detectGreenFlags({
@@ -318,7 +264,7 @@ export async function GET(request: NextRequest) {
         testsPassed,
         testsFailed,
 
-        claudeInteractions,
+        claudeInteractions: claudeInteractionCount,
         avgPromptQuality,
         aiAcceptanceRate,
         aiUsagePattern,
