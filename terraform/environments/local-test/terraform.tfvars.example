@@ -1,0 +1,14 @@
+# Local Test Environment - Example Variables
+# Copy this to terraform.tfvars and fill in your values
+
+# Your GCP project ID for development/testing
+# This should be different from your production project
+project_id = "your-dev-project-id"
+
+# Region for the GCS bucket (different from production)
+# Production uses us-central1, so we use us-east1 for isolation
+region = "us-east1"
+
+# How long to keep test files before auto-deletion
+# Short retention keeps costs low and cleans up test data
+retention_days = 7

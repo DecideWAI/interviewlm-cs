@@ -23,6 +23,7 @@ from typing_extensions import TypedDict
 from tools.coding_tools import CODING_TOOLS
 from config import settings, generate_coding_thread_uuid
 from middleware import summarization_middleware, system_prompt_middleware
+from services.gcs import capture_file_snapshots
 
 
 # =============================================================================
@@ -558,10 +559,20 @@ class CodingAgentGraph:
                     total_input_tokens += usage_meta.get('input_tokens', 0)
                     total_output_tokens += usage_meta.get('output_tokens', 0)
 
+        files_modified = result.get("files_modified", [])
+
+        # Capture file snapshots for session replay (non-blocking)
+        if files_modified:
+            capture_file_snapshots(
+                candidate_id=self.candidate_id,
+                session_id=self.session_id,
+                files_modified=files_modified,
+            )
+
         return {
             "text": response_text,
             "tools_used": result.get("tools_used", []),
-            "files_modified": result.get("files_modified", []),
+            "files_modified": files_modified,
             "metadata": {
                 "model": settings.coding_agent_model,
                 "tool_call_count": result.get("tool_call_count", 0),
@@ -682,6 +693,14 @@ class CodingAgentGraph:
                         "name": tool_name,
                         "output": output_data,
                     }
+
+            # Capture file snapshots for session replay (non-blocking)
+            if files_modified:
+                capture_file_snapshots(
+                    candidate_id=self.candidate_id,
+                    session_id=self.session_id,
+                    files_modified=files_modified,
+                )
 
             yield {
                 "type": "done",

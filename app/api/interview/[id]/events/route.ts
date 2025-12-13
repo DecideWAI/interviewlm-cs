@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import { uploadFileContent } from "@/lib/services/gcs";
 
 // Request validation schema
 const eventRequestSchema = z.object({
@@ -140,9 +141,43 @@ export async function POST(
     // Filter and optimize events
     const optimizedEvents = optimizeEvents(events);
 
+    // Process events: upload file content to GCS for code_snapshot events
+    const processedEvents = await Promise.all(
+      optimizedEvents.map(async (event) => {
+        // If this is a code_snapshot with fullContent, upload to GCS
+        if (
+          event.type === "code_snapshot" &&
+          event.data?.fullContent &&
+          typeof event.data.fullContent === "string"
+        ) {
+          try {
+            const { checksum } = await uploadFileContent(id, event.data.fullContent);
+
+            // Replace fullContent with contentHash to save database space
+            // The fullContent can be retrieved from GCS using the checksum
+            return {
+              ...event,
+              data: {
+                ...event.data,
+                contentHash: checksum,
+                // Keep fullContent in event data for now (backwards compatibility)
+                // Uncomment below to remove fullContent after GCS is fully deployed
+                // fullContent: undefined,
+              },
+            };
+          } catch (gcsError) {
+            // Log error but don't fail the event - fallback to storing in DB
+            console.error("[Events] GCS upload failed, storing content in DB:", gcsError);
+            return event;
+          }
+        }
+        return event;
+      })
+    );
+
     // Batch insert events
     const createdEvents = await prisma.sessionEvent.createMany({
-      data: optimizedEvents.map((event) => ({
+      data: processedEvents.map((event) => ({
         sessionId: sessionRecording.id,
         type: event.type,
         data: event.data,

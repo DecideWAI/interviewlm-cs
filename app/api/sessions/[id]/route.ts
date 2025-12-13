@@ -60,6 +60,31 @@ export async function GET(
                 order: "asc",
               },
             },
+            evaluation: {
+              select: {
+                id: true,
+                overallScore: true,
+                confidence: true,
+                codeQualityScore: true,
+                codeQualityEvidence: true,
+                codeQualityConfidence: true,
+                problemSolvingScore: true,
+                problemSolvingEvidence: true,
+                problemSolvingConfidence: true,
+                aiCollaborationScore: true,
+                aiCollaborationEvidence: true,
+                aiCollaborationConfidence: true,
+                communicationScore: true,
+                communicationEvidence: true,
+                communicationConfidence: true,
+                hiringRecommendation: true,
+                hiringConfidence: true,
+                hiringReasoning: true,
+                expertiseLevel: true,
+                expertiseGrowth: true,
+                expertiseGrowthTrend: true,
+              },
+            },
           },
         },
         events: {
@@ -78,6 +103,11 @@ export async function GET(
           },
         },
         testResults: {
+          orderBy: {
+            timestamp: "asc",
+          },
+        },
+        terminalCommands: {
           orderBy: {
             timestamp: "asc",
           },
@@ -116,6 +146,31 @@ export async function GET(
                   order: "asc",
                 },
               },
+              evaluation: {
+                select: {
+                  id: true,
+                  overallScore: true,
+                  confidence: true,
+                  codeQualityScore: true,
+                  codeQualityEvidence: true,
+                  codeQualityConfidence: true,
+                  problemSolvingScore: true,
+                  problemSolvingEvidence: true,
+                  problemSolvingConfidence: true,
+                  aiCollaborationScore: true,
+                  aiCollaborationEvidence: true,
+                  aiCollaborationConfidence: true,
+                  communicationScore: true,
+                  communicationEvidence: true,
+                  communicationConfidence: true,
+                  hiringRecommendation: true,
+                  hiringConfidence: true,
+                  hiringReasoning: true,
+                  expertiseLevel: true,
+                  expertiseGrowth: true,
+                  expertiseGrowthTrend: true,
+                },
+              },
             },
           },
           events: {
@@ -134,6 +189,11 @@ export async function GET(
             },
           },
           testResults: {
+            orderBy: {
+              timestamp: "asc",
+            },
+          },
+          terminalCommands: {
             orderBy: {
               timestamp: "asc",
             },
@@ -182,6 +242,7 @@ export async function GET(
       claudeInteractions: sessionRecording.claudeInteractions,
       codeSnapshots: sessionRecording.codeSnapshots,
       testResults: sessionRecording.testResults,
+      terminalCommands: sessionRecording.terminalCommands,
     });
 
     // Calculate session metrics
@@ -197,6 +258,7 @@ export async function GET(
         duration: sessionRecording.duration,
         status: sessionRecording.status,
         eventCount: sessionRecording.eventCount,
+        trackedFiles: sessionRecording.trackedFiles, // Array of file paths created during session
       },
       candidate: {
         id: sessionRecording.candidate.id,
@@ -210,6 +272,7 @@ export async function GET(
       },
       assessment: sessionRecording.candidate.assessment,
       questions: sessionRecording.candidate.generatedQuestions,
+      evaluation: sessionRecording.candidate.evaluation,
       timeline,
       metrics,
     });
@@ -224,13 +287,14 @@ export async function GET(
 
 /**
  * Build unified timeline from all event sources
- * Merges events, Claude interactions, code snapshots, and test results
+ * Merges events, Claude interactions, code snapshots, test results, and terminal commands
  */
 function buildTimeline(data: {
   events: any[];
   claudeInteractions: any[];
   codeSnapshots: any[];
   testResults: any[];
+  terminalCommands: any[];
 }) {
   const timeline: any[] = [];
 
@@ -298,6 +362,22 @@ function buildTimeline(data: {
         output: result.output,
         error: result.error,
         duration: result.duration,
+      },
+    });
+  });
+
+  // Add terminal commands
+  data.terminalCommands.forEach((command) => {
+    timeline.push({
+      id: command.id,
+      timestamp: command.timestamp,
+      type: "terminal_output",
+      category: "terminal",
+      data: {
+        command: command.command,
+        output: command.output,
+        exitCode: command.exitCode,
+        duration: command.duration,
       },
     });
   });

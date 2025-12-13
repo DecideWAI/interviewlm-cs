@@ -5,7 +5,8 @@ IMPORTANT: As of LangGraph v1.0, custom state schemas must be TypedDict types.
 Pydantic models and dataclasses are no longer supported for state.
 """
 
-from typing import Annotated, Sequence, TypedDict, Literal
+from typing import Annotated, Sequence, Literal
+from typing_extensions import TypedDict
 from datetime import datetime
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages

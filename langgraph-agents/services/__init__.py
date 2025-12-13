@@ -17,6 +17,13 @@ from .modal_manager import (
     test_connection,
     MODAL_AVAILABLE,
 )
+from .gcs import (
+    capture_file_snapshots,
+    capture_file_snapshots_async,
+    health_check as snapshot_health_check,
+    is_enabled as snapshot_is_enabled,
+    CaptureResult,
+)
 
 __all__ = [
     "DatabaseService",
@@ -35,4 +42,10 @@ __all__ = [
     "health_check",
     "test_connection",
     "MODAL_AVAILABLE",
+    # File Snapshot Capture (sends to TypeScript worker)
+    "capture_file_snapshots",
+    "capture_file_snapshots_async",
+    "snapshot_health_check",
+    "snapshot_is_enabled",
+    "CaptureResult",
 ]

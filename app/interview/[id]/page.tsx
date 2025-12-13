@@ -3,11 +3,11 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
-import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { CodeEditor } from "@/components/interview/CodeEditor";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, AIChatHandle, Message } from "@/components/interview/AIChat";
 import { ProblemPanel } from "@/components/interview/ProblemPanel";
+import { InterviewLayout, PanelSizes, DEFAULT_PANEL_SIZES } from "@/components/interview/InterviewLayout";
 import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
 import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
@@ -139,13 +139,7 @@ export default function InterviewPage() {
   const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [leftSidebarTab, setLeftSidebarTab] = useState<"problem" | "files">("problem");
-  const [panelSizes, setPanelSizes] = useState<{
-    horizontal: number[];
-    vertical: number[];
-  }>({
-    horizontal: [25, 48, 27], // Default: Sidebar, Editor+Terminal, Chat
-    vertical: [60, 40], // Default: Editor, Terminal
-  });
+  const [panelSizes, setPanelSizes] = useState<PanelSizes>(DEFAULT_PANEL_SIZES);
 
   // Question progression state
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -305,18 +299,11 @@ export default function InterviewPage() {
     localStorage.setItem(`interview-sidebar-tab-${candidateId}`, tab);
   };
 
-  // Save panel sizes to localStorage
-  const handleHorizontalLayout = (sizes: number[]) => {
-    const newSizes = { ...panelSizes, horizontal: sizes };
+  // Handle panel size changes from InterviewLayout
+  const handlePanelSizesChange = useCallback((newSizes: PanelSizes) => {
     setPanelSizes(newSizes);
     localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
-  };
-
-  const handleVerticalLayout = (sizes: number[]) => {
-    const newSizes = { ...panelSizes, vertical: sizes };
-    setPanelSizes(newSizes);
-    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
-  };
+  }, [candidateId]);
 
 
   // Prefetch all file contents for instant navigation

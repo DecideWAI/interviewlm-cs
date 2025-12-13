@@ -52,3 +52,12 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# GCP Credentials
+.gcs-credentials.json
+*-credentials.json
+*.key.json
+
+# Terraform generated files (may contain secrets)
+setup-local-credentials.sh
+env-local-snippet.txt

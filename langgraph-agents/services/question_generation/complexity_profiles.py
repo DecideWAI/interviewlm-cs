@@ -11,7 +11,8 @@ Complexity Dimensions:
 - ambiguity_level: clear | some_decisions | open_ended | strategic
 """
 
-from typing import Literal, TypedDict
+from typing import Literal
+from typing_extensions import TypedDict
 
 
 class ComplexityConstraints(TypedDict):
