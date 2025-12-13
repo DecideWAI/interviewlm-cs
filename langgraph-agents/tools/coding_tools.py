@@ -262,7 +262,7 @@ def get_sandbox_id(config: dict) -> str:
 
 @tool
 def read_file(
-    file_path: str,
+    path: str,
     config: RunnableConfig,
     offset: int = 0,
     limit: int = 10000,
@@ -273,7 +273,7 @@ def read_file(
     For large files, use offset and limit to read specific portions.
 
     Args:
-        file_path: Path to the file (relative to /workspace or absolute)
+        path: Path to the file (relative to /workspace or absolute)
         config: RunnableConfig with session_id in configurable
         offset: Character offset to start reading from (default: 0)
         limit: Maximum number of characters to read (default: 10000)
@@ -282,7 +282,7 @@ def read_file(
         Dict with success status, content, and metadata
     """
     sandbox_id = get_sandbox_id(config)
-    allowed, reason = is_path_allowed(file_path)
+    allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
 
@@ -290,12 +290,12 @@ def read_file(
         sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Ensure absolute path
-        if not file_path.startswith("/"):
-            file_path = f"/workspace/{file_path}"
+        if not path.startswith("/"):
+            path = f"/workspace/{path}"
 
         # Wrap in timeout with retry to prevent hanging
         def _read_file():
-            proc = run_in_sandbox(sb, "cat", file_path)
+            proc = run_in_sandbox(sb, "cat", path)
             return proc.stdout.read(), proc.returncode, proc.stderr.read()
 
         content, exit_code, stderr = run_with_retry(_read_file, timeout=TOOL_TIMEOUT_SECONDS)
@@ -315,7 +315,7 @@ def read_file(
         return {
             "success": True,
             "content": content,
-            "path": file_path,
+            "path": path,
             "offset": offset,
             "limit": limit,
             "has_more": has_more,
@@ -326,7 +326,7 @@ def read_file(
 
 @tool
 def write_file(
-    file_path: str,
+    path: str,
     content: str,
     config: RunnableConfig,
 ) -> dict[str, Any]:
@@ -334,7 +334,7 @@ def write_file(
     Create or overwrite a file with new content.
 
     Args:
-        file_path: Path to the file (relative to /workspace or absolute)
+        path: Path to the file (relative to /workspace or absolute)
         content: Content to write to the file
         config: RunnableConfig with session_id in configurable
 
@@ -342,7 +342,7 @@ def write_file(
         Dict with success status and metadata
     """
     sandbox_id = get_sandbox_id(config)
-    allowed, reason = is_path_allowed(file_path)
+    allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
 
@@ -350,24 +350,24 @@ def write_file(
         sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Ensure absolute path
-        if not file_path.startswith("/"):
-            file_path = f"/workspace/{file_path}"
+        if not path.startswith("/"):
+            path = f"/workspace/{path}"
 
         # Wrap in timeout with retry to prevent hanging
         def _write_file():
             # Create parent directory
-            parent = str(Path(file_path).parent)
+            parent = str(Path(path).parent)
             run_in_sandbox(sb, "mkdir", "-p", parent)
 
             # Write file using base64 to handle special characters safely
             encoded = base64.b64encode(content.encode()).decode()
-            run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{file_path}'")
+            run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{path}'")
 
         run_with_retry(_write_file, timeout=TOOL_TIMEOUT_SECONDS)
 
         return {
             "success": True,
-            "path": file_path,
+            "path": path,
             "bytes_written": len(content.encode()),
         }
     except Exception as e:
@@ -376,7 +376,7 @@ def write_file(
 
 @tool
 def edit_file(
-    file_path: str,
+    path: str,
     old_string: str,
     new_string: str,
     config: RunnableConfig,
@@ -388,7 +388,7 @@ def edit_file(
     add more surrounding context to make it unique.
 
     Args:
-        file_path: Path to the file (relative to /workspace or absolute)
+        path: Path to the file (relative to /workspace or absolute)
         old_string: The exact string to replace (must be unique in the file)
         new_string: The new string to insert
         config: RunnableConfig with session_id in configurable
@@ -397,7 +397,7 @@ def edit_file(
         Dict with success status and replacement count
     """
     sandbox_id = get_sandbox_id(config)
-    allowed, reason = is_path_allowed(file_path)
+    allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
 
@@ -405,15 +405,15 @@ def edit_file(
         sb = sandbox_mgr.get_sandbox(sandbox_id)
 
         # Ensure absolute path
-        if not file_path.startswith("/"):
-            file_path = f"/workspace/{file_path}"
+        if not path.startswith("/"):
+            path = f"/workspace/{path}"
 
         # Read current content
-        proc = run_in_sandbox(sb, "cat", file_path)
+        proc = run_in_sandbox(sb, "cat", path)
         content = proc.stdout.read()
 
         if proc.returncode != 0:
-            return {"success": False, "error": f"File not found: {file_path}"}
+            return {"success": False, "error": f"File not found: {path}"}
 
         # Check uniqueness
         occurrences = content.count(old_string)
@@ -425,11 +425,11 @@ def edit_file(
         # Replace and write back
         new_content = content.replace(old_string, new_string, 1)
         encoded = base64.b64encode(new_content.encode()).decode()
-        run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{file_path}'")
+        run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{path}'")
 
         return {
             "success": True,
-            "path": file_path,
+            "path": path,
             "replacements": 1,
         }
     except Exception as e:

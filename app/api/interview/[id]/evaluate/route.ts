@@ -129,7 +129,12 @@ async function evaluateWithLangGraph(params: {
   });
 
   // Build the evaluation prompt message
-  const evaluationPrompt = buildEvaluationPrompt(params);
+  // For LangGraph, ALWAYS use tool discovery to explore the full workspace
+  // This handles multi-file projects properly instead of just evaluating one file
+  const evaluationPrompt = buildEvaluationPrompt({
+    ...params,
+    useToolDiscovery: true, // Force agent to use tools to discover ALL code files
+  });
 
   // Run the agent and wait for completion
   const result = await langGraphClient.runs.wait(threadId, "question_evaluation_agent", {
@@ -251,6 +256,8 @@ async function evaluateWithLangGraph(params: {
 
 /**
  * Build the evaluation prompt for the agent
+ *
+ * @param useToolDiscovery - If true, always use tools to discover code (for multi-file projects)
  */
 function buildEvaluationPrompt(params: {
   questionTitle: string;
@@ -261,6 +268,7 @@ function buildEvaluationPrompt(params: {
   language: string;
   fileName?: string;
   passingThreshold: number;
+  useToolDiscovery?: boolean;
 }): string {
   let prompt = `Please evaluate the following code submission for the interview question.
 
@@ -283,7 +291,12 @@ ${params.questionRequirements.map((r) => `- ${r}`).join("\n")}
 **Passing Threshold:** ${params.passingThreshold}/100
 `;
 
-  if (params.code && params.code.trim()) {
+  // For LangGraph agent mode, always use tool discovery to explore the full workspace
+  // This handles multi-file projects properly instead of just evaluating one file
+  const shouldUseToolDiscovery = params.useToolDiscovery || false;
+  const hasValidCode = params.code && params.code.trim() && !params.code.includes("# ") && !params.code.startsWith("##");
+
+  if (!shouldUseToolDiscovery && hasValidCode) {
     prompt += `
 ## Candidate's Code (${params.language}${params.fileName ? `, ${params.fileName}` : ""}):
 
@@ -294,16 +307,21 @@ ${params.code}
   } else {
     prompt += `
 ## Code Location
-The candidate's code is in the Modal sandbox at /workspace/. Please use the available tools to:
-1. List files in /workspace/ to find the solution
-2. Read the solution file(s)
-3. Run tests if available
-4. Evaluate the code
+The candidate's code is in the Modal sandbox at /workspace/.
+
+**IMPORTANT:** You MUST use the available tools to discover and evaluate ALL code files:
+1. Use \`list_files\` to explore /workspace/ and find ALL source files
+2. Use \`read_file\` to read each code file (look for .py, .js, .ts, .go files)
+3. Use \`run_tests\` to verify the solution works
+4. Evaluate ALL the code files together, not just one
+
+**Language:** ${params.language}
+**Note:** There may be multiple source files. Evaluate the complete solution.
 `;
   }
 
   prompt += `
-Please evaluate the code on all 5 criteria (20 points each) and return the evaluation result as JSON.`;
+Please evaluate the code on all 5 criteria (20 points each) and call submit_question_evaluation with your results.`;
 
   return prompt;
 }

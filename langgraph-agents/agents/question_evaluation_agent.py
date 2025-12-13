@@ -679,6 +679,6 @@ def create_question_evaluation_agent(
 # The platform injects its own PostgreSQL-backed checkpointer
 
 question_evaluation_graph = create_question_evaluation_agent_graph(
-    use_agent_mode=False,
+    use_agent_mode=True,  # Enable tools for file exploration (list_files, read_file, run_tests, etc.)
     use_checkpointing=False,
 )

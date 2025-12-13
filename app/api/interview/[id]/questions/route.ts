@@ -1000,7 +1000,7 @@ Return a JSON object with this structure:
   try {
     const message = await anthropic.messages.create({
       model: "claude-sonnet-4-5-20250929",
-      max_tokens: 2048,
+      max_tokens: 8192, // Increased to avoid truncation (max 16000)
       messages: [
         {
           role: "user",
@@ -1021,46 +1021,11 @@ Return a JSON object with this structure:
 
     throw new Error("Failed to parse LLM response");
   } catch (error) {
-    logger.warn("LLM generation error", {
+    logger.error("LLM generation error", error as Error, {
       role,
       seniority,
       difficulty,
-      error: error instanceof Error ? error.message : 'Unknown error',
     });
-
-    // Fallback to a default problem using the determined language
-    const fileExt = language === 'python' ? 'py' : language === 'go' ? 'go' : 'ts';
-    const starterContent = language === 'python'
-      ? `# TODO: Implement your solution here\n\ndef solution():\n    # Your code here\n    pass\n`
-      : language === 'go'
-      ? `package main\n\n// TODO: Implement your solution here\nfunc solution() {\n\t// Your code here\n}\n`
-      : `// TODO: Implement your solution here\n\nexport function solution() {\n  // Your code here\n}\n`;
-
-    return {
-      title: `${role} Challenge - ${difficulty}`,
-      description: `Solve this ${difficulty.toLowerCase()} ${role} programming challenge using ${language}.`,
-      requirements: [
-        "Implement the required functionality",
-        "Pass all test cases",
-        "Write clean, maintainable code",
-      ],
-      difficulty: difficulty.toLowerCase() as "easy" | "medium" | "hard",
-      estimatedTime: difficulty === "EASY" ? 20 : difficulty === "MEDIUM" ? 30 : 45,
-      language: language,
-      starterCode: [
-        {
-          fileName: `solution.${fileExt}`,
-          content: starterContent,
-        },
-      ],
-      testCases: [
-        {
-          name: "Test case 1",
-          input: "test input",
-          expectedOutput: "expected output",
-          hidden: false,
-        },
-      ],
-    };
+    throw error;
   }
 }

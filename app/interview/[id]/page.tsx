@@ -1114,10 +1114,11 @@ export default function InterviewPage() {
       // Reset test results immediately to prevent completion card from re-showing
       setTestResults({ passed: 0, total: 0 });
 
-      // Calculate performance score (using stored values before reset)
+      // Calculate performance score
+      // Prefer evaluation score (from AI evaluation) over simple test pass rate
       const timeSpent = questionTimeElapsed;
       const testsPassedRatio = currentTestResults.total > 0 ? currentTestResults.passed / currentTestResults.total : 0;
-      const score = Math.round(testsPassedRatio * 100); // Simple score calculation
+      const score = evaluationResult?.overallScore ?? Math.round(testsPassedRatio * 100);
 
       // Store performance for loading screen (full context for incremental)
       setPreviousQuestionPerformance({
