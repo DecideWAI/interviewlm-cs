@@ -32,17 +32,17 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Threshold for triggering summarization (total estimated tokens)
-TOKEN_THRESHOLD = 60_000
+TOKEN_THRESHOLD = 30_000
 
 # Target tokens to keep in recent messages (not summarized)
 # We keep enough recent context for continuity (~15k tokens)
-KEEP_RECENT_TOKENS = 15_000
+KEEP_RECENT_TOKENS = 5_000
 
 # Minimum messages to keep regardless of token count
 MIN_KEEP_RECENT_MESSAGES = 6
 
 # Approximate max tokens for the summary
-SUMMARY_MAX_TOKENS = 2000
+SUMMARY_MAX_TOKENS = 3_000
 
 
 # =============================================================================

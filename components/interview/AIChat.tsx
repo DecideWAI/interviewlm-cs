@@ -378,10 +378,11 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                   const toolResultMessage: Message = {
                     id: generateMessageId(`tool_result_${data.toolId || "unknown"}`),
                     role: "system",
-                    content: formatToolResult(data.toolName, data.output),
+                    content: formatToolResult(data.toolName, data.output, data.input),
                     timestamp: new Date(),
                     type: data.isError ? "tool_error" : "tool_result",
                     toolName: data.toolName,
+                    toolInput: data.input,
                     toolOutput: data.output,
                   };
                   setMessages((prev) => [...prev, toolResultMessage]);
@@ -783,46 +784,74 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
 
 /**
  * Format tool result for display
+ * Uses input as fallback when output fields are missing
  */
-function formatToolResult(toolName: string, output: any): string {
+function formatToolResult(toolName: string, output: any, input?: any): string {
   if (output?.success === false || output?.error) {
     return `❌ ${toolName} failed: ${output.error || 'Unknown error'}`;
   }
 
+  // Helper to get path from output or input
+  const getPath = () => {
+    return output?.path || input?.path || input?.file_path || '(file)';
+  };
+
+  // Helper to get bytes/size
+  const getBytes = () => {
+    if (output?.bytesWritten !== undefined) return output.bytesWritten;
+    if (output?.bytes_written !== undefined) return output.bytes_written;
+    // Fallback: estimate from input content
+    if (input?.content) {
+      return typeof input.content === 'string' ? input.content.length : 0;
+    }
+    return 0;
+  };
+
   switch (toolName) {
     case "Read":
     case "read_file":
-      return `✅ Read ${output.path} (${output.content?.length || output.totalSize || 0} chars)`;
+      return `✅ Read ${getPath()} (${output?.content?.length || output?.totalSize || 0} chars)`;
 
     case "Write":
     case "write_file":
       // Support both camelCase (TypeScript) and snake_case (Python) formats
-      return `✅ Wrote ${output.path} (${output.bytesWritten || output.bytes_written || 0} bytes)`;
+      return `✅ Wrote ${getPath()} (${getBytes()} bytes)`;
 
     case "Edit":
     case "edit_file":
-      return `✅ Edited ${output.path} (${output.replacements || 1} replacement${output.replacements !== 1 ? 's' : ''})`;
+      return `✅ Edited ${getPath()} (${output?.replacements || 1} replacement${(output?.replacements || 1) !== 1 ? 's' : ''})`;
 
     case "run_tests":
-      return `✅ Tests: ${output.passed}/${output.total} passed`;
+      return `✅ Tests: ${output?.passed || 0}/${output?.total || 0} passed`;
 
     case "Bash":
+    case "run_bash":
     case "execute_bash":
-      const exitInfo = output.exitCode !== undefined ? ` (exit: ${output.exitCode})` : '';
-      const stdoutPreview = output.stdout?.slice(0, 100) || '';
-      return `✅ Command executed${exitInfo}${stdoutPreview ? `\n${stdoutPreview}${output.stdout?.length > 100 ? '...' : ''}` : ''}`;
+      const exitInfo = output?.exitCode !== undefined ? ` (exit: ${output.exitCode})` : '';
+      const cmdPreview = input?.command ? `: ${input.command.slice(0, 50)}${input.command.length > 50 ? '...' : ''}` : '';
+      const stdoutPreview = output?.stdout?.slice(0, 100) || '';
+      return `✅ Command executed${cmdPreview}${exitInfo}${stdoutPreview ? `\n${stdoutPreview}${output?.stdout?.length > 100 ? '...' : ''}` : ''}`;
 
     case "Grep":
-      return `✅ Found ${output.matches?.length || 0} matches`;
+    case "grep_files":
+      return `✅ Found ${output?.matches?.length || output?.count || 0} matches`;
 
     case "Glob":
-      return `✅ Found ${output.files?.length || 0} files`;
+    case "glob_files":
+      return `✅ Found ${output?.files?.length || output?.count || 0} files`;
 
     case "list_files":
-      return `✅ Listed ${output.count || output.files?.length || 0} items in ${output.path}`;
+      return `✅ Listed ${output?.count || output?.files?.length || 0} items in ${output?.path || input?.path || '/workspace'}`;
 
     case "suggest_next_question":
-      return `🎉 ${output.performance}\n${output.reason}\n${output.suggestion}`;
+      return `🎉 ${output?.performance || ''}\n${output?.reason || ''}\n${output?.suggestion || ''}`;
+
+    case "install_packages":
+      const pkgs = input?.packages?.join(', ') || output?.packages?.join(', ') || '';
+      return `✅ Installed packages${pkgs ? `: ${pkgs}` : ''}`;
+
+    case "get_environment_info":
+      return `✅ Environment info retrieved`;
 
     default:
       return `✅ ${toolName} completed`;

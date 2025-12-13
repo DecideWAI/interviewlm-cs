@@ -8,6 +8,7 @@ import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, AIChatHandle, Message } from "@/components/interview/AIChat";
 import { ProblemPanel } from "@/components/interview/ProblemPanel";
 import { InterviewLayout, PanelSizes, DEFAULT_PANEL_SIZES } from "@/components/interview/InterviewLayout";
+import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
 import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
 import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
@@ -305,6 +306,19 @@ export default function InterviewPage() {
     localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
   }, [candidateId]);
 
+  // Handle horizontal panel layout changes
+  const handleHorizontalLayout = useCallback((sizes: number[]) => {
+    const newSizes = { ...panelSizes, horizontal: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+  }, [candidateId, panelSizes]);
+
+  // Handle vertical panel layout changes
+  const handleVerticalLayout = useCallback((sizes: number[]) => {
+    const newSizes = { ...panelSizes, vertical: sizes };
+    setPanelSizes(newSizes);
+    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+  }, [candidateId, panelSizes]);
 
   // Prefetch all file contents for instant navigation
   const prefetchAllFiles = useCallback(async () => {
@@ -1181,6 +1195,14 @@ export default function InterviewPage() {
       setQuestionStartTime(new Date());
       setQuestionTimeElapsed(0);
       // Note: testResults already reset at start of function
+
+      // CRITICAL: Reset evaluation result for the new question
+      // Without this, the previous question's evaluation shows "Continue to Next Question"
+      // instead of prompting the user to evaluate the new question
+      setEvaluationResult(null);
+
+      // Switch to AI Chat tab for the new question (evaluation panel will be empty)
+      setRightPanelTab("chat");
 
       // Reset editor with new starter code
       setCode(newStarterCode);

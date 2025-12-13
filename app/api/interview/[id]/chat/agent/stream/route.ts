@@ -349,10 +349,12 @@ export async function POST(
                   onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
                     // Update tool call with result
                     const toolCall = accumulatedToolCalls.find(tc => tc.id === toolId);
+                    const toolInput = toolCall ? JSON.parse(toolCall.arguments || '{}') : {};
                     if (toolCall) {
                       toolCall.result = typeof result === 'string' ? result : JSON.stringify(result);
                     }
-                    sendEvent("tool_result", { toolName, toolId, output: result, isError });
+                    // Include tool input so frontend can extract path/content when output is missing
+                    sendEvent("tool_result", { toolName, toolId, output: result, input: toolInput, isError });
                   },
                 });
               }
@@ -397,10 +399,12 @@ export async function POST(
                 onToolResult: (toolName: string, toolId: string, result: unknown, isError: boolean) => {
                   // Update tool call with result
                   const toolCall = accumulatedToolCalls.find(tc => tc.id === toolId);
+                  const toolInput = toolCall ? JSON.parse(toolCall.arguments || '{}') : {};
                   if (toolCall) {
                     toolCall.result = typeof result === 'string' ? result : JSON.stringify(result);
                   }
-                  sendEvent("tool_result", { toolName, toolId, output: result, isError });
+                  // Include tool input so frontend can extract path/content when output is missing
+                  sendEvent("tool_result", { toolName, toolId, output: result, input: toolInput, isError });
                 },
               });
             },
@@ -552,6 +556,8 @@ interface LangGraphCallOptions {
  * - Direct dict: {success: true, path: "...", bytes_written: 123}
  * - ToolMessage wrapper: {content: '{"success":true,...}'}
  * - JSON string: '{"success":true,...}'
+ * - Nested output: {output: {success: true, ...}}
+ * - LangGraph artifact format: {artifact: {...}}
  */
 function extractToolOutput(rawOutput: unknown): Record<string, unknown> {
   if (!rawOutput) {
@@ -560,18 +566,48 @@ function extractToolOutput(rawOutput: unknown): Record<string, unknown> {
   }
 
   console.log('[extractToolOutput] Input type:', typeof rawOutput);
-  console.log('[extractToolOutput] Input preview:', JSON.stringify(rawOutput).slice(0, 300));
+  console.log('[extractToolOutput] Input preview:', JSON.stringify(rawOutput).slice(0, 500));
 
-  // If it's already a plain object with expected fields, return it
+  // Helper to check if object has expected tool result fields
+  const hasToolResultFields = (obj: Record<string, unknown>) =>
+    'success' in obj || 'path' in obj || 'error' in obj || 'bytes_written' in obj || 'bytesWritten' in obj;
+
+  // If it's already a plain object, process it
   if (typeof rawOutput === 'object' && rawOutput !== null) {
     const obj = rawOutput as Record<string, unknown>;
+
+    // Direct object with expected fields - return immediately
+    if (hasToolResultFields(obj)) {
+      console.log('[extractToolOutput] Direct object with expected fields');
+      return obj;
+    }
+
+    // Check for nested 'output' field (some LangGraph versions nest the result)
+    if ('output' in obj && typeof obj.output === 'object' && obj.output !== null) {
+      const nested = obj.output as Record<string, unknown>;
+      if (hasToolResultFields(nested)) {
+        console.log('[extractToolOutput] Found nested output object');
+        return nested;
+      }
+    }
+
+    // Check for 'artifact' field (LangGraph structured output)
+    if ('artifact' in obj && typeof obj.artifact === 'object' && obj.artifact !== null) {
+      const artifact = obj.artifact as Record<string, unknown>;
+      if (hasToolResultFields(artifact)) {
+        console.log('[extractToolOutput] Found artifact object');
+        return artifact;
+      }
+    }
 
     // Check if this looks like a ToolMessage with .content
     if ('content' in obj) {
       console.log('[extractToolOutput] Found content field, extracting...');
       const content = obj.content;
+
       // content can be a JSON string that needs parsing
       if (typeof content === 'string') {
+        // First try to parse as JSON
         try {
           const parsed = JSON.parse(content);
           if (typeof parsed === 'object' && parsed !== null) {
@@ -579,22 +615,27 @@ function extractToolOutput(rawOutput: unknown): Record<string, unknown> {
             return parsed as Record<string, unknown>;
           }
         } catch {
-          // Not valid JSON, return as-is
-          console.log('[extractToolOutput] Content is not valid JSON, returning rawContent');
-          return { rawContent: content };
+          // Not valid JSON - try to extract info from string message
+          console.log('[extractToolOutput] Content is not JSON, extracting from string');
+
+          // Try to extract path from common message patterns like "Wrote to /workspace/foo.py"
+          const pathMatch = content.match(/(?:to|at|file|path[:\s]+)?([\/\w.-]+\.\w+)/i);
+          const bytesMatch = content.match(/(\d+)\s*(?:bytes?|chars?)/i);
+
+          return {
+            rawContent: content,
+            success: !content.toLowerCase().includes('error') && !content.toLowerCase().includes('failed'),
+            path: pathMatch?.[1],
+            bytes_written: bytesMatch ? parseInt(bytesMatch[1]) : undefined,
+          };
         }
       }
+
       // content is already an object
       if (typeof content === 'object' && content !== null) {
         console.log('[extractToolOutput] Content is object:', JSON.stringify(content).slice(0, 200));
         return content as Record<string, unknown>;
       }
-    }
-
-    // Check if it has expected tool result fields (success, path, etc.)
-    if ('success' in obj || 'path' in obj || 'error' in obj) {
-      console.log('[extractToolOutput] Direct object with expected fields');
-      return obj;
     }
 
     // Fallback: return the object as-is
@@ -611,8 +652,14 @@ function extractToolOutput(rawOutput: unknown): Record<string, unknown> {
         return parsed as Record<string, unknown>;
       }
     } catch {
-      console.log('[extractToolOutput] String is not valid JSON');
-      return { rawContent: rawOutput };
+      // Try to extract info from string
+      console.log('[extractToolOutput] String is not JSON, extracting info');
+      const pathMatch = rawOutput.match(/(?:to|at|file|path[:\s]+)?([\/\w.-]+\.\w+)/i);
+      return {
+        rawContent: rawOutput,
+        success: !rawOutput.toLowerCase().includes('error'),
+        path: pathMatch?.[1],
+      };
     }
   }
 
@@ -682,6 +729,7 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
   const toolsUsed: string[] = [];
   const filesModified: string[] = [];
   const metadata: Record<string, unknown> = { threadId };
+  const toolInputMap = new Map<string, unknown>(); // Store tool inputs for retrieval in on_tool_end
 
   try {
     console.log(`[LangGraph] Starting stream for thread ${threadId}, assistant: coding_agent`);
@@ -733,14 +781,19 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
         } else if (eventData?.event === 'on_tool_start') {
           const toolName = eventData.name || 'unknown';
           const toolId = eventData.run_id || `tool_${Date.now()}`;
+          const toolInput = eventData.data?.input || {};
           toolsUsed.push(toolName);
-          options.onToolStart(toolName, toolId, eventData.data?.input || {});
+          // Store input for later retrieval in on_tool_end
+          toolInputMap.set(toolId, toolInput);
+          options.onToolStart(toolName, toolId, toolInput);
         } else if (eventData?.event === 'on_tool_end') {
           const toolName = eventData.name || 'unknown';
           const toolId = eventData.run_id || '';
           // Extract tool output, handling ToolMessage wrapper and JSON string formats
           const output = extractToolOutput(eventData.data?.output);
           const isError = !!eventData.data?.error || output.success === false;
+          // Retrieve the input that was stored during on_tool_start
+          const toolInput = toolInputMap.get(toolId) as Record<string, unknown> | undefined;
 
           options.onToolResult(toolName, toolId, output, isError);
 
@@ -748,24 +801,29 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
           const toolNameLower = toolName.toLowerCase();
           console.log(`[LangGraph] Tool result: ${toolNameLower}, output:`, JSON.stringify(output).slice(0, 200));
 
+          // Get file path from output or fallback to input
+          const filePath = (
+            output.path ||
+            toolInput?.path ||
+            toolInput?.file_path
+          ) as string | undefined;
+
           if (
             (toolNameLower === 'write_file' || toolNameLower === 'edit_file') &&
-            output.success &&
-            output.path &&
-            typeof output.path === 'string'
+            (output.success !== false) && // Allow undefined success (assume success if not explicitly false)
+            filePath
           ) {
-            const outputPath = output.path as string;
-            console.log(`[LangGraph] Broadcasting file change: ${outputPath} to candidate ${options.candidateId}`);
+            console.log(`[LangGraph] Broadcasting file change: ${filePath} to candidate ${options.candidateId}`);
             const isCreate = toolNameLower === 'write_file';
-            const filePath = outputPath.startsWith('/workspace')
-              ? outputPath
-              : `/workspace/${outputPath}`;
-            const fileName = filePath.split('/').pop() || filePath;
+            const normalizedPath = filePath.startsWith('/workspace')
+              ? filePath
+              : `/workspace/${filePath}`;
+            const fileName = normalizedPath.split('/').pop() || normalizedPath;
 
             // Track file in database so it appears in file tree on refresh
             if (options.sessionRecordingId) {
               sessionService
-                .addTrackedFile(options.sessionRecordingId, filePath)
+                .addTrackedFile(options.sessionRecordingId, normalizedPath)
                 .catch((err) =>
                   console.error('[LangGraph] Failed to track file:', err)
                 );
@@ -775,12 +833,12 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
             fileStreamManager.broadcastFileChange({
               sessionId: options.candidateId,
               type: isCreate ? 'create' : 'update',
-              path: filePath,
+              path: normalizedPath,
               fileType: 'file',
               name: fileName,
               timestamp: new Date().toISOString(),
             });
-            filesModified.push(filePath);
+            filesModified.push(normalizedPath);
           }
         }
       }
