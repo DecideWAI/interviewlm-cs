@@ -130,9 +130,9 @@ export class QuestionAssignmentService {
       return envBackend;
     }
 
-    // 5. Default to typescript (existing behavior)
+    // 5. Default to langgraph (changed from typescript for 100% LangGraph)
     return {
-      backend: 'typescript',
+      backend: 'langgraph',
       source: 'default',
     };
   }

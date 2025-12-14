@@ -2073,9 +2073,9 @@ export default function InterviewPage() {
                           testsTotal={testResults.total}
                           timeSpent={questionTimeElapsed}
                           score={Math.round((testResults.passed / testResults.total) * 100)}
-                          onNext={handleNextQuestion}
+                          onNext={currentQuestionIndex + 1 >= totalQuestions ? handleSubmit : handleNextQuestion}
                           isLastQuestion={currentQuestionIndex + 1 >= totalQuestions}
-                          isLoading={isLoadingNextQuestion}
+                          isLoading={isLoadingNextQuestion || isSubmitting}
                         />
                       </div>
                     )}
@@ -2182,7 +2182,7 @@ export default function InterviewPage() {
                         evaluationResult={evaluationResult}
                         isEvaluating={isEvaluating}
                         onEvaluate={handleEvaluate}
-                        onProceed={handleNextQuestion}
+                        onProceed={currentQuestionIndex + 1 >= totalQuestions ? handleSubmit : handleNextQuestion}
                         isLastQuestion={currentQuestionIndex + 1 >= totalQuestions}
                         passingThreshold={passingThreshold}
                       />

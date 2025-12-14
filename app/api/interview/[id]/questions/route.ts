@@ -35,12 +35,108 @@ const anthropic = new Anthropic({
   },
 });
 
+// Use Haiku for fast question generation (~10-15s vs 50-60s with Sonnet)
+const QUESTION_GEN_MODEL = process.env.QUESTION_GEN_MODEL || "claude-haiku-4-5-20251001";
+
 // LangGraph SDK client for question generation
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || "http://localhost:2024";
 const langGraphClient = new Client({ apiUrl: LANGGRAPH_API_URL });
 
 // Namespace for generating deterministic thread UUIDs
 const QUESTION_GEN_NAMESPACE = "7ba7b810-9dad-11d1-80b4-00c04fd430c9";
+
+/**
+ * Attempt to repair and parse potentially malformed JSON from LLM responses.
+ * Handles common issues like unterminated strings, trailing commas, etc.
+ */
+function repairAndParseJson<T>(jsonStr: string): T {
+  // First, try direct parsing
+  try {
+    return JSON.parse(jsonStr);
+  } catch (firstError) {
+    logger.warn('[JSON Repair] Direct parse failed, attempting repair', {
+      error: (firstError as Error).message,
+      jsonLength: jsonStr.length,
+    });
+  }
+
+  // Try to repair common issues
+  let repaired = jsonStr;
+
+  // 1. Fix unterminated strings at the end (truncation issue)
+  // Count unescaped quotes to check if we have an odd number
+  const quoteMatches = repaired.match(/(?<!\\)"/g);
+  if (quoteMatches && quoteMatches.length % 2 !== 0) {
+    // Odd number of quotes - likely truncated mid-string
+    // Find the last unescaped quote and close it
+    repaired = repaired + '"';
+    logger.info('[JSON Repair] Added closing quote for unterminated string');
+  }
+
+  // 2. Try to close any unclosed braces/brackets
+  const openBraces = (repaired.match(/\{/g) || []).length;
+  const closeBraces = (repaired.match(/\}/g) || []).length;
+  const openBrackets = (repaired.match(/\[/g) || []).length;
+  const closeBrackets = (repaired.match(/\]/g) || []).length;
+
+  // Close unclosed brackets first (inner), then braces (outer)
+  for (let i = 0; i < openBrackets - closeBrackets; i++) {
+    repaired = repaired + ']';
+  }
+  for (let i = 0; i < openBraces - closeBraces; i++) {
+    repaired = repaired + '}';
+  }
+
+  // 3. Remove trailing commas before closing brackets/braces
+  repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
+
+  // 4. Try parsing again
+  try {
+    const result = JSON.parse(repaired);
+    logger.info('[JSON Repair] Successfully repaired and parsed JSON');
+    return result;
+  } catch (secondError) {
+    // 5. More aggressive repair: try to extract a valid subset
+    // Look for complete objects in the JSON
+    logger.warn('[JSON Repair] Standard repair failed, trying aggressive repair', {
+      error: (secondError as Error).message,
+    });
+  }
+
+  // 6. Try to find the last complete property and truncate there
+  // This handles cases where we're mid-property value
+  const lastCompleteProperty = repaired.lastIndexOf('",');
+  if (lastCompleteProperty > 0) {
+    const truncated = repaired.substring(0, lastCompleteProperty + 1);
+    // Count braces again and close them
+    const openB = (truncated.match(/\{/g) || []).length;
+    const closeB = (truncated.match(/\}/g) || []).length;
+    const openBr = (truncated.match(/\[/g) || []).length;
+    const closeBr = (truncated.match(/\]/g) || []).length;
+
+    let finalJson = truncated;
+    for (let i = 0; i < openBr - closeBr; i++) {
+      finalJson = finalJson + ']';
+    }
+    for (let i = 0; i < openB - closeB; i++) {
+      finalJson = finalJson + '}';
+    }
+
+    try {
+      const result = JSON.parse(finalJson);
+      logger.info('[JSON Repair] Aggressive truncation repair succeeded');
+      return result;
+    } catch (thirdError) {
+      logger.error('[JSON Repair] All repair attempts failed', thirdError as Error, {
+        originalLength: jsonStr.length,
+        repairedLength: finalJson.length,
+      });
+    }
+  }
+
+  // If all repairs fail, throw with helpful context
+  throw new Error(`Failed to parse JSON after repair attempts. Original length: ${jsonStr.length}. First 500 chars: ${jsonStr.substring(0, 500)}...`);
+}
 
 function generateQuestionGenThreadId(sessionId: string, questionNumber: number): string {
   return uuidv5(`question-gen-${sessionId}-${questionNumber}`, QUESTION_GEN_NAMESPACE);
@@ -925,6 +1021,7 @@ function getComplexityAdditions(difficulty: "EASY" | "MEDIUM" | "HARD"): string 
 
 /**
  * Generate problem using LLM
+ * Uses Haiku by default for ~3x faster generation (10-15s vs 50-60s with Sonnet)
  */
 async function generateProblemWithLLM(
   role: string,
@@ -934,6 +1031,7 @@ async function generateProblemWithLLM(
   techStack: string[],
   questionNumber: number
 ): Promise<Omit<GeneratedProblem, "id" | "generatedAt" | "generatedBy" | "seedId">> {
+  const startTime = Date.now();
   const language = determineLanguage(techStack);
   const techStackStr = techStack.length > 0 ? techStack.join(', ') : 'TypeScript';
 
@@ -1001,8 +1099,14 @@ Return a JSON object with this structure:
 }`;
 
   try {
+    logger.info('[Questions] Starting LLM question generation', {
+      model: QUESTION_GEN_MODEL,
+      questionNumber,
+      difficulty,
+    });
+
     const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250929",
+      model: QUESTION_GEN_MODEL,
       max_tokens: 8192, // Increased to avoid truncation (max 16000)
       messages: [
         {
@@ -1012,22 +1116,43 @@ Return a JSON object with this structure:
       ],
     });
 
+    const llmLatency = Date.now() - startTime;
+    logger.info('[Questions] LLM question generation complete', {
+      model: QUESTION_GEN_MODEL,
+      latencyMs: llmLatency,
+      inputTokens: message.usage.input_tokens,
+      outputTokens: message.usage.output_tokens,
+    });
+
     const content = message.content[0];
     if (content.type === "text") {
       // Extract JSON from response
       const jsonMatch = content.text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        const problem = JSON.parse(jsonMatch[0]);
-        return problem;
+        try {
+          // Use repair function to handle malformed JSON from LLM
+          const problem = repairAndParseJson<Omit<GeneratedProblem, "id" | "generatedAt" | "generatedBy" | "seedId">>(jsonMatch[0]);
+          return problem;
+        } catch (parseError) {
+          // Log the raw response for debugging
+          logger.error('[Questions] JSON parse/repair failed', parseError as Error, {
+            rawResponseLength: content.text.length,
+            jsonMatchLength: jsonMatch[0].length,
+            rawResponsePreview: content.text.substring(0, 1000),
+            stopReason: message.stop_reason,
+          });
+          throw parseError;
+        }
       }
     }
 
-    throw new Error("Failed to parse LLM response");
+    throw new Error("Failed to extract JSON from LLM response - no JSON object found");
   } catch (error) {
     logger.error("LLM generation error", error as Error, {
       role,
       seniority,
       difficulty,
+      model: QUESTION_GEN_MODEL,
     });
     throw error;
   }

@@ -78,7 +78,7 @@ export class AgentRouter {
 
     // Get experiment assignment if experiment is specified
     let assignment: ExperimentAssignment | null = null;
-    let backend: AgentBackend = 'claude-sdk'; // Default
+    let backend: AgentBackend = 'langgraph'; // Default to langgraph (100%)
 
     if (experimentId) {
       assignment = await experimentService.getAssignment(

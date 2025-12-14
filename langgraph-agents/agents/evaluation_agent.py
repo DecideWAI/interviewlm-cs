@@ -53,7 +53,7 @@ from tools.evaluation_tools import (
     STORAGE_TOOLS,
 )
 from config import settings, generate_evaluation_thread_uuid
-from middleware import system_prompt_middleware
+from middleware import summarization_middleware, system_prompt_middleware
 
 
 # =============================================================================
@@ -353,6 +353,7 @@ def create_evaluation_agent_graph(use_checkpointing: bool = True):
     model = _create_anthropic_model(settings.evaluation_agent_model)
 
     middleware = [
+        summarization_middleware,      # Summarize long conversations first
         system_prompt_middleware,      # Remove SystemMessages from persistence
         model_selection_middleware,
         anthropic_caching_middleware,
