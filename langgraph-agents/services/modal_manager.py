@@ -64,6 +64,18 @@ TOOL_TIMEOUT_SECONDS = 30
 # Universal image ID (set via environment)
 UNIVERSAL_IMAGE_ID = os.environ.get("MODAL_UNIVERSAL_IMAGE_ID")
 
+
+# =============================================================================
+# Volume Naming (must match TypeScript lib/services/modal.ts)
+# =============================================================================
+
+def get_volume_name(session_id: str) -> str:
+    """
+    Get deterministic volume name for a session.
+    MUST match TypeScript: getVolumeName() in lib/services/modal.ts
+    """
+    return f"interview-volume-{session_id}"
+
 # =============================================================================
 # Config Service Integration (DB-backed configs - NO FALLBACKS)
 # =============================================================================
@@ -459,13 +471,14 @@ class SandboxManager:
         while (time.time() - start_time) < wait_timeout:
             check_count += 1
             try:
+                # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
                 lock = redis_client.lock(
-                    f"sandbox:{session_id}",
+                    f"lock:sandbox:{session_id}",
                     timeout=timeout,
                     blocking=False,  # Non-blocking so we can implement our own retry
                 )
                 if lock.acquire(blocking=False):
-                    logger.info(f"[SandboxManager] Acquired lock for sandbox:{session_id}")
+                    logger.info(f"[SandboxManager] Acquired lock for lock:sandbox:{session_id}")
                     return (lock, True, None)
 
                 # Lock held by another process - check if sandbox was created
@@ -568,13 +581,14 @@ class SandboxManager:
 
         while (time.time() - start_time) < wait_timeout:
             try:
+                # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
                 lock = redis_client.lock(
-                    f"sandbox:{session_id}",
+                    f"lock:sandbox:{session_id}",
                     timeout=timeout,
                     blocking=False,  # Non-blocking so we can implement our own retry
                 )
                 if lock.acquire(blocking=False):
-                    logger.info(f"[SandboxManager] Acquired lock for sandbox:{session_id}")
+                    logger.info(f"[SandboxManager] Acquired lock for lock:sandbox:{session_id}")
                     return (lock, True)
 
                 # Lock held by another process, wait and retry
@@ -932,8 +946,16 @@ class SandboxManager:
 
         print(f"[SandboxManager] Sandbox config: cpu={sandbox_cpu}, memory={sandbox_memory}MB, timeout={sandbox_timeout}s")
 
-        # Create sandbox with keep-alive command (matching reference implementation)
+        # Get or create persistent volume (matching TypeScript implementation)
+        # Volume name is deterministic based on session_id so files persist across sandbox restarts
+        volume_name = get_volume_name(session_id)
+        print(f"[SandboxManager] Getting/creating volume: {volume_name}")
+        volume = modal.Volume.from_name(volume_name, create_if_missing=True)
+        print(f"[SandboxManager] Volume ready: {volume_name}")
+
+        # Create sandbox with keep-alive command AND mounted volume
         # The "tail -f /dev/null" keeps the sandbox alive without consuming resources
+        # Volume at /workspace ensures files persist and are shared with TypeScript side
         sandbox = modal.Sandbox.create(
             "tail", "-f", "/dev/null",  # Keep-alive command
             app=cls._get_app(),
@@ -942,10 +964,10 @@ class SandboxManager:
             workdir="/workspace",
             cpu=sandbox_cpu,
             memory=sandbox_memory,
+            volumes={"/workspace": volume},  # Mount persistent volume
         )
 
-        # Initialize workspace
-        run_in_sandbox(sandbox, "mkdir", "-p", "/workspace")
+        # Note: No need to mkdir /workspace - Modal creates it when mounting volume
 
         # Get sandbox ID and store metadata
         sandbox_id = sandbox.object_id

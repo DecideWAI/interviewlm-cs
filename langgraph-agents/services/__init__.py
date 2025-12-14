@@ -17,6 +17,7 @@ from .modal_manager import (
     get_file_system,
     health_check,
     test_connection,
+    get_volume_name,
     MODAL_AVAILABLE,
 )
 from .gcs import (
@@ -45,6 +46,7 @@ __all__ = [
     "get_file_system",
     "health_check",
     "test_connection",
+    "get_volume_name",
     "MODAL_AVAILABLE",
     # File Snapshot Capture (sends to TypeScript worker)
     "capture_file_snapshots",

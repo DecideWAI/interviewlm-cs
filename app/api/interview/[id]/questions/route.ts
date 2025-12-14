@@ -509,10 +509,13 @@ export const POST = withErrorHandling(async (
 
       if (sessionRecording) {
         // Find the most recent evaluation event for the previous question
+        // Check for both fast_progression (live evaluation) and complete (comprehensive evaluation)
         const evaluationEvent = await prisma.sessionEventLog.findFirst({
           where: {
             sessionId: sessionRecording.id,
-            eventType: "evaluation.complete",
+            eventType: {
+              in: ["evaluation.complete", "evaluation.fast_progression"],
+            },
           },
           orderBy: { sequenceNumber: "desc" },
         });
