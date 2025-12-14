@@ -45,7 +45,7 @@ from tools.fast_evaluation_tools import (
     FAST_EVALUATION_SUBMISSION_TOOLS,
 )
 from config import settings, generate_question_eval_thread_uuid
-from middleware import summarization_middleware, system_prompt_middleware
+from middleware import SummarizationMiddleware, system_prompt_middleware
 
 
 # =============================================================================
@@ -334,7 +334,7 @@ def create_fast_progression_agent_graph(use_checkpointing: bool = True):
     model = _create_haiku_model()
 
     middleware = [
-        summarization_middleware,      # Summarize long conversations first
+        SummarizationMiddleware(),     # Summarize long conversations (persists to state)
         system_prompt_middleware,      # Remove SystemMessages from persistence
         model_selection_middleware,
         anthropic_caching_middleware,

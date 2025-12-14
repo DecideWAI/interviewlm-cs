@@ -4,23 +4,35 @@ This middleware automatically summarizes older conversation messages when the
 conversation grows beyond a threshold, keeping recent messages intact while
 replacing older ones with a summary.
 
-Benefits:
-- Prevents context overflow for very long conversations
-- Reduces token costs by compressing history
-- Maintains essential context from earlier conversation
-- Works alongside caching (summarized history is cached)
+IMPORTANT: This middleware uses AgentMiddleware.before_model to return state updates
+that PERSIST to the checkpointer. This ensures the summarization is not lost between turns.
 
-IMPORTANT: This middleware carefully handles tool_use/tool_result pairs to avoid
-creating orphaned ToolMessages that would cause Anthropic API errors.
+The key mechanism is returning RemoveMessage(id=REMOVE_ALL_MESSAGES) followed by
+the summary message and preserved recent messages. This replaces the full message
+history with a compressed version.
 """
 
+import uuid
 import logging
-from typing import Any
+from typing import Any, cast
 
 from langchain.agents.middleware import wrap_model_call
-from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+    AgentState,
+    ModelRequest,
+    ModelResponse,
+)
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage, ToolMessage
+from langchain_core.messages import (
+    BaseMessage,
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+    RemoveMessage,
+)
+from langgraph.graph.message import REMOVE_ALL_MESSAGES
+from langgraph.runtime import Runtime
 
 from config import settings
 
@@ -34,12 +46,8 @@ logger = logging.getLogger(__name__)
 # Threshold for triggering summarization (total estimated tokens)
 TOKEN_THRESHOLD = 30_000
 
-# Target tokens to keep in recent messages (not summarized)
-# We keep enough recent context for continuity (~15k tokens)
-KEEP_RECENT_TOKENS = 5_000
-
-# Minimum messages to keep regardless of token count
-MIN_KEEP_RECENT_MESSAGES = 6
+# Number of recent messages to preserve after summarization
+MESSAGES_TO_KEEP = 8
 
 # Approximate max tokens for the summary
 SUMMARY_MAX_TOKENS = 3_000
@@ -111,6 +119,13 @@ def _format_messages_for_summary(messages: list[BaseMessage]) -> str:
     return "\n\n".join(lines)
 
 
+def _ensure_message_ids(messages: list[BaseMessage]) -> None:
+    """Ensure all messages have unique IDs for the add_messages reducer."""
+    for msg in messages:
+        if msg.id is None:
+            msg.id = str(uuid.uuid4())
+
+
 def _get_tool_use_ids_from_message(message: BaseMessage) -> set[str]:
     """Extract tool_use IDs from an AIMessage."""
     tool_ids = set()
@@ -137,85 +152,95 @@ def _get_tool_use_ids_from_message(message: BaseMessage) -> set[str]:
     return tool_ids
 
 
-def _get_tool_result_ids_from_messages(messages: list[BaseMessage]) -> set[str]:
-    """Get all tool_call_ids referenced by ToolMessages in the list."""
-    result_ids = set()
-    for msg in messages:
+def _find_safe_cutoff(messages: list[BaseMessage], messages_to_keep: int) -> int:
+    """Find safe cutoff point that preserves AI/Tool message pairs.
+
+    Returns the index where messages can be safely cut without separating
+    related AI and Tool messages. Returns 0 if no safe cutoff is found.
+    """
+    if len(messages) <= messages_to_keep:
+        return 0
+
+    target_cutoff = len(messages) - messages_to_keep
+
+    # Search backwards from target to find safe point
+    for i in range(target_cutoff, -1, -1):
+        if _is_safe_cutoff_point(messages, i):
+            return i
+
+    return 0
+
+
+def _is_safe_cutoff_point(messages: list[BaseMessage], cutoff_index: int) -> bool:
+    """Check if cutting at index would separate AI/Tool message pairs."""
+    if cutoff_index >= len(messages):
+        return True
+
+    search_range = 5
+    search_start = max(0, cutoff_index - search_range)
+    search_end = min(len(messages), cutoff_index + search_range)
+
+    for i in range(search_start, search_end):
+        msg = messages[i]
+        if not isinstance(msg, AIMessage):
+            continue
+        if not hasattr(msg, 'tool_calls') or not msg.tool_calls:
+            continue
+
+        tool_call_ids = _get_tool_use_ids_from_message(msg)
+        if _cutoff_separates_tool_pair(messages, i, cutoff_index, tool_call_ids):
+            return False
+
+    return True
+
+
+def _cutoff_separates_tool_pair(
+    messages: list[BaseMessage],
+    ai_message_index: int,
+    cutoff_index: int,
+    tool_call_ids: set[str],
+) -> bool:
+    """Check if cutoff separates an AI message from its corresponding tool messages."""
+    for j in range(ai_message_index + 1, len(messages)):
+        message = messages[j]
+        if isinstance(message, ToolMessage):
+            tool_call_id = getattr(message, 'tool_call_id', None)
+            if tool_call_id and tool_call_id in tool_call_ids:
+                ai_before_cutoff = ai_message_index < cutoff_index
+                tool_before_cutoff = j < cutoff_index
+                if ai_before_cutoff != tool_before_cutoff:
+                    return True
+    return False
+
+
+def _partition_messages(
+    messages: list[BaseMessage],
+    cutoff_index: int,
+) -> tuple[list[BaseMessage], list[BaseMessage]]:
+    """Partition messages into those to summarize and those to preserve.
+
+    Also removes any orphaned ToolMessages from preserved_messages that reference
+    tool calls that were in messages_to_summarize.
+    """
+    messages_to_summarize = messages[:cutoff_index]
+    preserved_messages = messages[cutoff_index:]
+
+    # Collect all tool_call_ids from messages that will be summarized
+    summarized_tool_call_ids = set()
+    for msg in messages_to_summarize:
+        summarized_tool_call_ids.update(_get_tool_use_ids_from_message(msg))
+
+    # Filter out orphaned ToolMessages from preserved_messages
+    filtered_preserved = []
+    for msg in preserved_messages:
         if isinstance(msg, ToolMessage):
             tool_call_id = getattr(msg, 'tool_call_id', None)
-            if tool_call_id:
-                result_ids.add(tool_call_id)
-    return result_ids
+            if tool_call_id and tool_call_id in summarized_tool_call_ids:
+                # Skip this orphaned ToolMessage
+                continue
+        filtered_preserved.append(msg)
 
-
-def _find_safe_split_point(messages: list[BaseMessage], initial_split: int) -> int:
-    """Find a safe split point that doesn't orphan tool results.
-
-    When summarizing, we need to ensure that if a ToolMessage is in the "recent"
-    portion, its corresponding AIMessage with tool_use is also kept.
-
-    Args:
-        messages: Full message list
-        initial_split: Initial index to split at (messages before this get summarized)
-
-    Returns:
-        Adjusted split index that won't create orphaned tool results
-    """
-    if initial_split <= 1:
-        return initial_split
-
-    recent_messages = messages[initial_split:]
-    to_summarize = messages[:initial_split]
-
-    # Get all tool_result IDs in recent messages
-    recent_tool_result_ids = _get_tool_result_ids_from_messages(recent_messages)
-
-    if not recent_tool_result_ids:
-        # No tool results in recent messages - safe to split here
-        return initial_split
-
-    # Get all tool_use IDs from messages that would be summarized
-    summarized_tool_use_ids = set()
-    for msg in to_summarize:
-        summarized_tool_use_ids.update(_get_tool_use_ids_from_message(msg))
-
-    # Check if any recent tool_results depend on summarized tool_uses
-    orphaned_ids = recent_tool_result_ids & summarized_tool_use_ids
-
-    if not orphaned_ids:
-        # No orphans - safe to split here
-        return initial_split
-
-    # We have potential orphans - need to move the split point earlier
-    # Find the earliest AIMessage that has a tool_use needed by recent messages
-    logger.info(f"[Summarization] Found {len(orphaned_ids)} tool pairs that span the split point, adjusting...")
-
-    for i in range(initial_split - 1, 0, -1):
-        msg = messages[i]
-        msg_tool_ids = _get_tool_use_ids_from_message(msg)
-
-        if msg_tool_ids & orphaned_ids:
-            # This message has tool_uses needed by recent messages
-            # Move split to before this message
-            new_split = i
-
-            # Recalculate orphans with new split
-            new_recent = messages[new_split:]
-            new_recent_result_ids = _get_tool_result_ids_from_messages(new_recent)
-
-            new_summarized_tool_use_ids = set()
-            for m in messages[:new_split]:
-                new_summarized_tool_use_ids.update(_get_tool_use_ids_from_message(m))
-
-            new_orphans = new_recent_result_ids & new_summarized_tool_use_ids
-
-            if not new_orphans:
-                logger.info(f"[Summarization] Adjusted split point from {initial_split} to {new_split}")
-                return new_split
-
-    # If we couldn't find a safe point, keep more messages (be conservative)
-    logger.warning(f"[Summarization] Could not find safe split point, keeping all messages")
-    return 1  # Only summarize the first message
+    return messages_to_summarize, filtered_preserved
 
 
 async def _generate_summary(messages: list[BaseMessage]) -> str:
@@ -243,141 +268,212 @@ async def _generate_summary(messages: list[BaseMessage]) -> str:
     return summary
 
 
+def _generate_summary_sync(messages: list[BaseMessage]) -> str:
+    """Generate a summary of the given messages using a fast model (sync version)."""
+    conversation_text = _format_messages_for_summary(messages)
+    prompt = SUMMARIZATION_PROMPT.format(conversation=conversation_text)
+
+    # Use Haiku for fast, cheap summarization
+    model = ChatAnthropic(
+        model_name="claude-haiku-4-5-20251001",
+        max_tokens=SUMMARY_MAX_TOKENS,
+        temperature=0.3,
+        api_key=settings.anthropic_api_key,
+    )
+
+    response = model.invoke([HumanMessage(content=prompt)])
+
+    summary = response.content
+    if isinstance(summary, list):
+        summary = " ".join(
+            block.get("text", "") if isinstance(block, dict) else str(block)
+            for block in summary
+        )
+
+    return summary
+
+
 # =============================================================================
-# Middleware
+# AgentMiddleware Implementation (Persisting Summarization)
 # =============================================================================
 
-def _find_token_based_split_point(messages: list[BaseMessage], keep_first: int = 1) -> int:
-    """Find split point to keep approximately KEEP_RECENT_TOKENS worth of messages.
+class SummarizationMiddleware(AgentMiddleware):
+    """Middleware that summarizes conversation history when token limits are approached.
 
-    Returns the index where "recent" messages start (everything from this index
-    onwards will be kept, everything before will be summarized).
+    This middleware monitors message token counts and automatically summarizes older
+    messages when a threshold is reached. CRITICALLY, it returns state updates that
+    PERSIST to the checkpointer using RemoveMessage.
+
+    This ensures:
+    1. Old messages are REMOVED from state (not just hidden from the model)
+    2. Summary message is ADDED to state
+    3. Recent messages are PRESERVED
+    4. Next turn sees the summarized history, not the full history
     """
-    if len(messages) <= keep_first + MIN_KEEP_RECENT_MESSAGES:
-        return keep_first  # Can't split meaningfully
 
-    # Walk backwards from end, accumulating tokens until we hit the target
-    recent_tokens = 0
-    split_index = len(messages)
+    def __init__(
+        self,
+        max_tokens_before_summary: int = TOKEN_THRESHOLD,
+        messages_to_keep: int = MESSAGES_TO_KEEP,
+    ) -> None:
+        """Initialize the summarization middleware.
 
-    for i in range(len(messages) - 1, keep_first - 1, -1):
-        msg_tokens = _estimate_message_tokens(messages[i])
-        if recent_tokens + msg_tokens > KEEP_RECENT_TOKENS and split_index < len(messages) - MIN_KEEP_RECENT_MESSAGES:
-            # We've accumulated enough tokens
-            break
-        recent_tokens += msg_tokens
-        split_index = i
+        Args:
+            max_tokens_before_summary: Token threshold to trigger summarization.
+            messages_to_keep: Number of recent messages to preserve after summarization.
+        """
+        super().__init__()
+        self.max_tokens_before_summary = max_tokens_before_summary
+        self.messages_to_keep = messages_to_keep
 
-    # Ensure we keep at least MIN_KEEP_RECENT_MESSAGES
-    max_split = len(messages) - MIN_KEEP_RECENT_MESSAGES
-    if split_index > max_split:
-        split_index = max_split
+    def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        """Process messages before model invocation, potentially triggering summarization.
 
-    return max(split_index, keep_first + 1)
+        Returns state updates that PERSIST the summarization to the checkpointer.
+        """
+        messages = state.get("messages", [])
+        if not messages:
+            return None
 
+        _ensure_message_ids(messages)
+
+        # Calculate total tokens
+        total_tokens = sum(_estimate_message_tokens(m) for m in messages)
+
+        if total_tokens < self.max_tokens_before_summary:
+            return None
+
+        logger.info(
+            f"[Summarization] Conversation has ~{total_tokens:,} tokens ({len(messages)} messages), "
+            f"threshold is {self.max_tokens_before_summary:,}. Summarizing..."
+        )
+
+        # Find safe cutoff point
+        cutoff_index = _find_safe_cutoff(messages, self.messages_to_keep)
+
+        if cutoff_index <= 0:
+            logger.info("[Summarization] Cannot find safe cutoff point, skipping")
+            return None
+
+        # Partition messages
+        messages_to_summarize, preserved_messages = _partition_messages(messages, cutoff_index)
+
+        if len(messages_to_summarize) < 3:
+            logger.info(f"[Summarization] Only {len(messages_to_summarize)} messages to summarize, skipping")
+            return None
+
+        # Generate summary (sync since before_model is sync)
+        try:
+            summary_text = _generate_summary_sync(messages_to_summarize)
+
+            logger.info(
+                f"[Summarization] Summarized {len(messages_to_summarize)} messages, "
+                f"keeping {len(preserved_messages)} recent messages"
+            )
+
+            # Create summary message with unique ID
+            summary_message = HumanMessage(
+                id=str(uuid.uuid4()),
+                content=f"[CONVERSATION SUMMARY - Summarizes {len(messages_to_summarize)} earlier messages]\n\n{summary_text}\n\n[END SUMMARY - Continue from here]",
+                additional_kwargs={"internal": True, "message_type": "summary"},
+            )
+
+            # Return state update that PERSISTS the summarization
+            # RemoveMessage(id=REMOVE_ALL_MESSAGES) removes ALL messages from state
+            # Then we add back: summary + preserved messages
+            return {
+                "messages": [
+                    RemoveMessage(id=REMOVE_ALL_MESSAGES),
+                    summary_message,
+                    *preserved_messages,
+                ]
+            }
+
+        except Exception as e:
+            logger.error(f"[Summarization] Failed to summarize: {e}. Continuing without summarization.")
+            return None
+
+
+# =============================================================================
+# Factory Function
+# =============================================================================
+
+def create_summarization_middleware(
+    max_tokens: int = TOKEN_THRESHOLD,
+    messages_to_keep: int = MESSAGES_TO_KEEP,
+) -> SummarizationMiddleware:
+    """Create a summarization middleware instance.
+
+    Args:
+        max_tokens: Token threshold to trigger summarization.
+        messages_to_keep: Number of recent messages to preserve.
+
+    Returns:
+        SummarizationMiddleware instance
+    """
+    return SummarizationMiddleware(
+        max_tokens_before_summary=max_tokens,
+        messages_to_keep=messages_to_keep,
+    )
+
+
+# =============================================================================
+# Legacy @wrap_model_call Middleware (View-Only, Non-Persisting)
+# =============================================================================
+# DEPRECATED: This version only modifies the request, not the state.
+# Use SummarizationMiddleware class instead for persisting summarization.
 
 @wrap_model_call
 async def summarization_middleware(
     request: ModelRequest, handler
 ) -> ModelResponse:
-    """Summarize old messages when conversation exceeds token threshold.
+    """DEPRECATED: Use SummarizationMiddleware class instead.
 
-    This middleware should run BEFORE the caching middleware to ensure
-    the summarized history is properly cached.
+    This middleware only modifies request.messages (view) but does NOT persist
+    the summarization to state. Each turn will see the full history again.
 
-    Strategy:
-    1. Estimate total tokens in conversation
-    2. If tokens < TOKEN_THRESHOLD (50k): pass through unchanged
-    3. If tokens >= TOKEN_THRESHOLD:
-       - Keep first message (usually contains context)
-       - Find split point to keep ~KEEP_RECENT_TOKENS worth of recent messages
-       - Summarize everything in between
-       - Result: [first_msg, summary_msg, ...recent_msgs]
+    Kept for backwards compatibility but should be replaced.
     """
     if not request.messages:
         return await handler(request)
 
     messages = list(request.messages)
-    total_messages = len(messages)
-
-    # Calculate total tokens
     total_tokens = sum(_estimate_message_tokens(m) for m in messages)
 
     if total_tokens < TOKEN_THRESHOLD:
         return await handler(request)
 
-    logger.info(
-        f"[Summarization] Conversation has ~{total_tokens:,} tokens ({total_messages} messages), "
-        f"threshold is {TOKEN_THRESHOLD:,}. Summarizing..."
+    logger.warning(
+        "[Summarization] DEPRECATED: Using non-persisting summarization middleware. "
+        "Switch to SummarizationMiddleware class for proper state persistence."
     )
 
-    # Determine which messages to summarize
-    keep_first = 1
+    cutoff_index = _find_safe_cutoff(messages, MESSAGES_TO_KEEP)
 
-    if total_messages <= keep_first + MIN_KEEP_RECENT_MESSAGES:
-        # Not enough messages to summarize meaningfully
+    if cutoff_index <= 0:
         return await handler(request)
 
-    # Find token-based split point
-    initial_split_point = _find_token_based_split_point(messages, keep_first)
-
-    # Adjust split point to avoid orphaning tool results
-    # This ensures tool_use/tool_result pairs stay together
-    safe_split_point = _find_safe_split_point(messages, initial_split_point)
-
-    if safe_split_point <= keep_first:
-        # Can't summarize anything safely
-        logger.info("[Summarization] Cannot safely split messages without orphaning tools, skipping")
-        return await handler(request)
-
-    # Split messages using safe point
-    first_messages = messages[:keep_first]
-    messages_to_summarize = messages[keep_first:safe_split_point]
-    recent_messages = messages[safe_split_point:]
+    messages_to_summarize, preserved_messages = _partition_messages(messages, cutoff_index)
 
     if len(messages_to_summarize) < 3:
-        # Not enough messages to make summarization worthwhile
-        logger.info(f"[Summarization] Only {len(messages_to_summarize)} messages to summarize, skipping")
         return await handler(request)
 
-    # Estimate tokens being summarized
-    tokens_being_summarized = sum(
-        _estimate_message_tokens(m) for m in messages_to_summarize
-    )
-    recent_tokens = sum(_estimate_message_tokens(m) for m in recent_messages)
-
-    logger.info(
-        f"[Summarization] Summarizing {len(messages_to_summarize)} messages "
-        f"(~{tokens_being_summarized:,} tokens), keeping {len(recent_messages)} recent (~{recent_tokens:,} tokens)"
-    )
-
-    # Generate summary
     try:
         summary_text = await _generate_summary(messages_to_summarize)
 
-        # Create summary message as a HumanMessage (not SystemMessage)
-        # Using HumanMessage avoids "multiple non-consecutive system messages" error
-        # from Anthropic API when the first message is already a SystemMessage
         summary_message = HumanMessage(content=[
             {
                 "type": "text",
-                "text": f"[CONVERSATION SUMMARY - The following summarizes {len(messages_to_summarize)} earlier messages in this conversation]\n\n{summary_text}\n\n[END SUMMARY - Continue the conversation from here]",
+                "text": f"[CONVERSATION SUMMARY]\n\n{summary_text}\n\n[END SUMMARY]",
             }
         ])
 
-        # Reconstruct messages: [first] + [summary] + [recent]
-        new_messages = list(first_messages) + [summary_message] + list(recent_messages)
-
-        logger.info(
-            f"[Summarization] Reduced from {total_messages} to {len(new_messages)} messages "
-            f"(summary: ~{len(summary_text)//4} tokens)"
-        )
-
-        request.messages = new_messages
+        # Only modifies request, NOT state - this is the bug!
+        first_messages = messages[:1] if messages else []
+        request.messages = list(first_messages) + [summary_message] + list(preserved_messages)
 
     except Exception as e:
-        logger.error(f"[Summarization] Failed to summarize: {e}. Continuing without summarization.")
-        # Continue without summarization on error
+        logger.error(f"[Summarization] Failed: {e}")
 
     return await handler(request)
 
@@ -393,23 +489,22 @@ def get_summarization_stats(messages: list[BaseMessage]) -> dict:
 
     needs_summarization = total_tokens >= TOKEN_THRESHOLD
 
-    if needs_summarization and total > 1 + MIN_KEEP_RECENT_MESSAGES:
-        # Find where we would split
-        split_point = _find_token_based_split_point(messages, keep_first=1)
-        to_summarize = split_point - 1  # Messages between first and split
+    if needs_summarization and total > 1 + MESSAGES_TO_KEEP:
+        cutoff_index = _find_safe_cutoff(messages, MESSAGES_TO_KEEP)
+        to_summarize = cutoff_index
         tokens_to_summarize = sum(
             _estimate_message_tokens(m)
-            for m in messages[1:split_point]
-        ) if to_summarize > 0 else 0
-        messages_to_keep = total - split_point
+            for m in messages[:cutoff_index]
+        ) if cutoff_index > 0 else 0
+        messages_to_keep_count = total - cutoff_index
         tokens_to_keep = sum(
             _estimate_message_tokens(m)
-            for m in messages[split_point:]
+            for m in messages[cutoff_index:]
         )
     else:
         to_summarize = 0
         tokens_to_summarize = 0
-        messages_to_keep = total
+        messages_to_keep_count = total
         tokens_to_keep = total_tokens
 
     return {
@@ -418,8 +513,7 @@ def get_summarization_stats(messages: list[BaseMessage]) -> dict:
         "needs_summarization": needs_summarization,
         "messages_to_summarize": to_summarize,
         "tokens_to_summarize": tokens_to_summarize,
-        "messages_to_keep": messages_to_keep,
+        "messages_to_keep": messages_to_keep_count,
         "tokens_to_keep": tokens_to_keep,
         "token_threshold": TOKEN_THRESHOLD,
-        "keep_recent_tokens_target": KEEP_RECENT_TOKENS,
     }

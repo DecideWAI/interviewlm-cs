@@ -22,7 +22,7 @@ from typing_extensions import TypedDict
 
 from tools.coding_tools import CODING_TOOLS
 from config import settings, generate_coding_thread_uuid
-from middleware import summarization_middleware, system_prompt_middleware
+from middleware import SummarizationMiddleware, system_prompt_middleware
 from services.gcs import capture_file_snapshots
 
 
@@ -496,7 +496,7 @@ def create_coding_agent_graph(
     # IMPORTANT: system_prompt_middleware MUST run AFTER summarization_middleware
     # because summarization can re-introduce system messages from recent_messages
     middleware = [
-        summarization_middleware,      # Summarize long conversations first
+        SummarizationMiddleware(),     # Summarize long conversations (persists to state)
         system_prompt_middleware,      # Deduplicate system messages AFTER summarization
         model_selection_middleware,    # Select model and convert tools
         anthropic_caching_middleware,  # Add cache_control (MUST run LAST)

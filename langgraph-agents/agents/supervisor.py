@@ -22,7 +22,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
 
 from config import settings, generate_supervisor_thread_uuid
-from middleware import summarization_middleware, system_prompt_middleware
+from middleware import SummarizationMiddleware, system_prompt_middleware
 
 
 # =============================================================================
@@ -370,7 +370,7 @@ def create_supervisor_graph(use_checkpointing: bool = True):
     model = _create_anthropic_model(settings.coding_agent_model)
 
     middleware = [
-        summarization_middleware,      # Summarize long conversations first
+        SummarizationMiddleware(),     # Summarize long conversations (persists to state)
         system_prompt_middleware,      # Remove SystemMessages from persistence
         model_selection_middleware,
         anthropic_caching_middleware,

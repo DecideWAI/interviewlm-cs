@@ -422,7 +422,12 @@ Candidate ID: ${request.candidateId}`;
 export async function evaluateFastProgression(
   input: FastEvaluationInput
 ): Promise<FastEvaluationResult> {
-  const threadId = await getOrCreateThread(input.sessionId, 'fast_progression_agent');
+  // Use per-question thread ID to avoid message accumulation across questions
+  // Each question evaluation is independent and shouldn't see history from other questions
+  const threadId = await getOrCreateThread(
+    `${input.sessionId}:question:${input.questionId}`,
+    'fast_progression_agent'
+  );
 
   // Build evaluation prompt
   const evaluationPrompt = `Evaluate the candidate's solution for question "${input.questionTitle}".
