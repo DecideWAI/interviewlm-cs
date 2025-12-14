@@ -894,21 +894,94 @@ export async function getOrCreateSandbox(
 
   // 4. Now do the actual creation work
   (async () => {
-    // Acquire distributed lock (for multi-instance protection)
+    // Acquire distributed lock OR wait for sandbox to be created by another process
+    // This implements the wait-and-check pattern: try lock, if held check for sandbox, repeat
     console.log(`[Modal] Acquiring lock for sandbox:${sessionId}`);
-    const lock = await acquireLock(`sandbox:${sessionId}`, {
-      ttlMs: 120000,  // 2 min TTL (sandbox creation can take time)
-      waitTimeoutMs: 60000,  // Wait up to 1 min for lock
-      retryIntervalMs: 100,  // Check every 100ms
-    });
-    console.log(`[Modal] Lock acquired for sandbox:${sessionId}`);
+
+    const LOCK_WAIT_TIMEOUT_MS = 120000;  // 2 minutes total wait
+    const LOCK_CHECK_INTERVAL_MS = 1000;  // Check every 1 second
+    const startTime = Date.now();
+    let lock: { acquired: boolean; release: () => Promise<void> } | null = null;
+    let existingSandbox: any = null;
+
+    // Wait-and-check loop: either get lock or find existing sandbox
+    while (Date.now() - startTime < LOCK_WAIT_TIMEOUT_MS) {
+      // Try to acquire lock with short timeout
+      lock = await acquireLock(`sandbox:${sessionId}`, {
+        ttlMs: 120000,  // 2 min TTL (sandbox creation can take time)
+        waitTimeoutMs: 2000,  // Short wait - we'll retry in our loop
+        retryIntervalMs: 100,
+      });
+
+      if (lock.acquired) {
+        console.log(`[Modal] Lock acquired for sandbox:${sessionId}`);
+        break;
+      }
+
+      // Lock held by another process - check if sandbox was created
+      console.log(`[Modal] Lock held by another process for ${sessionId}, checking for sandbox...`);
+
+      try {
+        const candidate = await prisma.candidate.findUnique({
+          where: { id: sessionId },
+          select: { volumeId: true, sandboxCreatedAt: true, sandboxLanguage: true },
+        });
+
+        if (candidate?.volumeId) {
+          console.log(`[Modal] Found sandbox ${candidate.volumeId} in DB while waiting for lock`);
+
+          const sandbox = await reconnectToSandbox(candidate.volumeId, {
+            skipVerification: options.skipVerification
+          });
+
+          if (sandbox) {
+            // Verify sandbox is alive
+            try {
+              const proc = await sandbox["exec"](["true"]);
+              await proc.exitCode;
+
+              // Success! Store in cache
+              sandboxes.set(sessionId, {
+                sandbox,
+                sandboxId: candidate.volumeId,
+                createdAt: candidate.sandboxCreatedAt || new Date()
+              });
+
+              startKeepAlive(sessionId, sandbox);
+              console.log(`[Modal] Using sandbox ${candidate.volumeId} created by another process`);
+              existingSandbox = sandbox;
+              break;
+            } catch (healthError) {
+              console.log(`[Modal] Sandbox ${candidate.volumeId} exists but not alive yet, continuing to wait...`);
+            }
+          }
+        }
+      } catch (dbError) {
+        console.log(`[Modal] Error checking DB while waiting:`, dbError);
+      }
+
+      // Wait before retry
+      await new Promise(r => setTimeout(r, LOCK_CHECK_INTERVAL_MS));
+    }
 
     try {
-      // Check cache again after acquiring lock (another instance may have created it)
+      // If we found an existing sandbox while waiting, use it
+      if (existingSandbox) {
+        resolveCreation(existingSandbox);
+        return;
+      }
+
+      // Check cache again after lock attempt (another instance may have created it)
       const cachedAgain = sandboxes.get(sessionId);
       if (cachedAgain) {
         console.log(`[Modal] Found cached sandbox after lock for session ${sessionId}`);
         resolveCreation(cachedAgain.sandbox);
+        return;
+      }
+
+      // If lock acquisition failed and no sandbox was found, raise error
+      if (!lock?.acquired) {
+        rejectCreation(new Error(`Failed to acquire lock and no existing sandbox available for ${sessionId}`));
         return;
       }
 
@@ -1008,8 +1081,10 @@ export async function getOrCreateSandbox(
       rejectCreation(error instanceof Error ? error : new Error('Unknown error creating sandbox'));
     } finally {
       pendingCreations.delete(sessionId);
-      console.log(`[Modal] Releasing lock for sandbox:${sessionId}`);
-      await lock.release();
+      if (lock) {
+        console.log(`[Modal] Releasing lock for sandbox:${sessionId}`);
+        await lock.release();
+      }
     }
   })();
 

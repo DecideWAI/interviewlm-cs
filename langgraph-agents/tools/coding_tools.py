@@ -26,6 +26,7 @@ from services import (
     run_in_sandbox,
     run_with_timeout,
     run_with_retry,
+    get_or_recreate_sandbox,
     MODAL_AVAILABLE,
 )
 
@@ -118,6 +119,7 @@ def _run_async(coro):
     current_thread = threading.current_thread().name
     if "ThreadPoolExecutor" in current_thread or "Pool" in current_thread:
         logger.debug(f"Skipping async call in {current_thread} - would cause event loop issues")
+        coro.close()  # Properly close the unawaited coroutine to avoid warning
         return None
 
     try:
@@ -127,6 +129,7 @@ def _run_async(coro):
             # If we're in an event loop, we can't safely run async DB operations
             # because the config service may have connections bound to a different loop
             logger.debug("Skipping async call - already in an event loop context")
+            coro.close()  # Properly close the unawaited coroutine to avoid warning
             return None
         except RuntimeError:
             # No running loop, we can use asyncio.run directly
@@ -134,6 +137,10 @@ def _run_async(coro):
             return asyncio.run(coro)
     except Exception as e:
         logger.warning(f"Failed to run async config call: {e}")
+        try:
+            coro.close()  # Clean up in case of exception
+        except Exception:
+            pass
         return None
 
 
@@ -287,7 +294,7 @@ def read_file(
         return {"success": False, "error": reason}
 
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Ensure absolute path
         if not path.startswith("/"):
@@ -347,7 +354,7 @@ def write_file(
         return {"success": False, "error": reason}
 
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Ensure absolute path
         if not path.startswith("/"):
@@ -402,7 +409,7 @@ def edit_file(
         return {"success": False, "error": reason}
 
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Ensure absolute path
         if not path.startswith("/"):
@@ -447,7 +454,7 @@ def _list_files_internal(
     We must use trailing slash (ls -la /workspace/) to list contents,
     otherwise ls shows the symlink itself instead of directory contents.
     """
-    sb = sandbox_mgr.get_sandbox(sandbox_id)
+    sb = get_or_recreate_sandbox(sandbox_id)
 
     # Normalize path - remove double slashes, trailing slashes
     normalized_path = re.sub(r'/+', '/', path).rstrip('/') or '/workspace'
@@ -574,7 +581,7 @@ def grep_files(
         except re.error as e:
             return {"success": False, "error": f"Invalid regex: {e}", "matches": []}
 
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Escape pattern for shell
         safe_pattern = pattern.replace('"', '\\"').replace("'", "\\'")
@@ -632,7 +639,7 @@ def glob_files(
     """
     sandbox_id = get_sandbox_id(config)
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Convert glob to find pattern
         # Simple conversion for common patterns
@@ -689,7 +696,7 @@ def run_bash(
         return {"success": False, "error": reason, "stdout": "", "stderr": "", "exit_code": 1}
 
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Build command with working directory
         full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {command}"
@@ -751,7 +758,7 @@ def run_tests(
         return {"success": False, "error": reason, "passed": False}
 
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Build command with working directory
         full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {test_cmd}"
@@ -859,7 +866,7 @@ def install_packages(
             return {"success": False, "error": f"Invalid package name: {pkg}"}
 
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         # Build install command
         if manager == "npm":
@@ -901,7 +908,7 @@ def get_environment_info(
     """
     sandbox_id = get_sandbox_id(config)
     try:
-        sb = sandbox_mgr.get_sandbox(sandbox_id)
+        sb = get_or_recreate_sandbox(sandbox_id)
 
         env_info = {}
         version_checks = [

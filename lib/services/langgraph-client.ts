@@ -7,6 +7,9 @@
 
 import { Client } from '@langchain/langgraph-sdk';
 import type { HelpfulnessLevel } from '../types/agent';
+import type { FastEvaluationResult, FastEvaluationInput } from '../types/fast-evaluation';
+import type { ComprehensiveEvaluationResult, ComprehensiveEvaluationInput } from '../types/comprehensive-evaluation';
+import type { AssessmentType } from '@/types/seed';
 
 // Configuration
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || 'http://localhost:2024';
@@ -408,6 +411,225 @@ Candidate ID: ${request.candidateId}`;
 }
 
 // =============================================================================
+// Fast Progression Agent Client (LangGraph)
+// =============================================================================
+
+/**
+ * Evaluate a question with the Fast Progression Agent (LangGraph).
+ * Speed-optimized for live question progression (~20-40s).
+ * Uses Haiku model and limited tools.
+ */
+export async function evaluateFastProgression(
+  input: FastEvaluationInput
+): Promise<FastEvaluationResult> {
+  const threadId = await getOrCreateThread(input.sessionId, 'fast_progression_agent');
+
+  // Build evaluation prompt
+  const evaluationPrompt = `Evaluate the candidate's solution for question "${input.questionTitle}".
+
+**Session Details:**
+- Session ID: ${input.sessionId}
+- Candidate ID: ${input.candidateId}
+- Question ID: ${input.questionId}
+- Assessment Type: ${input.assessmentType}
+- Language: ${input.language}
+${input.fileName ? `- Solution File: ${input.fileName}` : ''}
+
+**Test Results (TRUSTED - DO NOT RE-RUN):**
+- Passed: ${input.testResults.passed}/${input.testResults.total}
+- Failed: ${input.testResults.failed}
+${input.testResults.output ? `- Output: ${input.testResults.output.slice(0, 500)}` : ''}
+
+**Question:**
+${input.questionDescription}
+
+**Requirements:**
+${input.questionRequirements.map((r, i) => `${i + 1}. ${r}`).join('\n')}
+
+**Difficulty:** ${input.questionDifficulty}
+**Passing Threshold:** ${input.passingThreshold || 70}
+
+**Instructions:**
+1. Use list_files to find the solution file (likely ${input.fileName || 'solution.*'})
+2. Use read_file to read the code
+3. Call ${input.assessmentType === 'SYSTEM_DESIGN' ? 'submit_system_design_evaluation' : 'submit_fast_evaluation'} with your scores
+
+Be decisive. This is a gate check, not comprehensive review.`;
+
+  const result = await client.runs.wait(threadId, 'fast_progression_agent', {
+    input: {
+      messages: [{ role: 'user', content: evaluationPrompt }],
+      session_id: input.sessionId,
+      candidate_id: input.candidateId,
+      question_id: input.questionId,
+      question_title: input.questionTitle,
+      question_description: input.questionDescription,
+      question_requirements: input.questionRequirements,
+      question_difficulty: input.questionDifficulty,
+      assessment_type: input.assessmentType,
+      language: input.language,
+      file_name: input.fileName,
+      tests_passed: input.testResults.passed,
+      tests_failed: input.testResults.failed,
+      tests_total: input.testResults.total,
+      test_output: input.testResults.output,
+      passing_threshold: input.passingThreshold || 70,
+    },
+    config: {
+      configurable: {
+        session_id: input.sessionId,
+        candidate_id: input.candidateId,
+      },
+    },
+  });
+
+  // Extract evaluation result from state
+  const resultData = result as Record<string, unknown>;
+  const evaluationResult = resultData.evaluation_result as Record<string, unknown> | undefined;
+
+  if (evaluationResult) {
+    // Map Python snake_case to TypeScript camelCase
+    return {
+      passed: evaluationResult.passed as boolean,
+      overallScore: evaluationResult.overallScore as number,
+      assessmentType: evaluationResult.assessmentType as AssessmentType,
+      criteria: evaluationResult.criteria as FastEvaluationResult['criteria'],
+      feedback: evaluationResult.feedback as string,
+      blockingReason: evaluationResult.blockingReason as string | undefined,
+      strengths: evaluationResult.strengths as string[],
+      improvements: evaluationResult.improvements as string[],
+      metadata: {
+        model: (evaluationResult.metadata as Record<string, unknown>)?.model as string || 'claude-haiku-4-5-20251001',
+        evaluationTimeMs: (evaluationResult.metadata as Record<string, unknown>)?.evaluationTimeMs as number || 0,
+        toolCallCount: (evaluationResult.metadata as Record<string, unknown>)?.toolCallCount as number || 0,
+        inputTokens: (evaluationResult.metadata as Record<string, unknown>)?.inputTokens as number || 0,
+        outputTokens: (evaluationResult.metadata as Record<string, unknown>)?.outputTokens as number || 0,
+      },
+    };
+  }
+
+  // Fallback if agent didn't call submission tool
+  throw new Error('Fast progression agent did not return evaluation result');
+}
+
+// =============================================================================
+// Comprehensive Evaluation Agent Client (LangGraph)
+// =============================================================================
+
+/**
+ * Evaluate a completed interview session comprehensively (LangGraph).
+ * Quality-optimized for hiring managers (~3-5 minutes).
+ * Uses Sonnet model with full tool access.
+ */
+export async function evaluateComprehensive(
+  input: ComprehensiveEvaluationInput
+): Promise<ComprehensiveEvaluationResult> {
+  const threadId = await getOrCreateThread(input.sessionId, 'comprehensive_agent');
+
+  // Build evaluation prompt
+  const evaluationPrompt = `Conduct a COMPREHENSIVE evaluation of this interview session.
+
+**Session Details:**
+- Session ID: ${input.sessionId}
+- Candidate ID: ${input.candidateId}
+- Role: ${input.role}
+- Seniority Level: ${input.seniority}
+
+**Questions in this Session:**
+${input.questions.map((q, i) => `${i + 1}. ${q.title} (${q.difficulty}, ${q.assessmentType})`).join('\n')}
+
+**Your Task:**
+1. Use send_evaluation_progress to notify frontend (10%)
+2. Use get_session_metadata to get session context (20%)
+3. Use get_code_snapshots to retrieve the code (40%)
+4. Use get_claude_interactions and get_test_results for history (60%)
+5. Analyze all 4 dimensions with evidence (80%)
+6. Use detect_evaluation_bias for fairness check
+7. Use generate_actionable_report for Skills Gap Matrix
+8. Use generate_hiring_recommendation for hiring decision
+9. Use submit_comprehensive_evaluation to save results (100%)
+
+**Role Context for ${input.role} at ${input.seniority} Level:**
+Evaluate whether the candidate's skills match expectations for a ${input.seniority} ${input.role}.
+
+**IMPORTANT:**
+- Be thorough but fair
+- Cite specific evidence from the session
+- Check for bias before finalizing
+- MUST call submit_comprehensive_evaluation at the end
+
+Begin your evaluation now.`;
+
+  const result = await client.runs.wait(threadId, 'comprehensive_agent', {
+    input: {
+      messages: [{ role: 'user', content: evaluationPrompt }],
+      session_id: input.sessionId,
+      candidate_id: input.candidateId,
+      role: input.role,
+      seniority: input.seniority,
+    },
+    config: {
+      configurable: {
+        session_id: input.sessionId,
+        candidate_id: input.candidateId,
+      },
+    },
+  });
+
+  // Extract evaluation result from state
+  const resultData = result as Record<string, unknown>;
+  const evaluationResult = resultData.evaluation_result as Record<string, unknown> | undefined;
+
+  if (evaluationResult) {
+    // Map Python keys to TypeScript types
+    const mapDimensionScore = (score: Record<string, unknown> | undefined) => ({
+      score: (score?.score as number) || 0,
+      confidence: (score?.confidence as number) || 0,
+      evidence: (score?.evidence as ComprehensiveEvaluationResult['codeQuality']['evidence']) || [],
+      breakdown: (score?.breakdown as Record<string, number>) || null,
+    });
+
+    return {
+      sessionId: evaluationResult.session_id as string || input.sessionId,
+      candidateId: evaluationResult.candidate_id as string || input.candidateId,
+      codeQuality: mapDimensionScore(evaluationResult.code_quality as Record<string, unknown>),
+      problemSolving: mapDimensionScore(evaluationResult.problem_solving as Record<string, unknown>),
+      aiCollaboration: mapDimensionScore(evaluationResult.ai_collaboration as Record<string, unknown>),
+      communication: mapDimensionScore(evaluationResult.communication as Record<string, unknown>),
+      overallScore: (evaluationResult.overall_score as number) || 0,
+      overallConfidence: (evaluationResult.overall_confidence as number) || 0,
+      expertiseLevel: evaluationResult.expertise_level as ComprehensiveEvaluationResult['expertiseLevel'],
+      expertiseGrowthTrend: evaluationResult.expertise_growth_trend as ComprehensiveEvaluationResult['expertiseGrowthTrend'],
+      actionableReport: evaluationResult.actionable_report as ComprehensiveEvaluationResult['actionableReport'],
+      hiringRecommendation: {
+        decision: (evaluationResult.hiring_recommendation as Record<string, unknown>)?.decision as ComprehensiveEvaluationResult['hiringRecommendation']['decision'],
+        confidence: (evaluationResult.hiring_recommendation as Record<string, unknown>)?.confidence as number || 0,
+        reasoning: (evaluationResult.hiring_recommendation as Record<string, unknown>)?.reasoning as string[] || [],
+        aiFactorInfluence: 'neutral',
+      },
+      confidenceMetrics: {
+        overall: (evaluationResult.overall_confidence as number) || 0,
+        dataQuality: 0.8,
+        sampleSize: 1,
+        consistency: 0.8,
+        explanation: '',
+        warnings: [],
+      },
+      biasDetection: evaluationResult.bias_detection as ComprehensiveEvaluationResult['biasDetection'],
+      biasFlags: (evaluationResult.bias_flags as string[]) || [],
+      fairnessReport: evaluationResult.fairness_report as string,
+      evaluatedAt: new Date(),
+      model: (evaluationResult.model as string) || 'claude-sonnet-4-5-20250929',
+      evaluationTimeMs: (evaluationResult.evaluationTimeMs as number) || 0,
+      toolCallCount: 0,
+    };
+  }
+
+  // Fallback if agent didn't call submission tool
+  throw new Error('Comprehensive evaluation agent did not return evaluation result');
+}
+
+// =============================================================================
 // Session Management
 // =============================================================================
 
@@ -415,7 +637,13 @@ Candidate ID: ${request.candidateId}`;
  * Clear/delete all agent threads for a session.
  */
 export async function clearSession(sessionId: string): Promise<void> {
-  const agentTypes = ['coding_agent', 'interview_agent', 'evaluation_agent'];
+  const agentTypes = [
+    'coding_agent',
+    'interview_agent',
+    'evaluation_agent',
+    'fast_progression_agent',
+    'comprehensive_agent',
+  ];
 
   for (const agentType of agentTypes) {
     try {

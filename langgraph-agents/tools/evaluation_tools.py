@@ -1165,3 +1165,522 @@ STORAGE_TOOLS = [
 
 # All evaluation tools (DB query + analysis + storage)
 EVALUATION_TOOLS = DB_QUERY_TOOLS + ANALYSIS_TOOLS + STORAGE_TOOLS
+
+
+# =============================================================================
+# Comprehensive Evaluation Tools (for ComprehensiveEvaluationAgent)
+# =============================================================================
+
+
+@tool
+async def generate_actionable_report(
+    session_id: str,
+    role: str,
+    seniority: str,
+    code_quality_score: int,
+    problem_solving_score: int,
+    ai_collaboration_score: int,
+    communication_score: int,
+    overall_score: int,
+    code_quality_evidence: list[dict],
+    problem_solving_evidence: list[dict],
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """
+    Generate actionable report with Skills Gap Matrix and Development Roadmap.
+
+    Use this after scoring all dimensions to create a hiring manager-ready report.
+
+    Args:
+        session_id: Session ID
+        role: Target role (e.g., "Backend Engineer")
+        seniority: Seniority level (e.g., "Senior", "Mid", "Junior")
+        code_quality_score: Code quality dimension score (0-100)
+        problem_solving_score: Problem solving dimension score (0-100)
+        ai_collaboration_score: AI collaboration dimension score (0-100)
+        communication_score: Communication dimension score (0-100)
+        overall_score: Weighted overall score (0-100)
+        code_quality_evidence: Evidence list for code quality
+        problem_solving_evidence: Evidence list for problem solving
+
+    Returns:
+        Dict with skills_matrix, development_roadmap, interview_insights, onboarding_notes
+    """
+    # Determine skill gaps based on expected level
+    seniority_expectations = {
+        "Junior": {"code_quality": 60, "problem_solving": 55, "ai_collaboration": 50, "communication": 50},
+        "Mid": {"code_quality": 70, "problem_solving": 65, "ai_collaboration": 60, "communication": 60},
+        "Senior": {"code_quality": 80, "problem_solving": 75, "ai_collaboration": 70, "communication": 70},
+        "Staff": {"code_quality": 85, "problem_solving": 80, "ai_collaboration": 75, "communication": 80},
+    }
+
+    expected = seniority_expectations.get(seniority, seniority_expectations["Mid"])
+
+    skills_matrix = {
+        "code_quality": {
+            "score": code_quality_score,
+            "expected": expected["code_quality"],
+            "gap": max(0, expected["code_quality"] - code_quality_score),
+            "status": "exceeds" if code_quality_score >= expected["code_quality"] else "below",
+        },
+        "problem_solving": {
+            "score": problem_solving_score,
+            "expected": expected["problem_solving"],
+            "gap": max(0, expected["problem_solving"] - problem_solving_score),
+            "status": "exceeds" if problem_solving_score >= expected["problem_solving"] else "below",
+        },
+        "ai_collaboration": {
+            "score": ai_collaboration_score,
+            "expected": expected["ai_collaboration"],
+            "gap": max(0, expected["ai_collaboration"] - ai_collaboration_score),
+            "status": "exceeds" if ai_collaboration_score >= expected["ai_collaboration"] else "below",
+        },
+        "communication": {
+            "score": communication_score,
+            "expected": expected["communication"],
+            "gap": max(0, expected["communication"] - communication_score),
+            "status": "exceeds" if communication_score >= expected["communication"] else "below",
+        },
+    }
+
+    # Find areas needing development
+    gaps = [(k, v["gap"]) for k, v in skills_matrix.items() if v["gap"] > 0]
+    gaps.sort(key=lambda x: x[1], reverse=True)
+
+    # Generate development roadmap
+    development_roadmap = []
+    for skill, gap in gaps[:3]:  # Top 3 gaps
+        if skill == "code_quality":
+            development_roadmap.append({
+                "area": "Code Quality",
+                "priority": "high" if gap > 15 else "medium",
+                "actions": [
+                    "Focus on test coverage and edge case handling",
+                    "Practice code review and refactoring exercises",
+                    "Study design patterns for the target language",
+                ],
+                "timeframe": "1-2 months" if gap <= 10 else "2-3 months",
+            })
+        elif skill == "problem_solving":
+            development_roadmap.append({
+                "area": "Problem Solving",
+                "priority": "high" if gap > 15 else "medium",
+                "actions": [
+                    "Practice algorithm challenges with focus on approach explanation",
+                    "Work on breaking down complex problems into steps",
+                    "Learn systematic debugging techniques",
+                ],
+                "timeframe": "1-2 months" if gap <= 10 else "2-3 months",
+            })
+        elif skill == "ai_collaboration":
+            development_roadmap.append({
+                "area": "AI Collaboration",
+                "priority": "medium" if gap > 10 else "low",
+                "actions": [
+                    "Practice writing specific, contextual prompts",
+                    "Learn to validate and understand AI suggestions",
+                    "Balance AI assistance with independent problem-solving",
+                ],
+                "timeframe": "2-4 weeks",
+            })
+        elif skill == "communication":
+            development_roadmap.append({
+                "area": "Communication",
+                "priority": "medium" if gap > 10 else "low",
+                "actions": [
+                    "Practice explaining technical decisions in writing",
+                    "Improve code documentation habits",
+                    "Work on structuring technical explanations",
+                ],
+                "timeframe": "2-4 weeks",
+            })
+
+    # Interview insights
+    interview_insights = {
+        "follow_up_topics": [],
+        "areas_to_probe": [],
+        "positive_signals": [],
+    }
+
+    if code_quality_score >= expected["code_quality"]:
+        interview_insights["positive_signals"].append("Strong code quality fundamentals")
+    else:
+        interview_insights["areas_to_probe"].append("Code organization and testing practices")
+
+    if problem_solving_score >= expected["problem_solving"]:
+        interview_insights["positive_signals"].append("Good problem-solving approach")
+    else:
+        interview_insights["areas_to_probe"].append("Algorithm design and debugging methodology")
+
+    if ai_collaboration_score >= expected["ai_collaboration"]:
+        interview_insights["positive_signals"].append("Effective AI tool usage")
+    else:
+        interview_insights["follow_up_topics"].append("Experience with AI coding assistants")
+
+    # Onboarding notes
+    onboarding_notes = {
+        "recommended_mentorship_areas": [skill for skill, gap in gaps[:2]] if gaps else [],
+        "pair_programming_suggested": code_quality_score < expected["code_quality"],
+        "estimated_ramp_up": "standard" if overall_score >= 70 else "extended",
+        "strengths_to_leverage": [
+            skill for skill, data in skills_matrix.items()
+            if data["status"] == "exceeds"
+        ],
+    }
+
+    return {
+        "success": True,
+        "skills_matrix": skills_matrix,
+        "development_roadmap": development_roadmap,
+        "interview_insights": interview_insights,
+        "onboarding_notes": onboarding_notes,
+    }
+
+
+@tool
+async def generate_hiring_recommendation(
+    overall_score: int,
+    code_quality_score: int,
+    problem_solving_score: int,
+    ai_collaboration_score: int,
+    communication_score: int,
+    role: str,
+    seniority: str,
+    bias_flags: list[str] | None = None,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """
+    Generate hiring recommendation with confidence and detailed reasoning.
+
+    Call this after scoring all dimensions to get a final hiring decision.
+
+    Args:
+        overall_score: Weighted overall score (0-100)
+        code_quality_score: Code quality score (0-100)
+        problem_solving_score: Problem solving score (0-100)
+        ai_collaboration_score: AI collaboration score (0-100)
+        communication_score: Communication score (0-100)
+        role: Target role
+        seniority: Seniority level
+        bias_flags: Optional list of detected bias flags
+
+    Returns:
+        Dict with decision, confidence, and detailed reasoning
+    """
+    # Score thresholds by seniority
+    thresholds = {
+        "Junior": {"strong_yes": 75, "yes": 60, "maybe": 50},
+        "Mid": {"strong_yes": 80, "yes": 65, "maybe": 55},
+        "Senior": {"strong_yes": 85, "yes": 70, "maybe": 60},
+        "Staff": {"strong_yes": 90, "yes": 75, "maybe": 65},
+    }
+
+    threshold = thresholds.get(seniority, thresholds["Mid"])
+
+    # Determine decision
+    if overall_score >= threshold["strong_yes"]:
+        decision = "strong_yes"
+    elif overall_score >= threshold["yes"]:
+        decision = "yes"
+    elif overall_score >= threshold["maybe"]:
+        decision = "maybe"
+    elif overall_score >= threshold["maybe"] - 10:
+        decision = "no"
+    else:
+        decision = "strong_no"
+
+    # Calculate confidence (higher when scores are consistent)
+    scores = [code_quality_score, problem_solving_score, ai_collaboration_score, communication_score]
+    score_variance = sum((s - overall_score) ** 2 for s in scores) / len(scores)
+    score_std = score_variance ** 0.5
+
+    # Lower variance = higher confidence
+    if score_std < 10:
+        confidence = 0.9
+    elif score_std < 15:
+        confidence = 0.8
+    elif score_std < 20:
+        confidence = 0.7
+    else:
+        confidence = 0.6
+
+    # Reduce confidence if bias flags present
+    if bias_flags and len(bias_flags) > 0:
+        confidence *= 0.9
+
+    # Build reasoning
+    primary_factors = []
+    concerns = []
+
+    if code_quality_score >= 75:
+        primary_factors.append(f"Strong code quality ({code_quality_score}/100)")
+    elif code_quality_score < 60:
+        concerns.append(f"Code quality below expectations ({code_quality_score}/100)")
+
+    if problem_solving_score >= 70:
+        primary_factors.append(f"Effective problem-solving approach ({problem_solving_score}/100)")
+    elif problem_solving_score < 55:
+        concerns.append(f"Problem-solving needs development ({problem_solving_score}/100)")
+
+    if ai_collaboration_score >= 65:
+        primary_factors.append(f"Good AI collaboration skills ({ai_collaboration_score}/100)")
+    elif ai_collaboration_score < 50:
+        concerns.append(f"AI collaboration could improve ({ai_collaboration_score}/100)")
+
+    if communication_score >= 70:
+        primary_factors.append(f"Clear communication ({communication_score}/100)")
+    elif communication_score < 55:
+        concerns.append(f"Communication needs improvement ({communication_score}/100)")
+
+    # Growth potential assessment
+    growth_potential = "high"
+    if overall_score < 50:
+        growth_potential = "uncertain"
+    elif overall_score < 65:
+        growth_potential = "moderate"
+    elif code_quality_score > problem_solving_score + 15:
+        growth_potential = "high (strong foundations, can develop approach)"
+
+    reasoning = {
+        "primary_factors": primary_factors,
+        "concerns": concerns,
+        "growth_potential": growth_potential,
+        "seniority_fit": f"Score of {overall_score} {'meets' if overall_score >= threshold['yes'] else 'below'} {seniority} expectations",
+    }
+
+    if bias_flags:
+        reasoning["bias_warning"] = f"Detected {len(bias_flags)} potential bias flag(s)"
+
+    return {
+        "success": True,
+        "decision": decision,
+        "confidence": round(confidence, 2),
+        "reasoning": reasoning,
+        "score_summary": {
+            "overall": overall_score,
+            "code_quality": code_quality_score,
+            "problem_solving": problem_solving_score,
+            "ai_collaboration": ai_collaboration_score,
+            "communication": communication_score,
+        },
+    }
+
+
+@tool
+async def detect_evaluation_bias(
+    session_id: str,
+    code_quality_score: int,
+    problem_solving_score: int,
+    ai_collaboration_score: int,
+    communication_score: int,
+    overall_score: int,
+    config: RunnableConfig | None = None,
+) -> dict[str, Any]:
+    """
+    Detect potential evaluation biases and generate fairness report.
+
+    Call this before finalizing evaluation to check for bias issues.
+
+    Args:
+        session_id: Session ID
+        code_quality_score: Code quality score (0-100)
+        problem_solving_score: Problem solving score (0-100)
+        ai_collaboration_score: AI collaboration score (0-100)
+        communication_score: Communication score (0-100)
+        overall_score: Weighted overall score (0-100)
+
+    Returns:
+        Dict with bias_flags list and fairness_report
+    """
+    bias_flags = []
+    fairness_report = {
+        "consistency_check": "pass",
+        "weighting_check": "pass",
+        "evidence_check": "pass",
+        "recommendations": [],
+    }
+
+    # Check for score consistency
+    scores = [code_quality_score, problem_solving_score, ai_collaboration_score, communication_score]
+    max_score = max(scores)
+    min_score = min(scores)
+
+    if max_score - min_score > 40:
+        bias_flags.append("large_score_variance")
+        fairness_report["consistency_check"] = "warning"
+        fairness_report["recommendations"].append(
+            "Large variance between dimension scores - verify all dimensions had sufficient evidence"
+        )
+
+    # Check for extreme scores
+    for i, (score, name) in enumerate(zip(scores, ["code_quality", "problem_solving", "ai_collaboration", "communication"])):
+        if score == 0:
+            bias_flags.append(f"zero_score_{name}")
+            fairness_report["evidence_check"] = "warning"
+            fairness_report["recommendations"].append(
+                f"Zero score for {name} - ensure this reflects actual performance, not missing data"
+            )
+        elif score == 100:
+            bias_flags.append(f"perfect_score_{name}")
+            fairness_report["recommendations"].append(
+                f"Perfect score for {name} - verify this is justified with evidence"
+            )
+
+    # Check weighting calculation
+    expected_overall = (
+        code_quality_score * 0.40 +
+        problem_solving_score * 0.25 +
+        ai_collaboration_score * 0.20 +
+        communication_score * 0.15
+    )
+
+    if abs(overall_score - expected_overall) > 5:
+        bias_flags.append("weighting_mismatch")
+        fairness_report["weighting_check"] = "warning"
+        fairness_report["recommendations"].append(
+            f"Overall score ({overall_score}) differs from calculated weighted score ({expected_overall:.1f})"
+        )
+
+    return {
+        "success": True,
+        "bias_flags": bias_flags,
+        "fairness_report": fairness_report,
+        "bias_count": len(bias_flags),
+        "is_fair": len(bias_flags) == 0,
+    }
+
+
+@tool
+def submit_comprehensive_evaluation(
+    session_id: str,
+    candidate_id: str,
+    code_quality_score: int,
+    code_quality_confidence: float,
+    code_quality_evidence: list[dict],
+    problem_solving_score: int,
+    problem_solving_confidence: float,
+    problem_solving_evidence: list[dict],
+    ai_collaboration_score: int,
+    ai_collaboration_confidence: float,
+    ai_collaboration_evidence: list[dict],
+    communication_score: int,
+    communication_confidence: float,
+    communication_evidence: list[dict],
+    overall_score: int,
+    overall_confidence: float,
+    hiring_decision: str,
+    hiring_confidence: float,
+    hiring_reasoning: dict,
+    actionable_report: dict,
+    bias_flags: list[str],
+    fairness_report: dict,
+    expertise_level: str,
+    expertise_growth_trend: str,
+    tool_call_id: Annotated[str, InjectedToolCallId],
+) -> Command:
+    """
+    Submit comprehensive evaluation result. MUST be called to complete evaluation.
+
+    This stores all evaluation data, actionable report, and hiring recommendation.
+
+    Args:
+        session_id: Session ID
+        candidate_id: Candidate ID
+        code_quality_score: Score 0-100
+        code_quality_confidence: Confidence 0-1
+        code_quality_evidence: Evidence list
+        problem_solving_score: Score 0-100
+        problem_solving_confidence: Confidence 0-1
+        problem_solving_evidence: Evidence list
+        ai_collaboration_score: Score 0-100
+        ai_collaboration_confidence: Confidence 0-1
+        ai_collaboration_evidence: Evidence list
+        communication_score: Score 0-100
+        communication_confidence: Confidence 0-1
+        communication_evidence: Evidence list
+        overall_score: Weighted overall score 0-100
+        overall_confidence: Overall confidence 0-1
+        hiring_decision: strong_yes/yes/maybe/no/strong_no
+        hiring_confidence: Confidence in hiring decision 0-1
+        hiring_reasoning: Dict with primary_factors, concerns, growth_potential
+        actionable_report: Dict with skills_matrix, development_roadmap, etc.
+        bias_flags: List of detected bias flags
+        fairness_report: Dict with bias analysis
+        expertise_level: Estimated expertise level (junior/mid/senior/staff)
+        expertise_growth_trend: Growth trajectory (improving/stable/declining)
+
+    Returns:
+        Command that updates agent state with evaluation_result
+    """
+    evaluation_result = {
+        "session_id": session_id,
+        "candidate_id": candidate_id,
+        "code_quality": {
+            "score": code_quality_score,
+            "confidence": code_quality_confidence,
+            "evidence": code_quality_evidence,
+        },
+        "problem_solving": {
+            "score": problem_solving_score,
+            "confidence": problem_solving_confidence,
+            "evidence": problem_solving_evidence,
+        },
+        "ai_collaboration": {
+            "score": ai_collaboration_score,
+            "confidence": ai_collaboration_confidence,
+            "evidence": ai_collaboration_evidence,
+        },
+        "communication": {
+            "score": communication_score,
+            "confidence": communication_confidence,
+            "evidence": communication_evidence,
+        },
+        "overall_score": overall_score,
+        "overall_confidence": overall_confidence,
+        "expertise_level": expertise_level,
+        "expertise_growth_trend": expertise_growth_trend,
+        "bias_flags": bias_flags,
+        "bias_detection": {
+            "flags": bias_flags,
+            "report": fairness_report,
+        },
+        "fairness_report": fairness_report,
+        "hiring_recommendation": {
+            "decision": hiring_decision,
+            "confidence": hiring_confidence,
+            "reasoning": hiring_reasoning,
+        },
+        "actionable_report": actionable_report,
+        "evaluated_at": datetime.utcnow().isoformat(),
+        "model": settings.comprehensive_evaluation_model,
+    }
+
+    return Command(
+        update={
+            "evaluation_result": evaluation_result,
+            "evaluation_complete": True,
+            "messages": [
+                ToolMessage(
+                    content=f"Comprehensive evaluation submitted. Overall: {overall_score}/100, Hiring: {hiring_decision} ({hiring_confidence:.0%} confidence)",
+                    tool_call_id=tool_call_id,
+                )
+            ],
+        }
+    )
+
+
+# Comprehensive evaluation tools list
+COMPREHENSIVE_TOOLS = [
+    generate_actionable_report,
+    generate_hiring_recommendation,
+    detect_evaluation_bias,
+    submit_comprehensive_evaluation,
+]
+
+# All tools for comprehensive evaluation agent
+ALL_COMPREHENSIVE_EVALUATION_TOOLS = (
+    DB_QUERY_TOOLS +
+    ANALYSIS_TOOLS +
+    COMPREHENSIVE_TOOLS +
+    [send_evaluation_progress]
+)

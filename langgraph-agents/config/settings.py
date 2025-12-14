@@ -45,6 +45,18 @@ class Settings(BaseSettings):
         description="Adaptive model for incremental question generation (better reasoning)"
     )
 
+    # Evaluation Models
+    fast_progression_agent_model: str = Field(
+        default="claude-haiku-4-5-20251001",
+        env="FAST_PROGRESSION_AGENT_MODEL",
+        description="Speed-optimized model for live question progression (~20-40s)"
+    )
+    comprehensive_evaluation_model: str = Field(
+        default="claude-sonnet-4-5-20250929",
+        env="COMPREHENSIVE_EVALUATION_MODEL",
+        description="Quality-optimized model for comprehensive session evaluation"
+    )
+
     # Modal Service URLs (deployed endpoints)
     modal_execute_url: str | None = Field(
         default=None,

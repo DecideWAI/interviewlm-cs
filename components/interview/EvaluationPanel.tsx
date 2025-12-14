@@ -3,7 +3,6 @@
 import React from "react";
 import {
   CheckCircle2,
-  XCircle,
   AlertCircle,
   ArrowRight,
   RefreshCw,
@@ -13,9 +12,14 @@ import {
   Shield,
   Zap,
   FileCode,
+  TestTube,
+  Layers,
+  GitBranch,
+  MessageSquare,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { FastEvaluationResult } from "@/lib/types/fast-evaluation";
 
 export interface EvaluationCriterion {
   name: string;
@@ -25,20 +29,8 @@ export interface EvaluationCriterion {
   icon: React.ReactNode;
 }
 
-export interface EvaluationResult {
-  overallScore: number;
-  passed: boolean;
-  criteria: {
-    problemCompletion: { score: number; maxScore: number; feedback: string };
-    codeQuality: { score: number; maxScore: number; feedback: string };
-    bestPractices: { score: number; maxScore: number; feedback: string };
-    errorHandling: { score: number; maxScore: number; feedback: string };
-    efficiency: { score: number; maxScore: number; feedback: string };
-  };
-  feedback: string;
-  strengths: string[];
-  improvements: string[];
-}
+// Re-export the FastEvaluationResult as EvaluationResult for backward compatibility
+export type EvaluationResult = FastEvaluationResult;
 
 interface EvaluationPanelProps {
   evaluationResult: EvaluationResult | null;
@@ -75,7 +67,8 @@ export function EvaluationPanel({
     return "bg-error";
   };
 
-  const criteriaConfig = [
+  // Real World criteria configuration
+  const realWorldCriteriaConfig = [
     {
       key: "problemCompletion",
       name: "Problem Completion",
@@ -87,9 +80,9 @@ export function EvaluationPanel({
       icon: <Code2 className="h-4 w-4" />,
     },
     {
-      key: "bestPractices",
-      name: "Best Practices",
-      icon: <FileCode className="h-4 w-4" />,
+      key: "testing",
+      name: "Testing",
+      icon: <TestTube className="h-4 w-4" />,
     },
     {
       key: "errorHandling",
@@ -102,6 +95,40 @@ export function EvaluationPanel({
       icon: <Zap className="h-4 w-4" />,
     },
   ];
+
+  // System Design criteria configuration
+  const systemDesignCriteriaConfig = [
+    {
+      key: "designClarity",
+      name: "Design Clarity",
+      icon: <Layers className="h-4 w-4" />,
+    },
+    {
+      key: "tradeoffAnalysis",
+      name: "Tradeoff Analysis",
+      icon: <GitBranch className="h-4 w-4" />,
+    },
+    {
+      key: "apiDesign",
+      name: "API Design",
+      icon: <Code2 className="h-4 w-4" />,
+    },
+    {
+      key: "implementation",
+      name: "Implementation",
+      icon: <FileCode className="h-4 w-4" />,
+    },
+    {
+      key: "communication",
+      name: "Communication",
+      icon: <MessageSquare className="h-4 w-4" />,
+    },
+  ];
+
+  // Select criteria config based on assessment type
+  const criteriaConfig = evaluationResult?.assessmentType === 'SYSTEM_DESIGN'
+    ? systemDesignCriteriaConfig
+    : realWorldCriteriaConfig;
 
   // Empty state - no evaluation yet
   if (!evaluationResult && !isEvaluating) {

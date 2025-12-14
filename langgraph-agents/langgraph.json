@@ -6,7 +6,9 @@
     "interview_agent": "./agents/interview_agent.py:interview_graph",
     "question_evaluation_agent": "./agents/question_evaluation_agent.py:question_evaluation_graph",
     "question_generation_agent": "./agents/question_generation_agent.py:question_generation_graph",
-    "supervisor": "./agents/supervisor.py:supervisor_graph"
+    "supervisor": "./agents/supervisor.py:supervisor_graph",
+    "fast_progression_agent": "./agents/fast_progression_agent.py:fast_progression_graph",
+    "comprehensive_agent": "./agents/comprehensive_agent.py:comprehensive_graph"
   },
   "env": ".env",
   "python_version": "3.12",

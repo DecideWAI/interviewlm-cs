@@ -49,9 +49,11 @@ MAX_DEPTH = 10
 MAX_FILES = 500
 WORKSPACE_ROOT = "/workspace"
 
-# Keep-alive configuration
-KEEPALIVE_INTERVAL_S = 30
-KEEPALIVE_TIMEOUT_S = 5
+# Keep-alive configuration (matching TypeScript)
+# Reduced from 30s to 10s - Modal suspends sandboxes after ~10-15s inactivity
+KEEPALIVE_INTERVAL_S = 10  # Send heartbeat every 10 seconds
+KEEPALIVE_TIMEOUT_S = 5    # Timeout for heartbeat command
+KEEPALIVE_MAX_RETRIES = 2  # Retry 2 times before marking sandbox as dead
 
 # Output limits
 MAX_OUTPUT_SIZE = 50000  # 50KB
@@ -421,24 +423,197 @@ class SandboxManager:
         return cls._redis_client
 
     @classmethod
-    def _acquire_lock(cls, session_id: str, timeout: int = 120) -> Optional[Any]:
-        """Acquire distributed lock for sandbox creation."""
+    async def _acquire_lock_or_wait_for_sandbox_async(
+        cls,
+        session_id: str,
+        timeout: int = 120,
+        wait_timeout: int = 120,
+        retry_interval: float = 1.0,
+    ) -> tuple[Optional[Any], bool, Optional[Any]]:
+        """
+        Acquire distributed lock OR wait for sandbox to be created by another process.
+
+        This implements the wait-and-check pattern:
+        1. Try to acquire lock
+        2. If lock held by another process, check if sandbox exists in DB
+        3. If sandbox exists and is alive, return it
+        4. If not, wait and retry
+        5. Continue until lock acquired OR sandbox appears OR timeout
+
+        Returns:
+            Tuple of (lock, acquired, existing_sandbox):
+            - (lock, True, None): Lock acquired successfully, proceed to create
+            - (None, True, None): No Redis available, proceed without lock (graceful degradation)
+            - (None, False, sandbox): Found existing sandbox created by another process
+            - (None, False, None): Timeout - no lock and no sandbox (should not happen in normal operation)
+        """
         redis_client = cls._get_redis()
         if not redis_client:
-            return None
+            # No Redis = graceful degradation, proceed without lock
+            logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
+            return (None, True, None)
+
+        start_time = time.time()
+        check_count = 0
+
+        while (time.time() - start_time) < wait_timeout:
+            check_count += 1
+            try:
+                lock = redis_client.lock(
+                    f"sandbox:{session_id}",
+                    timeout=timeout,
+                    blocking=False,  # Non-blocking so we can implement our own retry
+                )
+                if lock.acquire(blocking=False):
+                    logger.info(f"[SandboxManager] Acquired lock for sandbox:{session_id}")
+                    return (lock, True, None)
+
+                # Lock held by another process - check if sandbox was created
+                logger.debug(f"[SandboxManager] Lock held by another process for {session_id}, checking for sandbox... (attempt {check_count})")
+
+                # Check DB for sandbox created by the process holding the lock
+                try:
+                    sandbox_id = await cls._get_sandbox_id_from_db(session_id)
+
+                    if sandbox_id:
+                        logger.info(f"[SandboxManager] Found sandbox {sandbox_id} in DB while waiting for lock")
+                        sandbox = cls._reconnect_to_sandbox(sandbox_id)
+                        if sandbox and cls._is_sandbox_alive(sandbox, sandbox_id):
+                            logger.info(f"[SandboxManager] Sandbox {sandbox_id} is alive, using it instead of waiting for lock")
+                            # Cache the sandbox
+                            cls._sandboxes[session_id] = sandbox
+                            cls._sandbox_ids[session_id] = sandbox_id
+                            cls._sandbox_created_at[session_id] = datetime.now()
+                            return (None, False, sandbox)
+                        else:
+                            logger.debug(f"[SandboxManager] Sandbox {sandbox_id} exists but not alive yet, continuing to wait...")
+                except Exception as e:
+                    logger.debug(f"[SandboxManager] Error checking DB while waiting: {e}")
+
+                # Wait before retry (async sleep)
+                await asyncio.sleep(retry_interval)
+
+            except Exception as e:
+                # On Redis error, allow operation to proceed (graceful degradation)
+                logger.warning(f"[SandboxManager] Redis error acquiring lock: {e}, proceeding without lock")
+                return (None, True, None)
+
+        # Timeout waiting for lock - final check for sandbox
+        logger.warning(f"[SandboxManager] Lock acquisition timed out after {wait_timeout}s for {session_id}, final sandbox check...")
         try:
-            lock = redis_client.lock(
-                f"sandbox:{session_id}",
-                timeout=timeout,
-                blocking_timeout=60,
-            )
-            if lock.acquire(blocking=True):
-                print(f"[SandboxManager] Acquired lock for sandbox:{session_id}")
-                return lock
-            return None
+            sandbox_id = await cls._get_sandbox_id_from_db(session_id)
+
+            if sandbox_id:
+                sandbox = cls._reconnect_to_sandbox(sandbox_id)
+                if sandbox and cls._is_sandbox_alive(sandbox, sandbox_id):
+                    logger.info(f"[SandboxManager] Found live sandbox {sandbox_id} on final check")
+                    cls._sandboxes[session_id] = sandbox
+                    cls._sandbox_ids[session_id] = sandbox_id
+                    cls._sandbox_created_at[session_id] = datetime.now()
+                    return (None, False, sandbox)
         except Exception as e:
-            print(f"[SandboxManager] Failed to acquire lock: {e}")
-            return None
+            logger.warning(f"[SandboxManager] Final sandbox check failed: {e}")
+
+        return (None, False, None)
+
+    @classmethod
+    def _acquire_lock_or_wait_for_sandbox(
+        cls,
+        session_id: str,
+        timeout: int = 120,
+        wait_timeout: int = 120,
+        retry_interval: float = 1.0,
+    ) -> tuple[Optional[Any], bool, Optional[Any]]:
+        """Sync wrapper for _acquire_lock_or_wait_for_sandbox_async."""
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run coroutine directly via task
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls._acquire_lock_or_wait_for_sandbox_async(session_id, timeout, wait_timeout, retry_interval)
+                )
+                return future.result(timeout=wait_timeout + 10)
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            return asyncio.run(
+                cls._acquire_lock_or_wait_for_sandbox_async(session_id, timeout, wait_timeout, retry_interval)
+            )
+
+    @classmethod
+    async def _acquire_lock_async(
+        cls,
+        session_id: str,
+        timeout: int = 120,
+        wait_timeout: int = 60,
+        retry_interval: float = 0.5,
+    ) -> tuple[Optional[Any], bool]:
+        """
+        Acquire distributed lock for sandbox creation with retry (async version).
+
+        Returns:
+            Tuple of (lock, acquired):
+            - (lock, True): Lock acquired successfully
+            - (None, True): No Redis available, proceed without lock (graceful degradation)
+            - (None, False): Lock acquisition failed after retries
+        """
+        redis_client = cls._get_redis()
+        if not redis_client:
+            # No Redis = graceful degradation, proceed without lock
+            logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
+            return (None, True)
+
+        start_time = time.time()
+
+        while (time.time() - start_time) < wait_timeout:
+            try:
+                lock = redis_client.lock(
+                    f"sandbox:{session_id}",
+                    timeout=timeout,
+                    blocking=False,  # Non-blocking so we can implement our own retry
+                )
+                if lock.acquire(blocking=False):
+                    logger.info(f"[SandboxManager] Acquired lock for sandbox:{session_id}")
+                    return (lock, True)
+
+                # Lock held by another process, wait and retry
+                logger.debug(f"[SandboxManager] Lock held by another process for {session_id}, retrying...")
+                await asyncio.sleep(retry_interval)
+
+            except Exception as e:
+                # On Redis error, allow operation to proceed (graceful degradation)
+                logger.warning(f"[SandboxManager] Redis error acquiring lock: {e}, proceeding without lock")
+                return (None, True)
+
+        # Timeout waiting for lock
+        logger.warning(f"[SandboxManager] Lock acquisition timed out after {wait_timeout}s for {session_id}")
+        return (None, False)
+
+    @classmethod
+    def _acquire_lock(
+        cls,
+        session_id: str,
+        timeout: int = 120,
+        wait_timeout: int = 60,
+        retry_interval: float = 0.5,
+    ) -> tuple[Optional[Any], bool]:
+        """Sync wrapper for _acquire_lock_async."""
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls._acquire_lock_async(session_id, timeout, wait_timeout, retry_interval)
+                )
+                return future.result(timeout=wait_timeout + 10)
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            return asyncio.run(
+                cls._acquire_lock_async(session_id, timeout, wait_timeout, retry_interval)
+            )
 
     @classmethod
     def _release_lock(cls, lock: Any) -> None:
@@ -790,14 +965,14 @@ class SandboxManager:
         return sandbox
 
     @classmethod
-    def get_sandbox(cls, session_id: str, language: Optional[str] = None) -> Any:
+    async def get_sandbox_async(cls, session_id: str, language: Optional[str] = None) -> Any:
         """
-        Get or create a sandbox for a session.
+        Get or create a sandbox for a session (async version).
 
         Priority:
         1. Return from in-memory cache (fastest)
         2. Check if creation is pending (same process)
-        3. Acquire distributed lock
+        3. Acquire distributed lock OR wait for sandbox to be created
         4. Re-check cache after lock
         5. Reconnect from database with retry
         6. Create new sandbox
@@ -813,32 +988,37 @@ class SandboxManager:
         # 2. Check if creation is pending
         if session_id in cls._pending:
             print(f"[SandboxManager] Waiting for pending sandbox creation for {session_id}")
-            for _ in range(60):
+            for _ in range(120):  # Wait up to 2 minutes
                 if session_id in cls._sandboxes:
                     return cls._sandboxes[session_id]
-                time.sleep(1)
+                await asyncio.sleep(1)
             raise RuntimeError(f"Timeout waiting for sandbox creation for {session_id}")
 
         # Mark as pending
         cls._pending[session_id] = True
 
-        # 3. Acquire distributed lock
-        lock = cls._acquire_lock(session_id)
+        # 3. Acquire distributed lock OR wait for sandbox to be created by another process
+        # Returns: (lock, acquired, existing_sandbox)
+        lock, acquired, existing_sandbox = await cls._acquire_lock_or_wait_for_sandbox_async(session_id)
 
         try:
-            # 4. Re-check cache after lock
+            # If we found an existing sandbox while waiting, use it
+            if existing_sandbox is not None:
+                logger.info(f"[SandboxManager] Using sandbox created by another process for {session_id}")
+                return existing_sandbox
+
+            # 4. Re-check cache after lock attempt
             if session_id in cls._sandboxes:
                 print(f"[SandboxManager] Found cached sandbox after lock for {session_id}")
                 return cls._sandboxes[session_id]
 
-            # 5. Try to reconnect from database with retry
+            # If lock acquisition failed and no sandbox was found, raise error
+            if not acquired:
+                raise RuntimeError(f"Failed to acquire lock and no existing sandbox available for {session_id}")
+
+            # 5. Try to reconnect from database with retry (we have the lock now)
             try:
-                try:
-                    sandbox_id = asyncio.get_event_loop().run_until_complete(
-                        cls._get_sandbox_id_from_db(session_id)
-                    )
-                except RuntimeError:
-                    sandbox_id = asyncio.run(cls._get_sandbox_id_from_db(session_id))
+                sandbox_id = await cls._get_sandbox_id_from_db(session_id)
 
                 if sandbox_id:
                     print(f"[SandboxManager] Found sandbox ID {sandbox_id} in DB for {session_id}")
@@ -864,6 +1044,160 @@ class SandboxManager:
         finally:
             cls._pending.pop(session_id, None)
             cls._release_lock(lock)
+
+    @classmethod
+    def get_sandbox(cls, session_id: str, language: Optional[str] = None) -> Any:
+        """Sync wrapper for get_sandbox_async."""
+        # Quick path: check cache first without async overhead
+        if session_id in cls._sandboxes:
+            print(f"[SandboxManager] Using cached sandbox for session {session_id}")
+            return cls._sandboxes[session_id]
+
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run in thread pool to avoid blocking
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls.get_sandbox_async(session_id, language)
+                )
+                return future.result(timeout=180)  # 3 minute timeout
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            return asyncio.run(cls.get_sandbox_async(session_id, language))
+
+    # =========================================================================
+    # Dead Container Detection & Auto-Recreation
+    # =========================================================================
+
+    @classmethod
+    def _is_sandbox_alive(cls, sandbox: Any, sandbox_id: str) -> bool:
+        """
+        Check if a sandbox is still alive and usable.
+
+        Returns True if sandbox responds to a simple command.
+        Returns False if sandbox is terminated/finished.
+        """
+        try:
+            proc = run_in_sandbox(sandbox, "echo", "alive", sandbox_id=sandbox_id, timeout=10)
+            return proc.returncode == 0
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(x in error_msg for x in ['finished', 'terminated', 'status=', 'permission_denied']):
+                return False
+            # Other errors might be transient
+            logger.warning(f"[SandboxManager] Health check error (may be transient): {e}")
+            return False
+
+    @classmethod
+    def _clear_dead_sandbox(cls, session_id: str) -> None:
+        """Clear a dead sandbox from all caches."""
+        logger.info(f"[SandboxManager] Clearing dead sandbox for session {session_id}")
+        cls._sandboxes.pop(session_id, None)
+        sandbox_id = cls._sandbox_ids.pop(session_id, None)
+        cls._sandbox_created_at.pop(session_id, None)
+        cls._sandbox_language.pop(session_id, None)
+        cls._stop_keepalive(session_id)
+
+        # Clear from database too
+        if sandbox_id:
+            try:
+                try:
+                    asyncio.get_event_loop().run_until_complete(
+                        cls._clear_sandbox_id_from_db(session_id)
+                    )
+                except RuntimeError:
+                    asyncio.run(cls._clear_sandbox_id_from_db(session_id))
+            except Exception as e:
+                logger.warning(f"[SandboxManager] Failed to clear sandbox from DB: {e}")
+
+    @classmethod
+    def get_or_recreate_sandbox(cls, session_id: str, language: Optional[str] = None) -> Any:
+        """
+        Get sandbox, validating it's alive. Recreate with Redis lock if dead.
+
+        This is the preferred method for tools to get a sandbox, as it handles
+        the case where a cached sandbox has died.
+
+        Flow:
+        1. Get sandbox (from cache, DB, or create new)
+        2. Validate it's alive with a health check
+        3. If dead: acquire Redis lock, clear cache, create new sandbox
+        4. Return healthy sandbox
+
+        Args:
+            session_id: Session identifier
+            language: Optional language for sandbox image
+
+        Returns:
+            Live sandbox instance
+        """
+        if not MODAL_AVAILABLE:
+            raise RuntimeError("Modal SDK not available. Install with: pip install modal")
+
+        # Get sandbox (may be from cache)
+        sandbox = cls.get_sandbox(session_id, language)
+        sandbox_id = cls._sandbox_ids.get(session_id)
+
+        # Quick health check on cached sandbox
+        if sandbox_id and session_id in cls._sandboxes:
+            if cls._is_sandbox_alive(sandbox, sandbox_id):
+                return sandbox
+
+            # Sandbox is dead - need to recreate
+            logger.warning(f"[SandboxManager] Sandbox {sandbox_id} is dead, recreating...")
+
+            # Acquire Redis lock for recreation (returns tuple: lock, acquired)
+            lock, acquired = cls._acquire_lock(session_id)
+            try:
+                # Double-check after acquiring lock (another process might have recreated)
+                if session_id in cls._sandboxes:
+                    existing_sandbox = cls._sandboxes[session_id]
+                    existing_id = cls._sandbox_ids.get(session_id)
+                    if existing_id != sandbox_id and cls._is_sandbox_alive(existing_sandbox, existing_id):
+                        logger.info(f"[SandboxManager] Another process recreated sandbox {existing_id}")
+                        return existing_sandbox
+
+                # If lock acquisition failed, check DB for sandbox created by another process
+                if not acquired:
+                    logger.warning(f"[SandboxManager] Lock acquisition failed during recreation for {session_id}")
+                    try:
+                        try:
+                            db_sandbox_id = asyncio.get_event_loop().run_until_complete(
+                                cls._get_sandbox_id_from_db(session_id)
+                            )
+                        except RuntimeError:
+                            db_sandbox_id = asyncio.run(cls._get_sandbox_id_from_db(session_id))
+
+                        if db_sandbox_id and db_sandbox_id != sandbox_id:
+                            logger.info(f"[SandboxManager] Found new sandbox {db_sandbox_id} in DB (created by another process)")
+                            new_sandbox = cls._reconnect_to_sandbox(db_sandbox_id)
+                            if new_sandbox and cls._is_sandbox_alive(new_sandbox, db_sandbox_id):
+                                cls._sandboxes[session_id] = new_sandbox
+                                cls._sandbox_ids[session_id] = db_sandbox_id
+                                cls._sandbox_created_at[session_id] = datetime.now()
+                                logger.info(f"[SandboxManager] Successfully connected to recreated sandbox {db_sandbox_id}")
+                                return new_sandbox
+                    except Exception as e:
+                        logger.warning(f"[SandboxManager] Error checking DB after lock failure: {e}")
+
+                    # Lock failed and no new sandbox found - raise error
+                    raise RuntimeError(f"Failed to acquire lock for sandbox recreation and no new sandbox available for {session_id}")
+
+                # Clear dead sandbox from cache and DB
+                cls._clear_dead_sandbox(session_id)
+
+                # Create new sandbox
+                logger.info(f"[SandboxManager] Creating replacement sandbox for {session_id}")
+                new_sandbox = cls._create_new_sandbox(session_id, language)
+                cls._sandboxes[session_id] = new_sandbox
+                return new_sandbox
+
+            finally:
+                cls._release_lock(lock)
+
+        return sandbox
 
     # =========================================================================
     # Sandbox Lifecycle Management
@@ -920,28 +1254,49 @@ class SandboxManager:
 
     @classmethod
     async def _start_keepalive(cls, session_id: str, sandbox: Any) -> None:
-        """Start keep-alive task for sandbox."""
+        """Start keep-alive task for sandbox with retry logic."""
         cls._stop_keepalive(session_id)
 
-        print(f"[SandboxManager] Starting keep-alive for session {session_id} (interval: {KEEPALIVE_INTERVAL_S}s)")
+        sandbox_id = cls._sandbox_ids.get(session_id)
+        logger.info(f"[SandboxManager] Starting keep-alive for session {session_id} (interval: {KEEPALIVE_INTERVAL_S}s)")
 
         async def keepalive_loop():
+            consecutive_failures = 0
+
             while session_id in cls._sandboxes:
                 try:
+                    # Use sandbox_id for proper locking
                     proc = run_with_timeout(
-                        lambda: run_in_sandbox(sandbox, "true"),
-                        timeout=KEEPALIVE_TIMEOUT_S
+                        lambda: run_in_sandbox(sandbox, "true", sandbox_id=sandbox_id, timeout=KEEPALIVE_TIMEOUT_S),
+                        timeout=KEEPALIVE_TIMEOUT_S + 2  # Slightly longer outer timeout
                     )
-                    if proc.returncode != 0:
-                        break
-                    print(f"[SandboxManager] Keep-alive ping sent for session {session_id}")
+                    if proc.returncode == 0:
+                        # Success - reset failure counter
+                        consecutive_failures = 0
+                        logger.debug(f"[SandboxManager] Keep-alive ping sent for session {session_id}")
+                    else:
+                        # Non-zero exit code
+                        consecutive_failures += 1
+                        logger.warning(f"[SandboxManager] Keep-alive returned non-zero for {session_id} (attempt {consecutive_failures}/{KEEPALIVE_MAX_RETRIES})")
+
                 except Exception as e:
-                    error_msg = str(e)
-                    if 'terminated' in error_msg or 'finished' in error_msg:
-                        print(f"[SandboxManager] Sandbox {session_id} appears dead, stopping keep-alive")
-                        cls._sandboxes.pop(session_id, None)
-                        break
-                    print(f"[SandboxManager] Keep-alive failed for {session_id}: {error_msg}")
+                    error_msg = str(e).lower()
+                    consecutive_failures += 1
+
+                    # Check for terminal errors (sandbox is definitely dead)
+                    if any(x in error_msg for x in ['terminated', 'finished', 'status=', 'permission_denied', 'not found']):
+                        logger.warning(f"[SandboxManager] Sandbox {session_id} is dead: {e}")
+                        cls._clear_dead_sandbox(session_id)
+                        return
+
+                    logger.warning(f"[SandboxManager] Keep-alive failed for {session_id} (attempt {consecutive_failures}/{KEEPALIVE_MAX_RETRIES}): {e}")
+
+                # Check if max retries exceeded
+                if consecutive_failures >= KEEPALIVE_MAX_RETRIES:
+                    logger.error(f"[SandboxManager] Keep-alive failed {KEEPALIVE_MAX_RETRIES} times for {session_id}, marking sandbox as dead")
+                    cls._clear_dead_sandbox(session_id)
+                    return
+
                 await asyncio.sleep(KEEPALIVE_INTERVAL_S)
 
         task = asyncio.create_task(keepalive_loop())
@@ -1153,8 +1508,22 @@ sandbox_manager = SandboxManager()
 
 # Convenience functions
 def get_sandbox(session_id: str, language: Optional[str] = None) -> Any:
-    """Get or create sandbox for session."""
+    """Get or create sandbox for session (sync)."""
     return SandboxManager.get_sandbox(session_id, language)
+
+
+async def get_sandbox_async(session_id: str, language: Optional[str] = None) -> Any:
+    """Get or create sandbox for session (async)."""
+    return await SandboxManager.get_sandbox_async(session_id, language)
+
+
+def get_or_recreate_sandbox(session_id: str, language: Optional[str] = None) -> Any:
+    """
+    Get sandbox with health check. Recreate with Redis lock if dead.
+
+    This is the PREFERRED function for tools, as it handles dead containers.
+    """
+    return SandboxManager.get_or_recreate_sandbox(session_id, language)
 
 
 def terminate_sandbox(session_id: str) -> bool:

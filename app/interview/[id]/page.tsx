@@ -892,19 +892,25 @@ export default function InterviewPage() {
     setIsEvaluating(true);
     setRightPanelTab("evaluation"); // Switch to evaluation tab
 
-    // Debug: Log what code is being sent for evaluation
-    console.log("[Evaluate Debug] Code length:", code.length);
-    console.log("[Evaluate Debug] Code preview (first 500 chars):", code.slice(0, 500));
+    // Debug: Log evaluation context
+    console.log("[Evaluate Debug] Question ID:", sessionData.question.id);
+    console.log("[Evaluate Debug] Test Results:", testResults);
     console.log("[Evaluate Debug] Selected file:", selectedFile?.name);
 
     try {
-      const response = await fetch(`/api/interview/${candidateId}/evaluate`, {
+      // Use the new fast progression endpoint
+      // This endpoint uses an optimized agent with Haiku model for quick evaluation
+      const response = await fetch(`/api/interview/${candidateId}/evaluate-progression`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          code,
-          language: sessionData.question.language,
           questionId: sessionData.question.id,
+          language: sessionData.question.language,
+          testResults: {
+            passed: testResults.passed,
+            failed: testResults.total - testResults.passed,
+            total: testResults.total,
+          },
           fileName: selectedFile?.name,
         }),
       });
@@ -920,14 +926,14 @@ export default function InterviewPage() {
           });
         } else {
           toast.warning("Needs improvement", {
-            description: `Score: ${result.overallScore}/100. Review feedback to improve.`,
+            description: result.blockingReason || `Score: ${result.overallScore}/100. Review feedback to improve.`,
           });
         }
       } else {
         const errorData = await response.json();
         console.error("Evaluation failed:", errorData);
         toast.error("Evaluation failed", {
-          description: errorData.error || "Please try again.",
+          description: errorData.error?.message || errorData.error || "Please try again.",
         });
       }
     } catch (err) {
@@ -973,22 +979,38 @@ export default function InterviewPage() {
       // Handle both wrapped { success, data } and direct response formats
       const result = responseJson.data || responseJson;
 
+      // Queue comprehensive evaluation for background processing
+      // This creates detailed reports for hiring managers
+      try {
+        await fetch(`/api/interview/${candidateId}/evaluate-comprehensive`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            priority: "normal",
+          }),
+        });
+        console.log("[Submit] Comprehensive evaluation queued for background processing");
+      } catch (evalErr) {
+        // Don't block submission if evaluation queueing fails
+        console.error("[Submit] Failed to queue comprehensive evaluation:", evalErr);
+      }
+
       // Clear session state - assessment is complete
       clearSessionState();
 
       // Show success message
-      alert(
-        `Assessment submitted successfully!\n\n` +
-        `Overall Score: ${result.overallScore?.toFixed(1) || "N/A"}/100\n` +
-        `Tests Passed: ${result.testsPassed || 0}/${result.totalTests || 0}\n\n` +
-        `Recommendation: ${result.recommendation?.decision || "Pending"}`
-      );
+      toast.success("Assessment submitted!", {
+        description: "Your submission is being evaluated. Results will be available shortly.",
+        duration: 5000,
+      });
 
       // Redirect to dashboard or thank you page
       router.push("/dashboard");
     } catch (err) {
       console.error("Submission error:", err);
-      alert(`Failed to submit assessment: ${err instanceof Error ? err.message : "Unknown error"}`);
+      toast.error("Submission failed", {
+        description: err instanceof Error ? err.message : "Unknown error",
+      });
       setIsSubmitting(false);
     }
   };
