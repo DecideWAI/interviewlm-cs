@@ -432,11 +432,16 @@ module.exports = longestPalindrome;`,
     ]);
 
     // Create question in database
+    // Calculate order based on existing questions (0-indexed)
+    const existingQuestionsCount = await prisma.generatedQuestion.count({
+      where: { candidateId },
+    });
+
     question = await prisma.generatedQuestion.create({
       data: {
         candidateId,
         questionSeedId: null,
-        order: 1,
+        order: existingQuestionsCount,
         title: generatedContent.title,
         description: generatedContent.description,
         difficulty: mapSeniorityToDifficulty(assessment.seniority),
@@ -492,11 +497,16 @@ module.exports = longestPalindrome;`,
       { candidateId, role, seniority, assessmentType }
     );
 
+    // Calculate order based on existing questions (0-indexed)
+    const existingQuestionsCount = await prisma.generatedQuestion.count({
+      where: { candidateId },
+    });
+
     question = await prisma.generatedQuestion.create({
       data: {
         candidateId,
         questionSeedId: null,
-        order: 1,
+        order: existingQuestionsCount,
         title: generatedContent.title,
         description: generatedContent.description,
         difficulty: mapSeniorityToDifficulty(assessment.seniority),

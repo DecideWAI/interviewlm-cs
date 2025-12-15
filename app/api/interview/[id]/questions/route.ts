@@ -8,6 +8,7 @@ import { v5 as uuidv5 } from "uuid";
 import { GeneratedProblem } from "@/types/problem";
 import { incrementalQuestionGenerator } from "@/lib/services/incremental-questions";
 import { irtEngine } from "@/lib/services/irt-difficulty-engine";
+import { sessionService as sessions } from "@/lib/services";
 import type { RequiredTechStack } from "@/types/seed";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
@@ -429,6 +430,33 @@ export const GET = withErrorHandling(async (
           startedAt: new Date(),
         },
       });
+
+      // Emit question.start event for session replay
+      const sessionRecording = await prisma.sessionRecording.findUnique({
+        where: { candidateId: id },
+      });
+
+      if (sessionRecording) {
+        await sessions.recordEvent(
+          sessionRecording.id,
+          "question.start",
+          "SYSTEM",
+          {
+            questionId: currentQuestion.id,
+            title: currentQuestion.title,
+            difficulty: currentQuestion.difficulty,
+            order: currentQuestion.order,
+            questionNumber: candidate.generatedQuestions.indexOf(currentQuestion) + 1,
+          },
+          { questionIndex: currentQuestion.order, checkpoint: true }
+        );
+
+        logger.info('[Questions GET] Emitted question.start event', {
+          sessionId: sessionRecording.id,
+          questionId: currentQuestion.id,
+          questionIndex: currentQuestion.order,
+        });
+      }
     }
 
     // Check if this is an incremental assessment

@@ -11,6 +11,10 @@ calculations. Therefore it uses StateGraph directly rather than create_agent.
 from typing import Annotated, Literal
 from datetime import datetime
 import math
+import os
+import threading
+import logging
+import httpx
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -19,6 +23,69 @@ from langchain_core.messages import BaseMessage
 from typing_extensions import TypedDict
 
 from config import generate_interview_thread_uuid
+
+logger = logging.getLogger(__name__)
+
+# =============================================================================
+# Event Emission Helpers
+# =============================================================================
+
+NEXTJS_INTERNAL_URL = os.environ.get("NEXTJS_INTERNAL_URL", "http://localhost:3000")
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-internal-key")
+
+
+def emit_metrics_event(session_id: str, metrics: dict):
+    """
+    Emit session.metrics_updated event to persist IRT metrics (fire-and-forget).
+
+    This allows the event store to track ability estimates, AI dependency scores,
+    and struggling indicators for session replay and evaluation.
+    """
+    if not session_id:
+        return
+
+    def _emit():
+        try:
+            payload = {
+                "sessionId": session_id,
+                "type": "session.metrics_updated",
+                "origin": "SYSTEM",
+                "data": {
+                    "irtTheta": metrics.get("irt_theta", 0),
+                    "irtStandardError": metrics.get("irt_standard_error", 1.5),
+                    "questionsAnswered": metrics.get("questions_answered", 0),
+                    "questionsCorrect": metrics.get("questions_correct", 0),
+                    "questionsIncorrect": metrics.get("questions_incorrect", 0),
+                    "aiInteractionsCount": metrics.get("ai_interactions_count", 0),
+                    "aiDependencyScore": metrics.get("ai_dependency_score", 0),
+                    "strugglingIndicators": metrics.get("struggling_indicators", []),
+                    "averageResponseTime": metrics.get("average_response_time", 0),
+                    "testFailureRate": metrics.get("test_failure_rate", 0),
+                    "currentDifficulty": metrics.get("current_difficulty", 5),
+                    "recommendedNextDifficulty": metrics.get("recommended_next_difficulty", 5),
+                },
+            }
+
+            response = httpx.post(
+                f"{NEXTJS_INTERNAL_URL}/api/internal/events/record",
+                json=payload,
+                headers={"Authorization": f"Bearer {INTERNAL_API_KEY}"},
+                timeout=5.0,
+            )
+
+            if response.status_code != 200:
+                logger.warning(
+                    f"Metrics event emission failed: {response.status_code} - {response.text}"
+                )
+            else:
+                logger.debug(f"Metrics event emitted for session {session_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to emit metrics event: {e}")
+
+    # Run in background thread to not block processing
+    thread = threading.Thread(target=_emit, daemon=True)
+    thread.start()
 
 
 # =============================================================================
@@ -229,9 +296,10 @@ async def process_event(state: InterviewAgentState) -> dict:
     event_type = state.get("current_event_type")
     event_data = state.get("current_event_data", {})
     metrics = state.get("metrics")
+    session_id = state.get("session_id")
 
     if not metrics:
-        metrics = create_default_metrics(state["session_id"])
+        metrics = create_default_metrics(session_id)
 
     # Update last_updated timestamp
     metrics["last_updated"] = datetime.utcnow().isoformat()
@@ -247,9 +315,13 @@ async def process_event(state: InterviewAgentState) -> dict:
         metrics = await handle_question_answered(metrics, event_data)
     elif event_type == "session-started":
         difficulty = event_data.get("difficulty", 5)
-        metrics = create_default_metrics(state["session_id"], difficulty)
+        metrics = create_default_metrics(session_id, difficulty)
     elif event_type == "session-complete":
         pass  # Just log final state
+
+    # Emit metrics update event to event store (fire-and-forget)
+    # This persists IRT metrics, AI dependency scores, and struggling indicators
+    emit_metrics_event(session_id, metrics)
 
     return {
         "metrics": metrics,

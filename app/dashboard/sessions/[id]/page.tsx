@@ -467,10 +467,11 @@ export default function SessionReplayPage() {
             initialCode = starterCode;
           }
 
-          // Start with ONLY the starter code file
-          // Files will be added progressively during replay via timeline events
-          // This ensures replay fidelity - files appear in the order they were created
+          // Normalize starter path
           const starterPath = initialFileName.startsWith('/') ? initialFileName : `/${initialFileName}`;
+
+          // Start with only the starter file - other files appear progressively
+          // as code_snapshot events are processed during playback via applyEvent()
           const initialFiles = buildFileTree([starterPath]);
 
           const initialTabs = [{
@@ -501,31 +502,26 @@ export default function SessionReplayPage() {
           });
         }
 
-        // Compute question markers from timeline
-        // Q1 starts at index 0, subsequent questions start after conversation_reset events
+        // Compute question markers from timeline using questionIndex
+        // This is more reliable than counting conversation_reset events
         const markers: Array<{ index: number; questionNumber: number; title: string }> = [];
+        const seenQuestions = new Set<number>();
 
-        // Q1 starts at the beginning
-        if (data.questions.length > 0) {
-          markers.push({
-            index: 0,
-            questionNumber: 1,
-            title: data.questions[0]?.title || "Question 1",
-          });
-        }
-
-        // Find conversation_reset events for subsequent questions
-        let questionNum = 2;
         data.timeline.forEach((event: TimelineEvent, index: number) => {
-          if (event.type === "conversation_reset" && questionNum <= data.questions.length) {
+          const qIndex = event.questionIndex;
+          // Only process events with a valid questionIndex that we haven't seen yet
+          if (qIndex !== undefined && qIndex !== null && !seenQuestions.has(qIndex)) {
+            seenQuestions.add(qIndex);
             markers.push({
               index,
-              questionNumber: questionNum,
-              title: data.questions[questionNum - 1]?.title || `Question ${questionNum}`,
+              questionNumber: qIndex + 1, // Convert 0-indexed to 1-indexed
+              title: data.questions[qIndex]?.title || `Question ${qIndex + 1}`,
             });
-            questionNum++;
           }
         });
+
+        // Sort markers by questionNumber to ensure correct order
+        markers.sort((a, b) => a.questionNumber - b.questionNumber);
 
         setQuestionMarkers(markers);
         setLoading(false);
@@ -911,24 +907,42 @@ export default function SessionReplayPage() {
               style={{ width: `${(playback.currentIndex / Math.max(sessionData.timeline.length - 1, 1)) * 100}%` }}
             />
 
-            {/* Question markers */}
+            {/* Question markers - positioned by actual timeline ratio with min spacing */}
             {questionMarkers.map((marker, i) => {
-              const position = (marker.index / Math.max(sessionData.timeline.length - 1, 1)) * 100;
+              // Calculate actual position based on timeline index
+              const timelineLength = Math.max(sessionData.timeline.length - 1, 1);
+              let position = (marker.index / timelineLength) * 100;
+
+              // Apply minimum spacing (10%) to prevent marker overlap
+              const minSpacing = 10;
+              const totalMarkers = questionMarkers.length;
+              if (totalMarkers > 1) {
+                // Ensure minimum spacing between markers
+                const prevPosition = i > 0
+                  ? (questionMarkers[i - 1].index / timelineLength) * 100
+                  : -minSpacing;
+                if (position - prevPosition < minSpacing) {
+                  position = prevPosition + minSpacing;
+                }
+                // Cap at 100%
+                position = Math.min(position, 100);
+              }
+
               const isActive = playback.currentIndex >= marker.index &&
                 (i === questionMarkers.length - 1 || playback.currentIndex < questionMarkers[i + 1]?.index);
               return (
                 <button
-                  key={marker.index}
+                  key={`q${marker.questionNumber}`}
                   onClick={() => seekToIndex(marker.index)}
                   className={cn(
-                    "absolute top-0 -translate-x-1/2 flex flex-col items-center group",
-                    "hover:z-10 transition-transform hover:scale-110"
+                    "absolute top-0 -translate-x-1/2 flex flex-col items-center group z-10",
+                    "hover:z-20 transition-transform hover:scale-110"
                   )}
                   style={{ left: `${position}%` }}
                   title={marker.title}
                 >
                   <span className={cn(
-                    "text-[10px] font-bold px-1 rounded mb-0.5",
+                    "text-[10px] font-bold px-1 rounded mb-0.5 whitespace-nowrap",
                     isActive ? "bg-primary text-white" : "bg-background-tertiary text-text-secondary"
                   )}>
                     Q{marker.questionNumber}

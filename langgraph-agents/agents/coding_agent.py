@@ -557,6 +557,7 @@ class CodingAgentGraph:
             "configurable": {
                 "thread_id": thread_uuid,
                 "session_id": self.session_id,
+                "candidate_id": self.candidate_id,  # Required for sandbox operations and event emission
             },
             "recursion_limit": 100,  # Increased from default 25 for complex tasks
         }
@@ -642,6 +643,7 @@ class CodingAgentGraph:
             "configurable": {
                 "thread_id": thread_uuid,
                 "session_id": self.session_id,
+                "candidate_id": self.candidate_id,  # Required for sandbox operations and event emission
             },
             "recursion_limit": 100,  # Increased from default 25 for complex tasks
         }

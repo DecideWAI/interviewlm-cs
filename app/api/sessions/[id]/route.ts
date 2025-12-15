@@ -242,12 +242,25 @@ function buildTimeline(events: SessionEvent[]) {
     // Map new event types to legacy format for backwards compatibility
     const legacyType = mapEventTypeToLegacy(event.eventType);
 
+    // Transform data for code_snapshot events
+    // The replay page expects 'fullContent' but DB stores 'content'
+    let data = event.data;
+    if (event.eventType === "code.snapshot" || event.eventType === "code_snapshot") {
+      const eventData = event.data as Record<string, unknown>;
+      if (eventData.content && !eventData.fullContent) {
+        data = {
+          ...eventData,
+          fullContent: eventData.content, // Add fullContent for replay page
+        };
+      }
+    }
+
     return {
       id: event.id,
       timestamp: event.timestamp,
       type: legacyType,
       category: event.category,
-      data: event.data,
+      data,
       checkpoint: event.checkpoint,
       questionIndex: event.questionIndex,
       sequenceNumber: event.sequenceNumber.toString(),

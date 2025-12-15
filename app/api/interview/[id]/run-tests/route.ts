@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
-import { modalService as modal, sessionService as sessions } from "@/lib/services";
+import { modalService as modal, sessionService as sessions, recordTestResult, recordCodeSnapshot, recordEvent, recordTestRunComplete } from "@/lib/services";
 import Anthropic from "@anthropic-ai/sdk";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
@@ -235,53 +235,36 @@ export const POST = withErrorHandling(async (
 
     const executionTime = Date.now() - executionStart;
 
-    // Get next sequence number for events
-    const lastEvent = await prisma.sessionEventLog.findFirst({
-      where: { sessionId: sessionRecording.id },
-      orderBy: { sequenceNumber: 'desc' },
-      select: { sequenceNumber: true },
-    });
-    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-    // Record test results to event store
+    // Record test results to event store using helper (handles origin, sequencing)
     for (const result of executionResult.testResults) {
-      await prisma.sessionEventLog.create({
-        data: {
-          sessionId: sessionRecording.id,
-          sequenceNumber: nextSeq++,
-          timestamp: new Date(),
-          eventType: "test.result",
-          category: "test",
-          data: {
-            testName: result.name,
-            passed: result.passed,
-            output: result.output || null,
-            error: result.error || null,
-            duration: result.duration,
-          },
-          checkpoint: false,
-        },
+      await recordTestResult(sessionRecording.id, {
+        testName: result.name,
+        passed: result.passed,
+        output: result.output || undefined,
+        error: result.error || undefined,
+        duration: result.duration,
       });
     }
 
-    // Record code snapshot
-    await prisma.sessionEventLog.create({
-      data: {
-        sessionId: sessionRecording.id,
-        sequenceNumber: nextSeq++,
-        timestamp: new Date(),
-        eventType: "code.snapshot",
-        category: "code",
-        filePath: fileName || "main",
-        data: {
-          fileName: fileName || "main",
-          language,
-          contentHash: hashCode(code),
-          fullContent: code,
-        },
-        checkpoint: false,
-      },
+    // Record test run completion event (aggregate)
+    await recordTestRunComplete(sessionRecording.id, {
+      passed: executionResult.passedTests,
+      failed: executionResult.failedTests,
+      total: executionResult.totalTests,
+      duration: executionTime,
     });
+
+    // Record code snapshot using helper (handles origin, sequencing, checkpoint)
+    await recordCodeSnapshot(
+      sessionRecording.id,
+      {
+        fileId: fileName || "main",
+        fileName: fileName || "main",
+        language,
+        content: code,
+      },
+      "USER" // User triggered the test run
+    );
 
     // Log successful test execution
     logger.info('[RunTests] Tests executed', {
@@ -425,32 +408,17 @@ Return ONLY valid JSON (no markdown):
       evaluationTime,
     });
 
-    // Get next sequence number for event
-    const lastEventForAI = await prisma.sessionEventLog.findFirst({
-      where: { sessionId: recording.id },
-      orderBy: { sequenceNumber: 'desc' },
-      select: { sequenceNumber: true },
-    });
-    const nextSeqForAI = (lastEventForAI?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-    // Record code snapshot
-    await prisma.sessionEventLog.create({
-      data: {
-        sessionId: recording.id,
-        sequenceNumber: nextSeqForAI,
-        timestamp: new Date(),
-        eventType: "code.snapshot",
-        category: "code",
-        filePath: fileName || "main",
-        data: {
-          fileName: fileName || "main",
-          language,
-          contentHash: hashCode(code),
-          fullContent: code,
-        },
-        checkpoint: false,
+    // Record code snapshot using helper (handles origin, sequencing, checkpoint)
+    await recordCodeSnapshot(
+      recording.id,
+      {
+        fileId: fileName || "main",
+        fileName: fileName || "main",
+        language,
+        content: code,
       },
-    });
+      "SYSTEM" // System triggered during AI evaluation
+    );
 
     // Record AI evaluation as test results
     const criteriaResults = Object.entries(aiResult.scores).map(([criterion, score]: [string, any]) => ({

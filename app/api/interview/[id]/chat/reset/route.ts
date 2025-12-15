@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
+import { recordEvent } from "@/lib/services/sessions";
 
 /**
  * POST /api/interview/[id]/chat/reset
@@ -67,30 +68,17 @@ export async function POST(
       });
     }
 
-    // Get next sequence number
-    const lastEvent = await prisma.sessionEventLog.findFirst({
-      where: { sessionId: sessionRecording.id },
-      orderBy: { sequenceNumber: 'desc' },
-      select: { sequenceNumber: true },
-    });
-    const nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-    // Record conversation reset event
-    await prisma.sessionEventLog.create({
-      data: {
-        sessionId: sessionRecording.id,
-        sequenceNumber: nextSeq,
-        timestamp: new Date(),
-        eventType: "chat.conversation_reset",
-        category: "chat",
-        data: {
-          questionId,
-          reason: "Moving to next question - conversation context cleared",
-          timestamp: new Date().toISOString(),
-        },
-        checkpoint: true, // Mark as checkpoint for replay
+    // Record conversation reset event using helper (handles sequencing, origin, checkpoint)
+    await recordEvent(
+      sessionRecording.id,
+      "chat.reset", // Use correct event type from event-store.ts
+      "SYSTEM",
+      {
+        questionId,
+        reason: "question_transition", // Standardized reason from ChatResetData
       },
-    });
+      { checkpoint: true }
+    );
 
     return NextResponse.json({
       success: true,

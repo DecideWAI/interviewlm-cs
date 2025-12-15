@@ -7,6 +7,7 @@ import { publishAIInteraction } from "@/lib/queues";
 import { withErrorHandling, AuthorizationError, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
+import { recordClaudeInteraction } from "@/lib/services/sessions";
 
 // Request validation schema
 const chatRequestSchema = z.object({
@@ -186,56 +187,29 @@ export const GET = withErrorHandling(async (
           // Calculate prompt quality (simple heuristic)
           const promptQuality = calculatePromptQuality(message, codeContext);
 
-          // Get next sequence numbers for events
-          const lastEvent = await prisma.sessionEventLog.findFirst({
-            where: { sessionId: sessionRecording.id },
-            orderBy: { sequenceNumber: 'desc' },
-            select: { sequenceNumber: true },
-          });
-          let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-          // Record user message to event store
-          await prisma.sessionEventLog.create({
-            data: {
-              sessionId: sessionRecording.id,
-              sequenceNumber: nextSeq++,
-              timestamp: new Date(),
-              eventType: "chat.user_message",
-              category: "chat",
-              data: {
-                role: "user",
-                content: message,
-                model: "claude-sonnet-4-5-20250929",
-                inputTokens,
-                outputTokens,
-                latency,
-                promptQuality,
-              },
-              checkpoint: false,
+          // Record user message to event store using helper (handles origin, sequencing)
+          await recordClaudeInteraction(
+            sessionRecording.id,
+            {
+              role: "user",
+              content: message,
+              model: "claude-sonnet-4-5-20250929",
+              inputTokens,
+              outputTokens,
+              latency,
             },
-          });
+            { promptQuality }
+          );
 
-          // Store assistant response with tool use metadata
-          await prisma.sessionEventLog.create({
-            data: {
-              sessionId: sessionRecording.id,
-              sequenceNumber: nextSeq++,
-              timestamp: new Date(),
-              eventType: "chat.assistant_message",
-              category: "chat",
-              data: {
-                role: "assistant",
-                content: fullResponse,
-                model: "claude-sonnet-4-5-20250929",
-                metadata: toolBlocks.length > 0 ? {
-                  toolBlocks,
-                  toolsUsed,
-                  filesModified,
-                } : undefined,
-              },
-              checkpoint: false,
-            },
-          });
+          // Record assistant response to event store using helper (handles origin, sequencing)
+          await recordClaudeInteraction(
+            sessionRecording.id,
+            {
+              role: "assistant",
+              content: fullResponse,
+              model: "claude-sonnet-4-5-20250929",
+            }
+          );
 
           // Publish AI interaction event to BullMQ for Interview Agent
           publishAIInteraction({

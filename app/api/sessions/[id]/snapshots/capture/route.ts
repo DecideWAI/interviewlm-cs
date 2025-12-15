@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { readFile } from "@/lib/services/modal";
 import { uploadFileContent } from "@/lib/services/gcs";
 import prisma from "@/lib/prisma";
+import { recordCodeSnapshot } from "@/lib/services/sessions";
 
 /**
  * POST /api/sessions/[id]/snapshots/capture
@@ -104,13 +105,7 @@ async function captureFilesInBackground(
     error?: string;
   }> = [];
 
-  // Get starting sequence number for events
-  const lastEvent = await prisma.sessionEventLog.findFirst({
-    where: { sessionId },
-    orderBy: { sequenceNumber: 'desc' },
-    select: { sequenceNumber: true },
-  });
-  let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
+  // Sequence numbers are handled by recordCodeSnapshot helper
 
   for (const filePath of filesModified) {
     try {
@@ -136,27 +131,18 @@ async function captureFilesInBackground(
           `${content.length} -> ${uploadResult.compressedSize} bytes)`
       );
 
-      // Record code snapshot event in event store
+      // Record code snapshot event in event store using helper (includes fullContent for offline replay)
       try {
-        await prisma.sessionEventLog.create({
-          data: {
-            sessionId,
-            sequenceNumber: nextSeq++,
-            timestamp: new Date(),
-            eventType: "code.snapshot",
-            category: "code",
-            filePath,
-            data: {
-              fileName: filePath.split("/").pop() || filePath,
-              language: detectLanguage(filePath),
-              contentHash: uploadResult.checksum,
-              // Don't store fullContent - use contentHash to fetch from GCS
-              linesAdded: 0,
-              linesDeleted: 0,
-            },
-            checkpoint: false,
+        await recordCodeSnapshot(
+          sessionId,
+          {
+            fileId: filePath,
+            fileName: filePath.split("/").pop() || filePath,
+            language: detectLanguage(filePath),
+            content, // Include full content for offline replay
           },
-        });
+          "AI" // Snapshots captured from LangGraph agent tool executions are AI-originated
+        );
       } catch (dbError) {
         // Non-fatal - GCS upload succeeded
         console.warn(

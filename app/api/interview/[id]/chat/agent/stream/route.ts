@@ -26,7 +26,8 @@ import { traceAgentSession } from "@/lib/observability/langsmith";
 import type { HelpfulnessLevel } from "@/lib/types/agent";
 import { agentAssignmentService, type AgentBackendType } from "@/lib/experiments";
 import { fileStreamManager } from "@/lib/services/file-streaming";
-import { sessionService } from "@/lib/services";
+import { sessionService, recordClaudeInteraction } from "@/lib/services";
+import { eventStore } from "@/lib/services/event-store";
 
 // Stream checkpoint constants
 const CHECKPOINT_EVENT_TYPE = 'stream_checkpoint';
@@ -251,26 +252,15 @@ export async function POST(
                 },
               });
             } else {
-              // Create new checkpoint - get next sequence number
-              const lastEvent = await prisma.sessionEventLog.findFirst({
-                where: { sessionId: sessionRecording!.id },
-                orderBy: { sequenceNumber: 'desc' },
-                select: { sequenceNumber: true },
+              // Create new checkpoint using eventStore for proper sequencing
+              checkpointId = await eventStore.emit({
+                sessionId: sessionRecording!.id,
+                eventType: CHECKPOINT_EVENT_TYPE as any, // Special checkpoint type
+                category: 'chat',
+                origin: 'SYSTEM',
+                data: checkpointData as any,
+                checkpoint: true,
               });
-              const nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-              const checkpoint = await prisma.sessionEventLog.create({
-                data: {
-                  sessionId: sessionRecording!.id,
-                  sequenceNumber: nextSeq,
-                  timestamp: new Date(),
-                  eventType: CHECKPOINT_EVENT_TYPE,
-                  category: 'chat',
-                  data: checkpointData as any,
-                  checkpoint: true,
-                },
-              });
-              checkpointId = checkpoint.id;
             }
 
             lastCheckpointTime = Date.now();
@@ -436,51 +426,29 @@ export async function POST(
           // Calculate prompt quality
           const promptQuality = calculatePromptQuality(message, codeContext);
 
-          // Get next sequence numbers for events
-          const lastEventForChat = await prisma.sessionEventLog.findFirst({
-            where: { sessionId: sessionRecording!.id },
-            orderBy: { sequenceNumber: 'desc' },
-            select: { sequenceNumber: true },
-          });
-          let nextSeqChat = (lastEventForChat?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-          // Record user message to event store
-          await prisma.sessionEventLog.create({
-            data: {
-              sessionId: sessionRecording!.id,
-              sequenceNumber: nextSeqChat++,
-              timestamp: new Date(),
-              eventType: "chat.user_message",
-              category: "chat",
-              data: {
-                role: "user",
-                content: message,
-                model: modelName,
-                inputTokens: usage?.input_tokens,
-                outputTokens: usage?.output_tokens,
-                latency,
-                promptQuality,
-              },
-              checkpoint: false,
+          // Record user message to event store using helper (handles origin, sequencing)
+          await recordClaudeInteraction(
+            sessionRecording!.id,
+            {
+              role: "user",
+              content: message,
+              model: modelName,
+              inputTokens: usage?.input_tokens,
+              outputTokens: usage?.output_tokens,
+              latency,
             },
-          });
+            { promptQuality }
+          );
 
-          // Record assistant response to event store
-          await prisma.sessionEventLog.create({
-            data: {
-              sessionId: sessionRecording!.id,
-              sequenceNumber: nextSeqChat++,
-              timestamp: new Date(),
-              eventType: "chat.assistant_message",
-              category: "chat",
-              data: {
-                role: "assistant",
-                content: agentResponse.text,
-                model: modelName,
-              },
-              checkpoint: false,
-            },
-          });
+          // Record assistant response to event store using helper (handles origin, sequencing)
+          await recordClaudeInteraction(
+            sessionRecording!.id,
+            {
+              role: "assistant",
+              content: agentResponse.text,
+              model: modelName,
+            }
+          );
 
           // Publish event for Interview Agent
           publishAIInteraction({

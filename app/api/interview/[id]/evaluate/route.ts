@@ -9,6 +9,7 @@ import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { strictRateLimit } from "@/lib/middleware/rate-limit";
 import { createQuestionEvaluationAgent, EvaluationResult as AgentEvaluationResult } from "@/lib/agents/question-evaluation-agent";
+import { recordCodeSnapshot, recordEvent } from "@/lib/services/sessions";
 // Note: modalService is no longer used here - the agent discovers code via tools
 
 // LangGraph SDK configuration
@@ -637,52 +638,32 @@ export const POST = withErrorHandling(async (
     evaluationTime,
   });
 
-  // Get next sequence number for events
-  const lastEvent = await prisma.sessionEventLog.findFirst({
-    where: { sessionId: sessionRecording.id },
-    orderBy: { sequenceNumber: 'desc' },
-    select: { sequenceNumber: true },
-  });
-  let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-  // Record code snapshot event
-  await prisma.sessionEventLog.create({
-    data: {
-      sessionId: sessionRecording.id,
-      sequenceNumber: nextSeq++,
-      timestamp: new Date(),
-      eventType: "code.snapshot",
-      category: "code",
-      filePath: fileName || "main",
-      data: {
-        fileName: fileName || "main",
-        language,
-        contentHash: hashCode(code),
-        fullContent: code,
-      },
-      checkpoint: false,
+  // Record code snapshot event using helper (handles origin, sequencing, checkpoint)
+  await recordCodeSnapshot(
+    sessionRecording.id,
+    {
+      fileId: `eval-${questionId}`,
+      fileName: fileName || "main",
+      language,
+      content: code,
     },
-  });
+    "SYSTEM" // System triggered during evaluation
+  );
 
-  // Record evaluation event
-  await prisma.sessionEventLog.create({
-    data: {
-      sessionId: sessionRecording.id,
-      sequenceNumber: nextSeq++,
-      timestamp: new Date(),
-      eventType: "evaluation.complete",
-      category: "evaluation",
-      data: {
-        questionId,
-        overallScore: aiResult.overallScore,
-        passed,
-        criteria: aiResult.criteria,
-        evaluationTime,
-        timestamp: new Date().toISOString(),
-      },
-      checkpoint: false,
+  // Record evaluation event using helper (handles origin, sequencing)
+  await recordEvent(
+    sessionRecording.id,
+    "evaluation.complete",
+    "SYSTEM",
+    {
+      questionId,
+      overallScore: aiResult.overallScore,
+      passed,
+      criteria: aiResult.criteria,
+      evaluationTime,
     },
-  });
+    { checkpoint: true } // Evaluation complete is a checkpoint event
+  );
 
   // Format response - map criteria with proper maxScore values
   // Criteria keys vary by assessment type, so we iterate dynamically

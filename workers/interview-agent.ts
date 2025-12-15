@@ -29,6 +29,7 @@ import type {
 } from '../lib/types/events';
 import prisma from '../lib/prisma';
 import { proactiveAssistance } from '../lib/services/proactive-assistance';
+import { recordCodeSnapshot } from '../lib/services/sessions';
 
 /**
  * Interview metrics tracked for each session
@@ -203,16 +204,7 @@ class InterviewAgentWorker {
     // Track code change for proactive assistance
     proactiveAssistance.recordCodeChange(sessionId, Math.max(1, Math.floor(totalLines / 10)));
 
-    // Track code snapshots for evaluation later
-    // Get next sequence number for events
-    const lastEvent = await prisma.sessionEventLog.findFirst({
-      where: { sessionId },
-      orderBy: { sequenceNumber: 'desc' },
-      select: { sequenceNumber: true },
-    });
-    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-    // Create individual snapshots for each file
+    // Track code snapshots for evaluation later using helper (handles origin, sequencing, checkpoint)
     for (const [fileName, content] of Object.entries(files)) {
       if (typeof content !== 'string') continue;
       const contentStr = content;
@@ -220,26 +212,17 @@ class InterviewAgentWorker {
                        fileName.endsWith('.js') ? 'javascript' :
                        fileName.endsWith('.py') ? 'python' : 'unknown';
 
-      await prisma.sessionEventLog.create({
-        data: {
-          sessionId,
-          sequenceNumber: nextSeq++,
-          timestamp: new Date(),
-          eventType: 'code.snapshot',
-          category: 'code',
-          filePath: fileName,
-          data: {
-            fileName,
-            language,
-            contentHash: Buffer.from(contentStr).toString('base64').slice(0, 64),
-            fullContent: contentStr.slice(0, 100000), // Limit size
-            linesAdded: contentStr.split('\n').length,
-            linesDeleted: 0,
-            trigger,
-          },
-          checkpoint: false,
+      // AI origin since this is triggered by code changes in AI-assisted interview
+      await recordCodeSnapshot(
+        sessionId,
+        {
+          fileId: fileName,
+          fileName,
+          language,
+          content: contentStr.slice(0, 100000), // Limit size
         },
-      });
+        "AI"
+      );
     }
   }
 

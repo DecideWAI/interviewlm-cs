@@ -493,7 +493,10 @@ class EventStore {
 
     const events = await prisma.sessionEventLog.findMany({
       where,
-      orderBy: { sequenceNumber: "asc" },
+      orderBy: [
+        { timestamp: "asc" }
+        // { sequenceNumber: "asc" }, // Secondary sort for events with same timestamp
+      ],
       take: options?.limit,
       skip: options?.offset,
     });
@@ -776,6 +779,7 @@ export function isCheckpointEvent(eventType: EventType): boolean {
     "question.submit",
     "question.evaluated",
     "file.create",
+    "code.snapshot", // Added for efficient replay seeking
     "test.run_complete",
     "evaluation.complete",
     "evaluation.final",

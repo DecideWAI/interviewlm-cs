@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import prisma from "@/lib/prisma";
 import { getSession } from "@/lib/auth-helpers";
-import { modalService as modal, sessionService as sessions } from "@/lib/services";
+import { modalService as modal, sessionService as sessions, recordTestResult, recordTestRunComplete } from "@/lib/services";
 import {
   calculateOverallScore,
   calculateAICollaborationScore,
@@ -225,34 +225,23 @@ export const POST = withErrorHandling(async (
             { candidateId: id, testCount: testCases.length }
           );
 
-          // Get next sequence number for test result events
-          const lastEvent = await prisma.sessionEventLog.findFirst({
-            where: { sessionId: sessionRecording.id },
-            orderBy: { sequenceNumber: 'desc' },
-            select: { sequenceNumber: true },
-          });
-          let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-          // Record final test results to event store
+          // Record final test results to event store using helper (handles origin, sequencing)
           for (const result of finalTestResults.testResults) {
-            await prisma.sessionEventLog.create({
-              data: {
-                sessionId: sessionRecording.id,
-                sequenceNumber: nextSeq++,
-                timestamp: new Date(),
-                eventType: "test.result",
-                category: "test",
-                data: {
-                  testName: result.name,
-                  passed: result.passed,
-                  output: result.output || null,
-                  error: result.error || null,
-                  duration: result.duration,
-                },
-                checkpoint: false,
-              },
+            await recordTestResult(sessionRecording.id, {
+              testName: result.name,
+              passed: result.passed,
+              output: result.output || undefined,
+              error: result.error || undefined,
+              duration: result.duration,
             });
           }
+
+          // Record test run completion event (aggregate)
+          await recordTestRunComplete(sessionRecording.id, {
+            passed: finalTestResults.passedTests,
+            failed: finalTestResults.failedTests,
+            total: finalTestResults.totalTests,
+          });
         }
       } catch (error) {
         logger.warn("Error running final tests", {

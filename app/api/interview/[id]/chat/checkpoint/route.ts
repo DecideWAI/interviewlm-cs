@@ -5,6 +5,7 @@ import { withErrorHandling, AuthorizationError, NotFoundError } from "@/lib/util
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
 import { standardRateLimit } from "@/lib/middleware/rate-limit";
+import { eventStore } from "@/lib/services/event-store";
 
 /**
  * Stream checkpoint data structure
@@ -314,24 +315,18 @@ export const POST = withErrorHandling(async (
       },
     });
   } else {
-    // Create new checkpoint - get next sequence number
-    const lastEvent = await prisma.sessionEventLog.findFirst({
-      where: { sessionId: candidate.sessionRecording.id },
-      orderBy: { sequenceNumber: 'desc' },
-      select: { sequenceNumber: true },
+    // Create new checkpoint using eventStore for proper sequencing
+    const checkpointId = await eventStore.emit({
+      sessionId: candidate.sessionRecording.id,
+      eventType: CHECKPOINT_EVENT_TYPE as any, // Special checkpoint type
+      category: 'chat',
+      origin: 'SYSTEM',
+      data: checkpointData as any,
+      checkpoint: true,
     });
-    const nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
-    checkpoint = await prisma.sessionEventLog.create({
-      data: {
-        sessionId: candidate.sessionRecording.id,
-        sequenceNumber: nextSeq,
-        timestamp: new Date(),
-        eventType: CHECKPOINT_EVENT_TYPE,
-        category: 'chat',
-        data: checkpointData as any,
-        checkpoint: true,
-      },
+    // Fetch the created checkpoint for response
+    checkpoint = await prisma.sessionEventLog.findUnique({
+      where: { id: checkpointId },
     });
   }
 

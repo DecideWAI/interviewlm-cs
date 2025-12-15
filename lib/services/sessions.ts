@@ -314,11 +314,12 @@ export async function recordCodeSnapshot(
       data: {
         fileId: snapshot.fileId,
         fileName: snapshot.fileName,
+        path: snapshot.fileName, // Standardize on 'path' for replay compatibility
         language: snapshot.language,
+        content: snapshot.content, // Include fullContent for offline replay
         contentHash,
         linesAdded,
         linesDeleted,
-        // Note: fullContent not stored in event - content available in Modal volume/GCS
       },
       questionIndex: options?.questionIndex,
       filePath: snapshot.fileName,
@@ -385,6 +386,62 @@ export async function recordTestResult(
     console.error("Error recording test result:", error);
     throw new Error(
       `Test result recording failed: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+  }
+}
+
+/**
+ * Record test run completion event (aggregate of all test results)
+ *
+ * @param sessionId - Session identifier
+ * @param results - Aggregate test results
+ * @param options - Additional options (questionIndex)
+ * @returns Event log ID
+ *
+ * @example
+ * ```typescript
+ * await recordTestRunComplete(sessionId, {
+ *   passed: 3,
+ *   failed: 1,
+ *   total: 4,
+ *   duration: 1500
+ * });
+ * ```
+ */
+export async function recordTestRunComplete(
+  sessionId: string,
+  results: {
+    passed: number;
+    failed: number;
+    total: number;
+    duration?: number;
+  },
+  options?: { questionIndex?: number }
+): Promise<string> {
+  try {
+    // Emit to unified event store as a checkpoint event
+    // Origin is SYSTEM because test results come from the test runner
+    const eventId = await eventStore.emit({
+      sessionId,
+      eventType: "test.run_complete",
+      category: "test",
+      origin: "SYSTEM",
+      data: {
+        passed: results.passed,
+        failed: results.failed,
+        total: results.total,
+        duration: results.duration,
+      },
+      questionIndex: options?.questionIndex,
+      checkpoint: true,
+    });
+
+    return eventId;
+
+  } catch (error) {
+    console.error("Error recording test run completion:", error);
+    throw new Error(
+      `Test run completion recording failed: ${error instanceof Error ? error.message : "Unknown error"}`
     );
   }
 }

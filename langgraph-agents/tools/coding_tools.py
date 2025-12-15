@@ -11,10 +11,12 @@ SandboxManager has been extracted to services/modal_manager.py for better modula
 """
 
 import re
+import os
 import base64
 import logging
 import asyncio
 import threading
+import httpx
 from typing import Any, List
 from pathlib import Path
 from langchain_core.tools import tool
@@ -244,8 +246,98 @@ def is_path_allowed(path: str) -> tuple[bool, str]:
     return True, ""
 
 
-def sanitize_output(text: str, max_size: int = 50000) -> str:
-    """Truncate output if too large."""
+# =============================================================================
+# Event Emission Helpers
+# =============================================================================
+
+# Event emission configuration
+NEXTJS_INTERNAL_URL = os.environ.get("NEXTJS_INTERNAL_URL", "http://localhost:3000")
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-internal-key")
+
+
+def emit_event_fire_and_forget(
+    session_id: str,
+    event_type: str,
+    origin: str,
+    data: dict,
+    question_index: int = None,
+    file_path: str = None,
+    checkpoint: bool = False,
+):
+    """
+    Emit an event to the Next.js event store (fire-and-forget).
+
+    This runs in a background thread to avoid blocking tool execution.
+    Failures are logged but don't affect the tool result.
+
+    Args:
+        session_id: The session ID for the event
+        event_type: Event type (e.g., "code.write", "terminal.command")
+        origin: Event origin ("USER", "AI", "SYSTEM")
+        data: Event data payload
+        question_index: Optional question index
+        file_path: Optional file path for file-related events
+        checkpoint: Whether this is a checkpoint event
+    """
+    if not session_id:
+        logger.debug("No session_id provided, skipping event emission")
+        return
+
+    def _emit():
+        try:
+            payload = {
+                "sessionId": session_id,
+                "type": event_type,
+                "origin": origin,
+                "data": data,
+            }
+            if question_index is not None:
+                payload["questionIndex"] = question_index
+            if file_path:
+                payload["filePath"] = file_path
+            if checkpoint:
+                payload["checkpoint"] = True
+
+            # Use sync httpx client for simplicity in fire-and-forget thread
+            response = httpx.post(
+                f"{NEXTJS_INTERNAL_URL}/api/internal/events/record",
+                json=payload,
+                headers={"Authorization": f"Bearer {INTERNAL_API_KEY}"},
+                timeout=5.0,  # Short timeout for fire-and-forget
+            )
+
+            if response.status_code != 200:
+                logger.warning(
+                    f"Event emission failed: {response.status_code} - {response.text}"
+                )
+            else:
+                logger.debug(f"Event emitted: {event_type} for session {session_id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to emit event {event_type}: {e}")
+
+    # Run in background thread to not block tool execution
+    thread = threading.Thread(target=_emit, daemon=True)
+    thread.start()
+
+
+def get_session_id(config: dict) -> str:
+    """Get the session ID from config for event emission."""
+    configurable = config.get("configurable", {})
+    return configurable.get("session_id")
+
+
+def sanitize_output(text: str, max_size: int = 1000) -> str:
+    """
+    Truncate output if too large.
+
+    Args:
+        text: The output text to sanitize
+        max_size: Maximum characters to return (default: 1000 chars ≈ 200 tokens).
+            - Use default for most commands
+            - Use 5000-10000 for log viewing, build output
+            - Use 50000 for full file dumps
+    """
     if len(text) > max_size:
         return text[:max_size] + f"\n\n... (truncated, {len(text) - max_size} bytes remaining)"
     return text
@@ -272,7 +364,7 @@ def read_file(
     path: str,
     config: RunnableConfig,
     offset: int = 0,
-    limit: int = 10000,
+    limit: int = 2000,
 ) -> dict[str, Any]:
     """
     Read the contents of a file from the workspace.
@@ -283,7 +375,8 @@ def read_file(
         path: Path to the file (relative to /workspace or absolute)
         config: RunnableConfig with session_id in configurable
         offset: Character offset to start reading from (default: 0)
-        limit: Maximum number of characters to read (default: 10000)
+        limit: Maximum characters to read (default: 2000 ≈ 400 tokens).
+            Set higher (e.g., 10000) for larger files.
 
     Returns:
         Dict with success status, content, and metadata
@@ -349,6 +442,7 @@ def write_file(
         Dict with success status and metadata
     """
     sandbox_id = get_sandbox_id(config)
+    session_id = get_session_id(config)
     allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
@@ -371,6 +465,20 @@ def write_file(
             run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{path}'")
 
         run_with_retry(_write_file, timeout=TOOL_TIMEOUT_SECONDS)
+
+        # Emit code.write event for session replay
+        emit_event_fire_and_forget(
+            session_id=session_id,
+            event_type="code.write",
+            origin="AI",
+            data={
+                "filepath": path,
+                "content": content[:100000],  # Limit content size for event store
+                "bytesWritten": len(content.encode()),
+            },
+            file_path=path,
+            checkpoint=True,  # File writes are checkpoint events for replay
+        )
 
         return {
             "success": True,
@@ -404,6 +512,7 @@ def edit_file(
         Dict with success status and replacement count
     """
     sandbox_id = get_sandbox_id(config)
+    session_id = get_session_id(config)
     allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
@@ -434,6 +543,21 @@ def edit_file(
         encoded = base64.b64encode(new_content.encode()).decode()
         run_in_sandbox(sb, "bash", "-c", f"echo '{encoded}' | base64 -d > '{path}'")
 
+        # Emit code.edit event for session replay
+        emit_event_fire_and_forget(
+            session_id=session_id,
+            event_type="code.edit",
+            origin="AI",
+            data={
+                "filepath": path,
+                "oldString": old_string[:5000],  # Limit size for event store
+                "newString": new_string[:5000],
+                "newContent": new_content[:100000],  # Include full content for replay
+            },
+            file_path=path,
+            checkpoint=True,  # File edits are checkpoint events for replay
+        )
+
         return {
             "success": True,
             "path": path,
@@ -446,6 +570,7 @@ def edit_file(
 def _list_files_internal(
     sandbox_id: str,
     path: str,
+    limit: int = 100,
 ) -> dict[str, Any]:
     """
     Internal implementation of list_files (called with timeout wrapper).
@@ -514,11 +639,18 @@ def _list_files_internal(
                     "size": size,
                 })
 
+    # Apply limit
+    total_count = len(files)
+    has_more = total_count > limit
+    files = files[:limit]
+
     return {
         "success": True,
         "path": normalized_path,
         "files": files,
         "count": len(files),
+        "total_count": total_count,
+        "has_more": has_more,
     }
 
 
@@ -526,6 +658,7 @@ def _list_files_internal(
 def list_files(
     config: RunnableConfig,
     path: str = "/workspace",
+    limit: int = 100,
 ) -> dict[str, Any]:
     """
     List files and directories in a path.
@@ -537,9 +670,11 @@ def list_files(
     Args:
         config: RunnableConfig with session_id in configurable
         path: Directory path to list (default: /workspace)
+        limit: Maximum number of files to return (default: 100).
+            Set higher for directories with many files.
 
     Returns:
-        Dict with list of files (name, path, type, size)
+        Dict with list of files (name, path, type, size) and has_more indicator
     """
     sandbox_id = get_sandbox_id(config)
     try:
@@ -548,6 +683,7 @@ def list_files(
             _list_files_internal,
             sandbox_id,
             path,
+            limit,
             timeout=TOOL_TIMEOUT_SECONDS,
         )
     except TimeoutError as e:
@@ -561,6 +697,7 @@ def grep_files(
     pattern: str,
     config: RunnableConfig,
     path: str = "/workspace",
+    limit: int = 100,
 ) -> dict[str, Any]:
     """
     Search for a pattern in files using regex.
@@ -569,6 +706,8 @@ def grep_files(
         pattern: Regular expression pattern to search for
         config: RunnableConfig with session_id in configurable
         path: Directory to search in (default: /workspace)
+        limit: Maximum number of matches to return (default: 100).
+            Set higher for broader searches.
 
     Returns:
         Dict with matches (file, line number, content)
@@ -585,7 +724,7 @@ def grep_files(
 
         # Escape pattern for shell
         safe_pattern = pattern.replace('"', '\\"').replace("'", "\\'")
-        cmd = f'grep -rn "{safe_pattern}" {path} 2>/dev/null | head -100'
+        cmd = f'grep -rn "{safe_pattern}" {path} 2>/dev/null | head -{limit}'
 
         # Wrap in timeout with retry to prevent hanging
         def _grep():
@@ -626,6 +765,7 @@ def grep_files(
 def glob_files(
     pattern: str,
     config: RunnableConfig,
+    limit: int = 100,
 ) -> dict[str, Any]:
     """
     Find files matching a glob pattern.
@@ -633,6 +773,8 @@ def glob_files(
     Args:
         pattern: Glob pattern (e.g., "*.ts", "**/*.py", "src/**/*.js")
         config: RunnableConfig with session_id in configurable
+        limit: Maximum number of files to return (default: 100).
+            Set higher for broader searches.
 
     Returns:
         Dict with list of matching file paths
@@ -644,7 +786,7 @@ def glob_files(
         # Convert glob to find pattern
         # Simple conversion for common patterns
         find_name = pattern.replace("**", "").replace("**/", "")
-        cmd = f'find /workspace -name "{find_name}" -type f 2>/dev/null | head -100'
+        cmd = f'find /workspace -name "{find_name}" -type f 2>/dev/null | head -{limit}'
 
         proc = run_in_sandbox(sb, "bash", "-c", cmd)
         stdout = proc.stdout.read()
@@ -670,6 +812,7 @@ def run_bash(
     config: RunnableConfig,
     working_dir: str = "/workspace",
     timeout: int = 120,
+    output_limit: int = 1000,
 ) -> dict[str, Any]:
     """
     Run a bash command in the sandbox.
@@ -686,11 +829,14 @@ def run_bash(
         config: RunnableConfig with session_id in configurable
         working_dir: Working directory (default: /workspace)
         timeout: Timeout in seconds (default: 120)
+        output_limit: Max characters for stdout/stderr (default: 1000 ≈ 200 tokens).
+            Set higher (e.g., 10000) for commands with large outputs like builds.
 
     Returns:
         Dict with stdout, stderr, exit code, and success status
     """
     sandbox_id = get_sandbox_id(config)
+    session_id = get_session_id(config)
     allowed, reason = is_command_allowed(command)
     if not allowed:
         return {"success": False, "error": reason, "stdout": "", "stderr": "", "exit_code": 1}
@@ -708,13 +854,41 @@ def run_bash(
 
         stdout, stderr, exit_code = run_with_retry(_run_bash, timeout=min(timeout, 120))
 
+        # Emit terminal.command event for session replay
+        emit_event_fire_and_forget(
+            session_id=session_id,
+            event_type="terminal.command",
+            origin="AI",
+            data={
+                "command": command,
+                "workingDir": working_dir,
+                "stdout": sanitize_output(stdout, max_size=5000),  # Truncate for event store
+                "stderr": sanitize_output(stderr, max_size=2000),
+                "exitCode": exit_code,
+                "success": exit_code == 0,
+            },
+        )
+
         return {
             "success": exit_code == 0,
-            "stdout": sanitize_output(stdout),
-            "stderr": sanitize_output(stderr),
+            "stdout": sanitize_output(stdout, max_size=output_limit),
+            "stderr": sanitize_output(stderr, max_size=output_limit),
             "exit_code": exit_code,
         }
     except TimeoutError:
+        # Emit timeout event
+        emit_event_fire_and_forget(
+            session_id=session_id,
+            event_type="terminal.command",
+            origin="AI",
+            data={
+                "command": command,
+                "workingDir": working_dir,
+                "error": f"Command timed out after {timeout}s",
+                "exitCode": -1,
+                "success": False,
+            },
+        )
         return {
             "success": False,
             "error": f"Command timed out after {timeout}s",
@@ -724,6 +898,19 @@ def run_bash(
         }
     except Exception as e:
         error_msg = str(e)
+        # Emit error event
+        emit_event_fire_and_forget(
+            session_id=session_id,
+            event_type="terminal.command",
+            origin="AI",
+            data={
+                "command": command,
+                "workingDir": working_dir,
+                "error": error_msg,
+                "exitCode": 1,
+                "success": False,
+            },
+        )
         return {
             "success": False,
             "error": error_msg,
@@ -739,6 +926,7 @@ def run_tests(
     config: RunnableConfig,
     working_dir: str = "/workspace",
     timeout: int = 180,
+    output_limit: int = 2000,
 ) -> dict[str, Any]:
     """
     Run tests and return structured results.
@@ -748,11 +936,14 @@ def run_tests(
         config: RunnableConfig with session_id in configurable
         working_dir: Working directory (default: /workspace)
         timeout: Timeout in seconds (default: 180)
+        output_limit: Max characters for stdout/stderr (default: 2000 ≈ 400 tokens).
+            Set higher (e.g., 10000) for verbose test output.
 
     Returns:
         Dict with status, output, and test count
     """
     sandbox_id = get_sandbox_id(config)
+    session_id = get_session_id(config)
     allowed, reason = is_command_allowed(test_cmd)
     if not allowed:
         return {"success": False, "error": reason, "passed": False}
@@ -803,10 +994,29 @@ def run_tests(
                 failed_count = 1
                 total_count = 1
 
+        # Emit test.run_complete event for session replay
+        emit_event_fire_and_forget(
+            session_id=session_id,
+            event_type="test.run_complete",
+            origin="AI",
+            data={
+                "command": test_cmd,
+                "workingDir": working_dir,
+                "passed": passed_count,
+                "failed": failed_count,
+                "total": total_count,
+                "exitCode": exit_code,
+                "success": exit_code == 0 and failed_count == 0,
+                "stdout": sanitize_output(stdout, max_size=5000),
+                "stderr": sanitize_output(stderr, max_size=2000),
+            },
+            checkpoint=True,  # Test runs are checkpoint events
+        )
+
         return {
             "success": exit_code == 0 and failed_count == 0,
-            "stdout": sanitize_output(stdout),
-            "stderr": sanitize_output(stderr),
+            "stdout": sanitize_output(stdout, max_size=output_limit),
+            "stderr": sanitize_output(stderr, max_size=output_limit),
             "exit_code": exit_code,
             "passed": passed_count,
             "failed": failed_count,
@@ -814,7 +1024,27 @@ def run_tests(
         }
     except Exception as e:
         error_msg = str(e)
-        if "timeout" in error_msg.lower():
+        is_timeout = "timeout" in error_msg.lower()
+
+        # Emit test failure event
+        emit_event_fire_and_forget(
+            session_id=session_id,
+            event_type="test.run_complete",
+            origin="AI",
+            data={
+                "command": test_cmd,
+                "workingDir": working_dir,
+                "passed": 0,
+                "failed": 0,
+                "total": 0,
+                "exitCode": -1 if is_timeout else 1,
+                "success": False,
+                "error": f"Command timed out after {timeout}s" if is_timeout else error_msg,
+            },
+            checkpoint=True,
+        )
+
+        if is_timeout:
             return {
                 "success": False,
                 "error": f"Command timed out after {timeout}s",
@@ -843,6 +1073,7 @@ def install_packages(
     config: RunnableConfig,
     manager: str = "npm",
     working_dir: str = "/workspace",
+    output_limit: int = 1000,
 ) -> dict[str, Any]:
     """
     Install packages using npm, pip, go, or cargo.
@@ -852,6 +1083,8 @@ def install_packages(
         config: RunnableConfig with session_id in configurable
         manager: Package manager ("npm", "pip", "go", "cargo")
         working_dir: Working directory (default: /workspace)
+        output_limit: Max characters for stdout/stderr (default: 1000 ≈ 200 tokens).
+            Set higher (e.g., 5000) for verbose install logs.
 
     Returns:
         Dict with success status and output
@@ -886,8 +1119,8 @@ def install_packages(
             "success": proc.returncode == 0,
             "package_manager": manager,
             "packages": packages,
-            "stdout": sanitize_output(proc.stdout.read()),
-            "stderr": sanitize_output(proc.stderr.read()),
+            "stdout": sanitize_output(proc.stdout.read(), max_size=output_limit),
+            "stderr": sanitize_output(proc.stderr.read(), max_size=output_limit),
         }
     except Exception as e:
         return {"success": False, "error": str(e)}

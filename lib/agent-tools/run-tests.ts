@@ -3,7 +3,7 @@
  * Allows AI to execute the test suite and get results
  */
 
-import { modalService as modal } from "@/lib/services";
+import { modalService as modal, recordTestResult, recordTestRunComplete } from "@/lib/services";
 import prisma from "@/lib/prisma";
 import type { Anthropic } from "@anthropic-ai/sdk";
 
@@ -129,33 +129,23 @@ export async function executeRunTests(
       }))
     );
 
-    // Record results to event store
-    const lastEvent = await prisma.sessionEventLog.findFirst({
-      where: { sessionId },
-      orderBy: { sequenceNumber: 'desc' },
-      select: { sequenceNumber: true },
-    });
-    let nextSeq = (lastEvent?.sequenceNumber ?? BigInt(-1)) + BigInt(1);
-
+    // Record results to event store using helper (handles origin, sequencing)
     for (const tr of result.testResults) {
-      await prisma.sessionEventLog.create({
-        data: {
-          sessionId,
-          sequenceNumber: nextSeq++,
-          timestamp: new Date(),
-          eventType: "test.result",
-          category: "test",
-          data: {
-            testName: tr.name,
-            passed: tr.passed,
-            output: tr.output || null,
-            error: tr.error || null,
-            duration: tr.duration || 0,
-          },
-          checkpoint: false,
-        },
+      await recordTestResult(sessionId, {
+        testName: tr.name,
+        passed: tr.passed,
+        output: tr.output || undefined,
+        error: tr.error || undefined,
+        duration: tr.duration || 0,
       });
     }
+
+    // Record test run completion event (aggregate)
+    await recordTestRunComplete(sessionId, {
+      passed: result.passedTests,
+      failed: result.failedTests,
+      total: result.totalTests,
+    });
 
     return {
       success: true,
