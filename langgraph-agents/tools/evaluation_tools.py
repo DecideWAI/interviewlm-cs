@@ -200,6 +200,101 @@ async def get_test_results(
 
 
 @tool
+async def get_agent_questions(
+    session_id: str,
+    config: RunnableConfig,
+) -> dict[str, Any]:
+    """
+    Fetch all clarifying questions the AI agent asked and candidate responses.
+
+    Use this to evaluate the quality of the AI collaboration - how the agent
+    asked questions before taking action, and how the candidate responded.
+
+    Args:
+        session_id: The session recording ID
+
+    Returns:
+        Dict with questions list containing questionId, questionText, options,
+        context, candidateAnswer, and responseTime
+    """
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                data,
+                timestamp,
+                event_type
+            FROM session_event_logs
+            WHERE session_id = $1
+            AND event_type IN ('agent.question_asked', 'agent.question_answered')
+            ORDER BY sequence_number ASC
+        """, session_id)
+
+        # Pair questions with answers
+        questions: list[dict] = []
+        pending_questions: dict[str, dict] = {}
+
+        for row in rows:
+            data = row["data"] if isinstance(row["data"], dict) else {}
+            event_type = row["event_type"]
+            timestamp = row["timestamp"]
+
+            if event_type == "agent.question_asked":
+                question_id = data.get("questionId", "")
+                pending_questions[question_id] = {
+                    "questionId": question_id,
+                    "questionText": data.get("questionText", ""),
+                    "options": data.get("options", []),
+                    "allowCustomAnswer": data.get("allowCustomAnswer", True),
+                    "context": data.get("context"),
+                    "askedAt": timestamp.isoformat() if timestamp else None,
+                    "candidateAnswer": None,
+                    "responseTimeMs": None,
+                }
+            elif event_type == "agent.question_answered":
+                question_id = data.get("questionId", "")
+                if question_id in pending_questions:
+                    q = pending_questions[question_id]
+                    # Determine the answer
+                    answer = data.get("selectedOption") or data.get("customAnswer")
+                    q["candidateAnswer"] = answer
+                    q["wasCustomAnswer"] = bool(data.get("customAnswer"))
+
+                    # Calculate response time
+                    if q["askedAt"] and timestamp:
+                        from datetime import datetime as dt
+                        asked_time = dt.fromisoformat(q["askedAt"].replace("Z", "+00:00"))
+                        if hasattr(asked_time, 'timestamp') and hasattr(timestamp, 'timestamp'):
+                            q["responseTimeMs"] = int((timestamp.timestamp() - asked_time.timestamp()) * 1000)
+
+                    questions.append(q)
+                    del pending_questions[question_id]
+
+        # Add any unanswered questions
+        for q in pending_questions.values():
+            q["candidateAnswer"] = None
+            q["wasCustomAnswer"] = False
+            questions.append(q)
+
+        # Summary stats
+        answered_count = sum(1 for q in questions if q["candidateAnswer"])
+        custom_answer_count = sum(1 for q in questions if q.get("wasCustomAnswer"))
+        avg_response_time = None
+        response_times = [q["responseTimeMs"] for q in questions if q["responseTimeMs"]]
+        if response_times:
+            avg_response_time = sum(response_times) / len(response_times)
+
+        return {
+            "success": True,
+            "count": len(questions),
+            "answeredCount": answered_count,
+            "customAnswerCount": custom_answer_count,
+            "avgResponseTimeMs": avg_response_time,
+            "questions": questions,
+        }
+
+
+@tool
 async def get_code_snapshots(
     session_id: str,
     config: RunnableConfig,
@@ -1147,6 +1242,7 @@ DB_QUERY_TOOLS = [
     get_claude_interactions,
     get_test_results,
     get_code_snapshots,  # Use this instead of workspace exploration (sandbox may have expired)
+    get_agent_questions,  # Clarifying questions asked by the agent and candidate responses
 ]
 
 # Analysis tools for scoring dimensions

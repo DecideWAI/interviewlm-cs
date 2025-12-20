@@ -40,7 +40,7 @@ const generateStarterCodeTemplate = (language: string, problemTitle: string) => 
  * ${problemTitle}
  *
  * Implement the solution below using TypeScript.
- * Use Claude Code AI to help you write clean, efficient code.
+ * Use InterviewLM AI to help you write clean, efficient code.
  */
 
 export function solution(input: any): any {
@@ -69,7 +69,7 @@ describe("${problemTitle}", () => {
  * ${problemTitle}
  *
  * Implement the solution below using JavaScript.
- * Use Claude Code AI to help you write clean, efficient code.
+ * Use InterviewLM AI to help you write clean, efficient code.
  */
 
 export function solution(input) {
@@ -98,7 +98,7 @@ describe("${problemTitle}", () => {
 ${problemTitle}
 
 Implement the solution below using Python.
-Use Claude Code AI to help you write clean, efficient code.
+Use InterviewLM AI to help you write clean, efficient code.
 """
 
 def solution(input_data):
@@ -134,7 +134,7 @@ def test_edge_cases():
 // ${problemTitle}
 //
 // Implement the solution below using Go.
-// Use Claude Code AI to help you write clean, efficient code.
+// Use InterviewLM AI to help you write clean, efficient code.
 
 func solution(input interface{}) interface{} {
     // Implement your solution here

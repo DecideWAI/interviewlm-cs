@@ -14,7 +14,7 @@ from datetime import datetime
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_anthropic import ChatAnthropic, convert_to_anthropic_tool
+from langchain_anthropic import convert_to_anthropic_tool
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph.message import add_messages
@@ -23,6 +23,7 @@ from typing_extensions import TypedDict
 
 from config import settings, generate_supervisor_thread_uuid
 from middleware import SummarizationMiddleware, system_prompt_middleware
+from services.model_factory import create_model_from_context, is_anthropic_model
 
 
 # =============================================================================
@@ -53,6 +54,23 @@ class SupervisorContext(TypedDict, total=False):
     """Runtime configuration."""
     session_id: str
     candidate_id: str
+    # Multi-provider LLM support
+    provider: str  # "anthropic", "openai", or "gemini"
+    model: str     # Model name override
+
+
+# =============================================================================
+# Context for Model Selection
+# =============================================================================
+
+# Module-level context for model selection middleware
+_current_context: dict = {}
+
+
+def set_model_context(context: dict) -> None:
+    """Set the current context for model selection middleware."""
+    global _current_context
+    _current_context = context or {}
 
 
 # =============================================================================
@@ -211,38 +229,35 @@ Use `complete_workflow` when all tasks are done."""
 # Middleware: Model Selection with Caching
 # =============================================================================
 
-def _create_anthropic_model(model_name: str) -> ChatAnthropic:
-    """Create Anthropic model with prompt caching configuration."""
-    default_headers = {}
-    beta_versions = []
-
-    if settings.enable_prompt_caching:
-        beta_versions = ["prompt-caching-2024-07-31"]
-        default_headers["anthropic-beta"] = ",".join(beta_versions)
-
-    return ChatAnthropic(
-        model_name=model_name,
-        max_tokens=32000,
-        betas=beta_versions,
-        default_headers=default_headers,
-        api_key=settings.anthropic_api_key,
-    )
-
-
 @wrap_model_call
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
-    """Middleware that selects the appropriate model and converts tools."""
-    model = _create_anthropic_model(settings.coding_agent_model)
+    """Middleware that selects the appropriate model and converts tools.
+
+    Supports Anthropic, OpenAI, and Gemini models based on context or defaults.
+    """
+    global _current_context
+
+    model = create_model_from_context(
+        context=_current_context,
+        default_provider=settings.coding_agent_provider,
+        default_model=settings.coding_agent_model,
+        max_tokens=32000,
+    )
 
     if request.tools:
-        converted_tools = []
-        for tool in request.tools:
-            try:
-                anthropic_tool = convert_to_anthropic_tool(tool)
-                converted_tools.append(anthropic_tool)
-            except Exception:
-                converted_tools.append(tool)
-        model = model.bind_tools(converted_tools)
+        if is_anthropic_model(model):
+            # Convert to Anthropic format for caching support
+            converted_tools = []
+            for tool in request.tools:
+                try:
+                    anthropic_tool = convert_to_anthropic_tool(tool)
+                    converted_tools.append(anthropic_tool)
+                except Exception:
+                    converted_tools.append(tool)
+            model = model.bind_tools(converted_tools)
+        else:
+            # LangChain handles format conversion for OpenAI/Gemini
+            model = model.bind_tools(request.tools)
 
     request.model = model
     return await handler(request)
@@ -250,8 +265,15 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
 
 @wrap_model_call
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
-    """Add cache_control to system prompt, tools, and messages."""
+    """Add cache_control to system prompt, tools, and messages.
+
+    Only applies to Anthropic models - skips for OpenAI/Gemini.
+    """
     if not settings.enable_prompt_caching:
+        return await handler(request)
+
+    # Only apply caching to Anthropic models
+    if not is_anthropic_model(request.model):
         return await handler(request)
 
     cache_control = {"type": "ephemeral"}
@@ -367,10 +389,15 @@ def clear_agent_cache():
 
 def create_supervisor_graph(use_checkpointing: bool = True):
     """Create the Supervisor Agent using LangGraph v1's create_agent."""
-    model = _create_anthropic_model(settings.coding_agent_model)
+    model = create_model_from_context(
+        context={},
+        default_provider=settings.coding_agent_provider,
+        default_model=settings.coding_agent_model,
+        max_tokens=32000,
+    )
 
     middleware = [
-        SummarizationMiddleware(),     # Summarize long conversations (persists to state)
+        SummarizationMiddleware(model_name="claude-haiku-4-5-20251001"),  # Summarize long conversations (persists to state)
         system_prompt_middleware,      # Remove SystemMessages from persistence
         model_selection_middleware,
         anthropic_caching_middleware,

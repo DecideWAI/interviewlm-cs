@@ -33,6 +33,59 @@ export interface ShellSession {
   writeQueue: Promise<void>;  // Queue for serializing writes to stdin
   stdoutLocked: boolean;  // Track if stdout is being read by an SSE connection
   abortController?: AbortController;  // Used to abort the current stdout reader
+  // History buffer for replay on reconnect
+  outputHistory: string;  // Rolling buffer of recent output (last ~100 lines)
+  historyMaxChars: number;  // Maximum characters to keep in history
+}
+
+// Default max history size (~100 lines of terminal output)
+const DEFAULT_HISTORY_MAX_CHARS = 10000;
+
+// Separate history storage - persists even when shell sessions are recreated
+// This ensures history survives reconnections and session recreation
+const terminalHistoryBuffer = new Map<string, string>();
+
+/**
+ * Append text to a session's output history buffer
+ * Stored separately from ShellSession to persist across session recreation
+ */
+export function appendToShellHistory(sessionId: string, text: string): void {
+  // Get current history or start fresh
+  let history = terminalHistoryBuffer.get(sessionId) || "";
+
+  // Append new text
+  history += text;
+
+  // Trim if exceeds max (keep the last DEFAULT_HISTORY_MAX_CHARS characters)
+  if (history.length > DEFAULT_HISTORY_MAX_CHARS) {
+    // Find a good break point (newline) to avoid cutting mid-line
+    const excessChars = history.length - DEFAULT_HISTORY_MAX_CHARS;
+    const breakPoint = history.indexOf('\n', excessChars);
+    if (breakPoint > 0) {
+      history = history.substring(breakPoint + 1);
+    } else {
+      history = history.substring(excessChars);
+    }
+  }
+
+  terminalHistoryBuffer.set(sessionId, history);
+}
+
+/**
+ * Get the output history for a session
+ * Used to replay recent output when a client reconnects
+ */
+export function getShellHistory(sessionId: string): string | null {
+  const history = terminalHistoryBuffer.get(sessionId);
+  if (!history || history.length === 0) return null;
+  return history;
+}
+
+/**
+ * Clear history for a session (e.g., when session ends)
+ */
+export function clearShellHistory(sessionId: string): void {
+  terminalHistoryBuffer.delete(sessionId);
 }
 
 // Active shell sessions (one per interview session)
@@ -163,6 +216,8 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
     writeQueue: Promise.resolve(),  // Initialize empty queue
     stdoutLocked: false,  // Not being read yet
     abortController: undefined,  // Will be set when reading starts
+    outputHistory: "",  // History buffer starts empty
+    historyMaxChars: DEFAULT_HISTORY_MAX_CHARS,  // ~100 lines of terminal output
   };
 
   shellSessions.set(sessionId, session);

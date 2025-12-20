@@ -18,6 +18,7 @@ from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 
 from config import settings
+from services.model_factory import is_anthropic_model
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +28,26 @@ DEFAULT_CACHE_CONTROL = {"type": "ephemeral"}
 
 
 def _is_anthropic_model(model: Any) -> bool:
-    """Check if the model is an Anthropic model."""
+    """Check if the model is an Anthropic model.
+
+    Uses the centralized check from model_factory, with fallback to type inspection
+    for bound models or edge cases.
+    """
+    # First try the centralized check
+    if is_anthropic_model(model):
+        return True
+
+    # Fallback: check model type string (handles bound models)
     model_type = str(type(model))
-    is_anthropic = "anthropic" in model_type.lower() or "claude" in model_type.lower()
+    if "anthropic" in model_type.lower() or "claude" in model_type.lower():
+        return True
 
-    if not is_anthropic:
-        # Check model_name attribute (handles bound models)
-        model_name = getattr(model, "model_name", None) or getattr(model, "model", None)
-        if model_name:
-            is_anthropic = "claude" in str(model_name).lower()
+    # Fallback: check model_name attribute
+    model_name = getattr(model, "model_name", None) or getattr(model, "model", None)
+    if model_name and "claude" in str(model_name).lower():
+        return True
 
-    return is_anthropic
+    return False
 
 
 @wrap_model_call

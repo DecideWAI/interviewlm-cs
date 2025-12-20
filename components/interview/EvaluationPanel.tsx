@@ -243,9 +243,7 @@ export function EvaluationPanel({
           <div className="space-y-2">
             {criteriaConfig.map(({ key, name, icon }) => {
               const criterion =
-                evaluationResult.criteria[
-                  key as keyof typeof evaluationResult.criteria
-                ];
+                (evaluationResult.criteria as any)[key] as { score: number; maxScore: number; met: boolean; feedback: string } | undefined;
 
               // Skip if criterion doesn't exist in the result
               if (!criterion) return null;

@@ -147,7 +147,7 @@ export const POST = withErrorHandling(
       candidateId: session.user.id,
       organizationId: candidate.assessment.organizationId,
       assessmentId: candidate.assessmentId,
-      assessmentType: question.assessmentType,
+      assessmentType: candidate.assessment.assessmentType,
     });
 
     logger.info('[EvaluateProgression] Backend assignment', {
@@ -166,7 +166,7 @@ export const POST = withErrorHandling(
           sessionId: sessionRecording?.id ?? candidateId,
           candidateId,
           questionId,
-          assessmentType: question.assessmentType,
+          assessmentType: candidate.assessment.assessmentType,
           questionTitle: question.title,
           questionDescription: question.description,
           questionDifficulty: question.difficulty,
@@ -183,7 +183,7 @@ export const POST = withErrorHandling(
           sessionId: sessionRecording?.id ?? candidateId,
           candidateId,
           questionId,
-          assessmentType: question.assessmentType,
+          assessmentType: candidate.assessment.assessmentType,
           questionTitle: question.title,
           questionDescription: question.description,
           questionDifficulty: question.difficulty,
@@ -196,11 +196,10 @@ export const POST = withErrorHandling(
         result = await agent.evaluate();
       }
     } catch (error) {
-      logger.error('[EvaluateProgression] Evaluation failed', {
+      logger.error('[EvaluateProgression] Evaluation failed', error as Error, {
         candidateId,
         questionId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      } as any);
 
       // Return a fallback result based on test results
       const testPassRate =
@@ -211,9 +210,9 @@ export const POST = withErrorHandling(
       result = {
         passed: testPassRate >= 70,
         overallScore: testPassRate,
-        assessmentType: question.assessmentType,
+        assessmentType: candidate.assessment.assessmentType,
         criteria:
-          question.assessmentType === 'SYSTEM_DESIGN'
+          candidate.assessment.assessmentType === 'SYSTEM_DESIGN'
             ? {
                 designClarity: { score: 0, maxScore: 30, met: false, feedback: 'Evaluation error' },
                 tradeoffAnalysis: { score: 0, maxScore: 25, met: false, feedback: 'Evaluation error' },
@@ -242,9 +241,18 @@ export const POST = withErrorHandling(
       };
     }
 
+    // Save evaluation result to the question for persistence across page reloads
+    await prisma.generatedQuestion.update({
+      where: { id: questionId },
+      data: {
+        evaluationResult: result as any, // Store the full evaluation result
+        score: result.overallScore, // Also update the score field for quick access
+      },
+    });
+
     // Record evaluation event (only if session recording exists)
     if (sessionRecording) {
-      await recordEvent(sessionRecording.id, 'evaluation.fast_progression', 'SYSTEM', {
+      await recordEvent(sessionRecording.id, 'evaluation.fast_progression' as any, 'SYSTEM', {
         questionId,
         passed: result.passed,
         overallScore: result.overallScore,

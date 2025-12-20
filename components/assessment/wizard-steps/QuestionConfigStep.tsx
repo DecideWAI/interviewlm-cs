@@ -399,7 +399,7 @@ export function QuestionConfigStep({
               }
             />
             <div className="flex-1">
-              <Label className="cursor-pointer">Enable Claude Code AI Assistant</Label>
+              <Label className="cursor-pointer">Enable InterviewLM AI Assistant</Label>
               <p className="text-xs text-text-tertiary mt-1">
                 Allow candidates to use AI coding assistance during the assessment
               </p>

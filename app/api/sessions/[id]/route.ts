@@ -245,7 +245,7 @@ function buildTimeline(events: SessionEvent[]) {
     // Transform data for code_snapshot events
     // The replay page expects 'fullContent' but DB stores 'content'
     let data = event.data;
-    if (event.eventType === "code.snapshot" || event.eventType === "code_snapshot") {
+    if (event.eventType === "code.snapshot" || (event.eventType as string) === "code_snapshot") {
       const eventData = event.data as Record<string, unknown>;
       if (eventData.content && !eventData.fullContent) {
         data = {

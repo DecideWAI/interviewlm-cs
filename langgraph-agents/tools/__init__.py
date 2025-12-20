@@ -12,12 +12,19 @@ from .coding_tools import (
     CODING_TOOLS,
 )
 
+from .question_tools import (
+    ask_question,
+    QUESTION_TOOLS,
+)
+
 from .evaluation_tools import (
     analyze_code_quality,
     analyze_problem_solving,
     analyze_ai_collaboration,
     analyze_communication,
+    get_agent_questions,
     EVALUATION_TOOLS,
+    DB_QUERY_TOOLS,
 )
 
 __all__ = [
@@ -31,10 +38,15 @@ __all__ = [
     "run_bash",
     "run_tests",
     "CODING_TOOLS",
+    # Question tools
+    "ask_question",
+    "QUESTION_TOOLS",
     # Evaluation tools
     "analyze_code_quality",
     "analyze_problem_solving",
     "analyze_ai_collaboration",
     "analyze_communication",
+    "get_agent_questions",
     "EVALUATION_TOOLS",
+    "DB_QUERY_TOOLS",
 ]

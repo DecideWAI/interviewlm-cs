@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from "react";
-import { Send, Bot, User, Copy, Check, AlertCircle, Wifi, WifiOff, Wrench, CheckCircle2, XCircle, RefreshCw, Loader2 } from "lucide-react";
+import { Send, Bot, User, Copy, Check, AlertCircle, Wifi, WifiOff, Wrench, CheckCircle2, XCircle, RefreshCw, Loader2, MessageCircleQuestion } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { AgentQuestion } from "@/components/interview/AgentQuestion";
 import {
   useChatMessageQueue,
   type RecoveryState,
@@ -66,6 +67,13 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     toolName: string;
     toolId: string;
     status: "running" | "complete" | "error";
+  } | null>(null);
+  // State for agent clarification questions (question-first approach)
+  const [pendingQuestion, setPendingQuestion] = useState<{
+    questionId: string;
+    questionText: string;
+    options: string[];
+    allowCustomAnswer: boolean;
   } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationHistory = useRef<any[]>([]);
@@ -407,6 +415,16 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                       performance: data.output.performance,
                     });
                   }
+
+                  // Handle ask_question tool - render interactive question UI
+                  if (data.toolName === "ask_question" && !data.isError && data.input) {
+                    setPendingQuestion({
+                      questionId: data.output?.questionId || `q_${Date.now()}`,
+                      questionText: data.input.question_text,
+                      options: data.input.options || [],
+                      allowCustomAnswer: data.input.allow_custom_answer !== false,
+                    });
+                  }
                   break;
 
                 case "iteration":
@@ -487,7 +505,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
         errorMessage.includes('503');
 
       if (isOverloaded) {
-        setError("Claude AI is experiencing high demand. The system will automatically retry. Please wait a moment...");
+        setError("InterviewLM AI is experiencing high demand. The system will automatically retry. Please wait a moment...");
       } else {
         setError("Failed to send message. Please try again.");
       }
@@ -512,6 +530,36 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     }
   };
 
+  // Handle answer to agent clarification question
+  const handleQuestionAnswer = async (answer: { selectedOption?: string; customAnswer?: string }) => {
+    if (!pendingQuestion) return;
+
+    const questionId = pendingQuestion.questionId;
+    const responseText = answer.selectedOption || answer.customAnswer || "";
+
+    // Record the answer to the database
+    try {
+      await fetch(`/api/interview/${sessionId}/chat/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          questionId,
+          selectedOption: answer.selectedOption,
+          customAnswer: answer.customAnswer,
+        }),
+      });
+    } catch (err) {
+      console.error("[AIChat] Failed to record question answer:", err);
+    }
+
+    // Clear the pending question
+    setPendingQuestion(null);
+
+    // Send the answer as a message to continue the conversation
+    sendMessageInternal(responseText);
+  };
+
   // No cleanup needed for fetch-based streaming
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -534,7 +582,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Bot className="h-5 w-5 text-primary" />
-            <h3 className="font-semibold text-text-primary">Claude Code AI</h3>
+            <h3 className="font-semibold text-text-primary">InterviewLM AI</h3>
           </div>
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-1 text-xs text-text-tertiary bg-primary/10 px-2 py-1 rounded">
@@ -599,7 +647,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
           <div className="h-full flex items-center justify-center">
             <div className="text-center max-w-sm">
               <Bot className="h-12 w-12 text-text-tertiary mx-auto mb-4" />
-              <p className="text-text-secondary mb-2">Start a conversation with Claude</p>
+              <p className="text-text-secondary mb-2">Start a conversation with InterviewLM AI</p>
               <p className="text-sm text-text-tertiary">
                 Try: "Read solution.js and fix any bugs" or "Run the tests and show results"
               </p>
@@ -727,6 +775,27 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
               </div>
             )}
 
+            {/* Agent clarification question (question-first approach) */}
+            {pendingQuestion && (
+              <div className="flex gap-3">
+                <div className="flex-shrink-0">
+                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Bot className="h-5 w-5 text-primary" />
+                  </div>
+                </div>
+                <div className="max-w-[85%]">
+                  <AgentQuestion
+                    questionId={pendingQuestion.questionId}
+                    questionText={pendingQuestion.questionText}
+                    options={pendingQuestion.options}
+                    allowCustomAnswer={pendingQuestion.allowCustomAnswer}
+                    onAnswer={handleQuestionAnswer}
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* Loading indicator */}
             {isLoading && !currentStreamingMessage && !currentToolUse && (
               <div className="flex gap-3">
@@ -757,7 +826,7 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Ask Claude for help..."
+            placeholder="Ask AI for help..."
             className="resize-none"
             rows={3}
             disabled={isLoading}

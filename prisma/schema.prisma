@@ -351,6 +351,9 @@ model GeneratedQuestion {
   // NEW: LLM difficulty assessment for fair scoring
   difficultyAssessment Json? @map("difficulty_assessment")
 
+  // Fast evaluation result - persisted for page reload recovery
+  evaluationResult Json? @map("evaluation_result")
+
   // Infinite question generation fields
   fingerprint      String? // Hash for deduplication
   reuseCount       Int     @default(0) @map("reuse_count")

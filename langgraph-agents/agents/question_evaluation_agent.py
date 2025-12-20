@@ -23,11 +23,13 @@ from datetime import datetime
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_anthropic import ChatAnthropic, convert_to_anthropic_tool
+from langchain_anthropic import convert_to_anthropic_tool
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 from typing_extensions import TypedDict
+
+from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
 
 from tools.coding_tools import (
     read_file,
@@ -204,42 +206,47 @@ Be honest, constructive, and fair. Be critical but encouraging."""
 
 
 # =============================================================================
-# Middleware: Model Selection with Caching
+# Middleware: Model Selection with Multi-Provider Support
 # =============================================================================
 
-def _create_anthropic_model(model_name: str) -> ChatAnthropic:
-    """Create Anthropic model with prompt caching configuration."""
-    default_headers = {}
-    beta_versions = []
+# Store context for middleware access
+_current_context: dict = {}
 
-    if settings.enable_prompt_caching:
-        beta_versions = ["prompt-caching-2024-07-31"]
-        default_headers["anthropic-beta"] = ",".join(beta_versions)
 
-    return ChatAnthropic(
-        model_name=model_name,
-        max_tokens=32000,
-        temperature=0.3,
-        betas=beta_versions,
-        default_headers=default_headers,
-        api_key=settings.anthropic_api_key,
-    )
+def set_model_context(context: dict) -> None:
+    """Set the current context for model selection middleware."""
+    global _current_context
+    _current_context = context or {}
 
 
 @wrap_model_call
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
-    """Middleware that selects the appropriate model and converts tools."""
-    model = _create_anthropic_model(settings.evaluation_agent_model)
+    """Middleware that selects the appropriate model and converts tools.
+
+    Supports multiple LLM providers with per-request override via context.
+    """
+    global _current_context
+
+    model = create_model_from_context(
+        context=_current_context,
+        default_provider=settings.evaluation_agent_provider,
+        default_model=settings.evaluation_agent_model,
+        temperature=0.3,
+        max_tokens=32000,
+    )
 
     if request.tools:
-        converted_tools = []
-        for tool in request.tools:
-            try:
-                anthropic_tool = convert_to_anthropic_tool(tool)
-                converted_tools.append(anthropic_tool)
-            except Exception:
-                converted_tools.append(tool)
-        model = model.bind_tools(converted_tools)
+        if is_anthropic_model(model):
+            converted_tools = []
+            for tool in request.tools:
+                try:
+                    anthropic_tool = convert_to_anthropic_tool(tool)
+                    converted_tools.append(anthropic_tool)
+                except Exception:
+                    converted_tools.append(tool)
+            model = model.bind_tools(converted_tools)
+        else:
+            model = model.bind_tools(request.tools)
 
     request.model = model
     return await handler(request)
@@ -387,10 +394,16 @@ def create_question_evaluation_agent_graph(
     Returns:
         Compiled agent graph
     """
-    model = _create_anthropic_model(settings.evaluation_agent_model)
+    # Create default model (will be replaced by middleware based on context)
+    model = create_chat_model(
+        provider=settings.evaluation_agent_provider,
+        model=settings.evaluation_agent_model,
+        temperature=0.3,
+        max_tokens=32000,
+    )
 
     middleware = [
-        SummarizationMiddleware(),     # Summarize long conversations (persists to state)
+        SummarizationMiddleware(model_name="claude-haiku-4-5-20251001"),  # Summarize long conversations (persists to state)
         system_prompt_middleware,      # Remove SystemMessages from persistence
         model_selection_middleware,
         anthropic_caching_middleware,

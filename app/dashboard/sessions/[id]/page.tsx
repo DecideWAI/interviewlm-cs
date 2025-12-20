@@ -46,6 +46,7 @@ interface TimelineEvent {
   category: string;
   data: any;
   checkpoint?: boolean;
+  questionIndex?: number;
 }
 
 interface EvaluationData {

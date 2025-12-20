@@ -13,10 +13,10 @@ import json
 import random
 from typing import Any
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
 from config import settings
+from services.model_factory import create_chat_model
 from models.state import QuestionGenerationAgentState
 from services.question_generation.irt_engine import (
     IRTDifficultyEngine,
@@ -34,21 +34,21 @@ from services.database import get_question_generation_database
 
 
 # =============================================================================
-# Model Creation (follows coding_agent.py pattern)
+# Model Creation with Multi-Provider Support
 # =============================================================================
 
-def _create_model(use_fast: bool = True) -> ChatAnthropic:
+def _create_model(use_fast: bool = True):
     """
-    Create Anthropic model with appropriate configuration.
+    Create LLM model with appropriate configuration for question generation.
 
-    Uses ChatAnthropic from langchain_anthropic which automatically
-    traces all calls to LangSmith.
+    Supports multiple providers (Anthropic, OpenAI, Gemini) based on settings.
+    Uses model_factory for unified model creation.
 
     Args:
-        use_fast: Use Haiku (fast, ~13s) vs Sonnet (better reasoning)
+        use_fast: Use fast tier (Haiku/GPT-4o-mini/Gemini-Flash) vs quality tier
 
     Returns:
-        Configured ChatAnthropic model
+        Configured chat model
     """
     model_name = (
         settings.question_generation_model_fast
@@ -56,21 +56,12 @@ def _create_model(use_fast: bool = True) -> ChatAnthropic:
         else settings.question_generation_model_adaptive
     )
 
-    default_headers = {}
-    beta_versions = []
-
-    if settings.enable_prompt_caching:
-        beta_versions = ["prompt-caching-2024-07-31"]
-        default_headers["anthropic-beta"] = ",".join(beta_versions)
-
-    return ChatAnthropic(
-        model_name=model_name,
-        max_tokens=32000,
+    return create_chat_model(
+        provider=settings.question_generation_provider,
+        model=model_name,
         temperature=0.7,  # Some creativity for unique questions
-        betas=beta_versions,
+        max_tokens=32000,
         streaming=False,  # Question generation doesn't need streaming
-        default_headers=default_headers,
-        api_key=settings.anthropic_api_key,
     )
 
 

@@ -13,10 +13,10 @@ Ported from: lib/services/smart-question-service.ts
 import random
 from typing import Literal
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 
 from config import settings
+from services.model_factory import create_chat_model
 from services.database import get_question_generation_database
 from .prompts import build_variation_prompt
 
@@ -193,12 +193,12 @@ class SmartQuestionService:
             variation_type=variation_type,
         )
 
-        # Call LLM
-        model = ChatAnthropic(
-            model_name=settings.question_generation_model_fast,
+        # Call LLM (uses configured provider, defaults to Anthropic)
+        model = create_chat_model(
+            provider=settings.question_generation_provider,
+            model=settings.question_generation_model_fast,
             max_tokens=32000,
             temperature=0.8,  # Higher temperature for variation
-            api_key=settings.anthropic_api_key,
         )
 
         try:

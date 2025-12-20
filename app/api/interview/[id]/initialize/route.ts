@@ -582,6 +582,8 @@ module.exports = longestPalindrome;`,
         sessionId: sessionRecording.id,
         trackedFilesCount: trackedFiles.length,
         timeRemaining,
+        hasEvaluationResult: !!question.evaluationResult,
+        evaluationScore: (question.evaluationResult as any)?.overallScore,
       });
 
       // Return cached data immediately - no Modal API calls!
@@ -597,6 +599,7 @@ module.exports = longestPalindrome;`,
           language: question.language.toLowerCase(),
           starterCode: question.starterCode,
           testCases: transformedTestCases,
+          evaluationResult: question.evaluationResult, // Restore evaluation state on reload
         },
         sandbox: {
           volumeId,
@@ -779,6 +782,7 @@ module.exports = longestPalindrome;`,
       language: question.language.toLowerCase(),
       starterCode: question.starterCode,
       testCases: transformedTestCases,
+      evaluationResult: question.evaluationResult, // Restore evaluation state on reload
     },
     sandbox: {
       volumeId,

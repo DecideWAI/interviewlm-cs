@@ -66,6 +66,9 @@ export type EventType =
   | "chat.tool_start"
   | "chat.tool_result"
   | "chat.reset"
+  // Agent clarification questions (for question-first approach)
+  | "agent.question_asked" // Agent presented options to candidate
+  | "agent.question_answered" // Candidate responded to question
   // Terminal
   | "terminal.command"
   | "terminal.output"
@@ -181,6 +184,23 @@ export interface ChatToolResultData {
 export interface ChatResetData {
   reason: "question_transition" | "manual" | "error";
   questionIndex?: number;
+}
+
+// Agent clarification question events (for question-first approach)
+export interface AgentQuestionAskedData {
+  questionId: string;
+  questionText: string;
+  options: string[];
+  allowCustomAnswer: boolean;
+  context?: string; // Internal context for evaluation (not shown to candidate)
+}
+
+export interface AgentQuestionAnsweredData {
+  questionId: string;
+  selectedOption?: string; // If candidate chose a predefined option
+  customAnswer?: string; // If candidate provided a custom answer
+  responseTimestamp: number;
+  responseTimeMs?: number; // How long it took to respond
 }
 
 // Terminal events

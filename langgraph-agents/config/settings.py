@@ -19,6 +19,41 @@ class Settings(BaseSettings):
 
     # API Keys
     anthropic_api_key: str = Field(..., env="ANTHROPIC_API_KEY")
+    openai_api_key: str | None = Field(default=None, env="OPENAI_API_KEY")
+    google_api_key: str | None = Field(default=None, env="GOOGLE_API_KEY")
+
+    # LLM Provider Configuration (per-agent defaults, can be overridden per-request)
+    # Valid values: "anthropic", "openai", "gemini"
+    coding_agent_provider: str = Field(
+        default="anthropic",
+        env="CODING_AGENT_PROVIDER",
+        description="Default LLM provider for coding agent"
+    )
+    evaluation_agent_provider: str = Field(
+        default="anthropic",
+        env="EVALUATION_AGENT_PROVIDER",
+        description="Default LLM provider for evaluation agent"
+    )
+    question_generation_provider: str = Field(
+        default="anthropic",
+        env="QUESTION_GENERATION_PROVIDER",
+        description="Default LLM provider for question generation"
+    )
+    fast_progression_provider: str = Field(
+        default="anthropic",
+        env="FAST_PROGRESSION_PROVIDER",
+        description="Default LLM provider for fast progression agent"
+    )
+    comprehensive_evaluation_provider: str = Field(
+        default="anthropic",
+        env="COMPREHENSIVE_EVALUATION_PROVIDER",
+        description="Default LLM provider for comprehensive evaluation"
+    )
+    summarization_provider: str = Field(
+        default="anthropic",
+        env="SUMMARIZATION_PROVIDER",
+        description="Default LLM provider for conversation summarization"
+    )
 
     # Model Configuration
     coding_agent_model: str = Field(

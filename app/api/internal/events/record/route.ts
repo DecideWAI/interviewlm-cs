@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
     const eventId = await eventStore.emit({
       sessionId,
       eventType: type as any, // Type assertion needed as Python agents may use custom types
-      category,
+      category: category as any, // Type assertion for dynamic category from event type
       origin: origin as EventOrigin,
       data,
       questionIndex,

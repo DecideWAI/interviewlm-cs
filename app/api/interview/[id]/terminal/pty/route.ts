@@ -7,6 +7,8 @@ import {
   getShellSession,
   prepareShellSessionForReading,
   releaseShellSessionReader,
+  getShellHistory,
+  appendToShellHistory,
 } from "@/lib/services/modal";
 
 /**
@@ -131,6 +133,16 @@ export async function GET(
         }, 10000);
 
         try {
+          // Send history replay first (if available from previous output)
+          // This allows clients to see terminal history on reconnect
+          const history = getShellHistory(id);
+          if (history && history.length > 0) {
+            console.log(`[PTY] Sending ${history.length} chars of history for ${id}`);
+            safeEnqueue(
+              encoder.encode(`data: ${JSON.stringify({ history })}\n\n`)
+            );
+          }
+
           // Send connection established event
           safeEnqueue(
             encoder.encode(`data: ${JSON.stringify({ connected: true })}\n\n`)
@@ -143,37 +155,77 @@ export async function GET(
           // Check if stdout supports async iteration
           if (Symbol.asyncIterator in stdout) {
             console.log(`[PTY] Reading stdout with async iterator for ${id}`);
+
+            // Use a persistent TextDecoder to handle incomplete UTF-8 sequences across chunks
+            // - fatal: false - replace invalid bytes with replacement character instead of throwing
+            // - ignoreBOM - don't interpret BOM as output
+            const textDecoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
+
             for await (const chunk of stdout) {
-              if (isClosed) break;
+              // Check isClosed BEFORE processing to avoid writing after abort
+              if (isClosed) {
+                console.log(`[PTY] Skipping chunk - connection closed for ${id}`);
+                break;
+              }
 
               // chunk could be Uint8Array or string
               let text: string;
               if (chunk instanceof Uint8Array) {
-                text = new TextDecoder().decode(chunk);
+                // Use stream mode (don't flush) for intermediate chunks
+                // This handles multi-byte UTF-8 chars split across chunks
+                text = textDecoder.decode(chunk, { stream: true });
               } else if (typeof chunk === "string") {
                 text = chunk;
               } else {
                 text = String(chunk);
               }
 
-              // Send output as-is - PTY already sends proper line endings
-              safeEnqueue(
-                encoder.encode(`data: ${JSON.stringify({ output: text })}\n\n`)
-              );
+              // Only send non-empty output
+              if (text.length > 0) {
+                // Double-check isClosed after decoding
+                if (isClosed) break;
+
+                // Send to client
+                safeEnqueue(
+                  encoder.encode(`data: ${JSON.stringify({ output: text })}\n\n`)
+                );
+
+                // Save to history for replay on reconnect
+                appendToShellHistory(id, text);
+              }
+            }
+
+            // Flush any remaining bytes in the decoder
+            if (!isClosed) {
+              const remaining = textDecoder.decode(); // Final flush
+              if (remaining.length > 0) {
+                safeEnqueue(
+                  encoder.encode(`data: ${JSON.stringify({ output: remaining })}\n\n`)
+                );
+                // Save to history
+                appendToShellHistory(id, remaining);
+              }
             }
           } else {
             // Fallback: poll readText() periodically
             console.log(`[PTY] Falling back to polling for ${id}`);
+            const textDecoder = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
+
             while (!isClosed) {
               try {
                 // Use readBytes with a small limit to get incremental data
                 // This may not work well depending on Modal SDK behavior
                 const bytes = await stdout.readBytes(4096);
                 if (bytes.length > 0) {
-                  const text = new TextDecoder().decode(bytes);
-                  safeEnqueue(
-                    encoder.encode(`data: ${JSON.stringify({ output: text })}\n\n`)
-                  );
+                  const text = textDecoder.decode(bytes, { stream: true });
+                  if (text.length > 0 && !isClosed) {
+                    // Send to client
+                    safeEnqueue(
+                      encoder.encode(`data: ${JSON.stringify({ output: text })}\n\n`)
+                    );
+                    // Save to history for replay on reconnect
+                    appendToShellHistory(id, text);
+                  }
                 }
               } catch (error) {
                 // Stream ended or error

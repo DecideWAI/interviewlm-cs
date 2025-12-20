@@ -202,13 +202,21 @@ except ImportError:
     ASYNCPG_AVAILABLE = False
     asyncpg = None
 
-# Redis for distributed locking
+# Redis for distributed locking (sync - for backward compat)
 try:
     import redis
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
     redis = None
+
+# Async Redis for non-blocking operations in ASGI context
+try:
+    import redis.asyncio as redis_async
+    REDIS_ASYNC_AVAILABLE = True
+except ImportError:
+    REDIS_ASYNC_AVAILABLE = False
+    redis_async = None
 
 # =============================================================================
 # Thread Pool for Timeouts
@@ -411,7 +419,8 @@ class SandboxManager:
     _write_queues: dict[str, asyncio.Queue] = {}  # session_id -> queue
     _app: Optional[Any] = None
     _image_cache: dict[str, Any] = {}  # language -> image
-    _redis_client: Optional[Any] = None
+    _redis_client: Optional[Any] = None  # Sync Redis (deprecated)
+    _redis_async_client: Optional[Any] = None  # Async Redis for non-blocking ops
 
     # =========================================================================
     # Redis Distributed Locking
@@ -435,51 +444,98 @@ class SandboxManager:
         return cls._redis_client
 
     @classmethod
+    async def _get_redis_async(cls) -> Optional[Any]:
+        """
+        Get async Redis client for distributed locking (lazy singleton).
+
+        Uses redis.asyncio for non-blocking operations in ASGI context.
+        Follows the pattern established in services/cache.py.
+        """
+        if not REDIS_ASYNC_AVAILABLE:
+            return None
+
+        if cls._redis_async_client is None:
+            redis_url = getattr(settings, 'redis_url', None) or os.environ.get('REDIS_URL')
+            if redis_url:
+                try:
+                    cls._redis_async_client = redis_async.from_url(
+                        redis_url,
+                        encoding="utf-8",
+                        decode_responses=True,
+                    )
+                    # Test connection asynchronously
+                    await cls._redis_async_client.ping()
+                    logger.info("[SandboxManager] Async Redis connected for distributed locking")
+                except Exception as e:
+                    logger.warning(f"[SandboxManager] Failed to connect to async Redis: {e}")
+                    cls._redis_async_client = None
+
+        return cls._redis_async_client
+
+    @classmethod
+    def _generate_lock_value(cls) -> str:
+        """
+        Generate a unique lock value for safe release.
+
+        The lock value allows us to verify ownership before releasing,
+        preventing accidental release of locks held by other processes.
+        """
+        import uuid
+        return f"sandbox_lock:{uuid.uuid4().hex[:12]}:{int(time.time())}"
+
+    @classmethod
     async def _acquire_lock_or_wait_for_sandbox_async(
         cls,
         session_id: str,
         timeout: int = 120,
         wait_timeout: int = 120,
         retry_interval: float = 1.0,
-    ) -> tuple[Optional[Any], bool, Optional[Any]]:
+    ) -> tuple[Optional[str], bool, Optional[Any]]:
         """
         Acquire distributed lock OR wait for sandbox to be created by another process.
 
         This implements the wait-and-check pattern:
-        1. Try to acquire lock
+        1. Try to acquire lock using SET NX (atomic, non-blocking)
         2. If lock held by another process, check if sandbox exists in DB
         3. If sandbox exists and is alive, return it
         4. If not, wait and retry
         5. Continue until lock acquired OR sandbox appears OR timeout
 
+        Uses SET NX pattern (same as cache.py) for fully async, non-blocking operation.
+
         Returns:
-            Tuple of (lock, acquired, existing_sandbox):
-            - (lock, True, None): Lock acquired successfully, proceed to create
+            Tuple of (lock_value, acquired, existing_sandbox):
+            - (lock_value, True, None): Lock acquired successfully, proceed to create
             - (None, True, None): No Redis available, proceed without lock (graceful degradation)
             - (None, False, sandbox): Found existing sandbox created by another process
-            - (None, False, None): Timeout - no lock and no sandbox (should not happen in normal operation)
+            - (None, False, None): Timeout - no lock and no sandbox
         """
-        redis_client = cls._get_redis()
+        redis_client = await cls._get_redis_async()
         if not redis_client:
             # No Redis = graceful degradation, proceed without lock
             logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
             return (None, True, None)
 
+        # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
+        lock_key = f"lock:sandbox:{session_id}"
+        lock_value = cls._generate_lock_value()
         start_time = time.time()
         check_count = 0
 
         while (time.time() - start_time) < wait_timeout:
             check_count += 1
             try:
-                # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
-                lock = redis_client.lock(
-                    f"lock:sandbox:{session_id}",
-                    timeout=timeout,
-                    blocking=False,  # Non-blocking so we can implement our own retry
+                # SET NX with TTL - atomic lock acquisition (non-blocking)
+                result = await redis_client.set(
+                    lock_key,
+                    lock_value,
+                    nx=True,  # Only set if not exists
+                    ex=timeout,  # Expiry in seconds
                 )
-                if lock.acquire(blocking=False):
-                    logger.info(f"[SandboxManager] Acquired lock for lock:sandbox:{session_id}")
-                    return (lock, True, None)
+
+                if result:  # Lock acquired (result is True or "OK")
+                    logger.info(f"[SandboxManager] Acquired lock for {lock_key}")
+                    return (lock_value, True, None)
 
                 # Lock held by another process - check if sandbox was created
                 logger.debug(f"[SandboxManager] Lock held by another process for {session_id}, checking for sandbox... (attempt {check_count})")
@@ -503,7 +559,7 @@ class SandboxManager:
                 except Exception as e:
                     logger.debug(f"[SandboxManager] Error checking DB while waiting: {e}")
 
-                # Wait before retry (async sleep)
+                # Wait before retry (async sleep - non-blocking)
                 await asyncio.sleep(retry_interval)
 
             except Exception as e:
@@ -561,35 +617,42 @@ class SandboxManager:
         timeout: int = 120,
         wait_timeout: int = 60,
         retry_interval: float = 0.5,
-    ) -> tuple[Optional[Any], bool]:
+    ) -> tuple[Optional[str], bool]:
         """
-        Acquire distributed lock for sandbox creation with retry (async version).
+        Acquire distributed lock for sandbox creation with retry (fully async).
+
+        Uses SET NX pattern for non-blocking operation in ASGI context.
 
         Returns:
-            Tuple of (lock, acquired):
-            - (lock, True): Lock acquired successfully
+            Tuple of (lock_value, acquired):
+            - (lock_value, True): Lock acquired successfully (use lock_value for release)
             - (None, True): No Redis available, proceed without lock (graceful degradation)
             - (None, False): Lock acquisition failed after retries
         """
-        redis_client = cls._get_redis()
+        redis_client = await cls._get_redis_async()
         if not redis_client:
             # No Redis = graceful degradation, proceed without lock
             logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
             return (None, True)
 
+        # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
+        lock_key = f"lock:sandbox:{session_id}"
+        lock_value = cls._generate_lock_value()
         start_time = time.time()
 
         while (time.time() - start_time) < wait_timeout:
             try:
-                # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
-                lock = redis_client.lock(
-                    f"lock:sandbox:{session_id}",
-                    timeout=timeout,
-                    blocking=False,  # Non-blocking so we can implement our own retry
+                # SET NX with TTL - atomic lock acquisition (non-blocking)
+                result = await redis_client.set(
+                    lock_key,
+                    lock_value,
+                    nx=True,  # Only set if not exists
+                    ex=timeout,  # Expiry in seconds
                 )
-                if lock.acquire(blocking=False):
-                    logger.info(f"[SandboxManager] Acquired lock for lock:sandbox:{session_id}")
-                    return (lock, True)
+
+                if result:  # Lock acquired (result is True or "OK")
+                    logger.info(f"[SandboxManager] Acquired lock for {lock_key}")
+                    return (lock_value, True)
 
                 # Lock held by another process, wait and retry
                 logger.debug(f"[SandboxManager] Lock held by another process for {session_id}, retrying...")
@@ -630,14 +693,53 @@ class SandboxManager:
             )
 
     @classmethod
-    def _release_lock(cls, lock: Any) -> None:
-        """Release distributed lock."""
-        if lock:
-            try:
-                lock.release()
-                print("[SandboxManager] Released lock")
-            except Exception as e:
-                print(f"[SandboxManager] Failed to release lock: {e}")
+    async def _release_lock_async(cls, lock_key: str, lock_value: Optional[str]) -> None:
+        """
+        Release distributed lock safely (only if we own it).
+
+        Uses the lock_value to verify ownership before releasing,
+        preventing accidental release of locks held by other processes.
+        This matches the TypeScript redis-lock.ts pattern.
+        """
+        if not lock_value:
+            return  # No lock was acquired (graceful degradation case)
+
+        redis_client = await cls._get_redis_async()
+        if not redis_client:
+            return
+
+        try:
+            # Only delete if we own the lock (compare lock value)
+            current_value = await redis_client.get(lock_key)
+            if current_value == lock_value:
+                await redis_client.delete(lock_key)
+                logger.info(f"[SandboxManager] Released lock for {lock_key}")
+            else:
+                logger.warning(f"[SandboxManager] Lock {lock_key} owned by another process (expected {lock_value[:20]}..., got {current_value[:20] if current_value else 'None'}...), not releasing")
+        except Exception as e:
+            logger.warning(f"[SandboxManager] Failed to release lock: {e}")
+
+    @classmethod
+    def _release_lock(cls, lock_key: str, lock_value: Optional[str]) -> None:
+        """Sync wrapper for _release_lock_async."""
+        if not lock_value:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls._release_lock_async(lock_key, lock_value)
+                )
+                future.result(timeout=5)
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            asyncio.run(cls._release_lock_async(lock_key, lock_value))
+        except Exception as e:
+            logger.warning(f"[SandboxManager] Failed to release lock: {e}")
 
     # =========================================================================
     # Modal App and Image Management
@@ -1020,8 +1122,10 @@ class SandboxManager:
         cls._pending[session_id] = True
 
         # 3. Acquire distributed lock OR wait for sandbox to be created by another process
-        # Returns: (lock, acquired, existing_sandbox)
-        lock, acquired, existing_sandbox = await cls._acquire_lock_or_wait_for_sandbox_async(session_id)
+        # Returns: (lock_value, acquired, existing_sandbox)
+        # lock_value is a unique string for ownership verification, or None if no lock
+        lock_key = f"lock:sandbox:{session_id}"
+        lock_value, acquired, existing_sandbox = await cls._acquire_lock_or_wait_for_sandbox_async(session_id)
 
         try:
             # If we found an existing sandbox while waiting, use it
@@ -1065,7 +1169,7 @@ class SandboxManager:
 
         finally:
             cls._pending.pop(session_id, None)
-            cls._release_lock(lock)
+            await cls._release_lock_async(lock_key, lock_value)
 
     @classmethod
     def get_sandbox(cls, session_id: str, language: Optional[str] = None) -> Any:
@@ -1170,8 +1274,9 @@ class SandboxManager:
             # Sandbox is dead - need to recreate
             logger.warning(f"[SandboxManager] Sandbox {sandbox_id} is dead, recreating...")
 
-            # Acquire Redis lock for recreation (returns tuple: lock, acquired)
-            lock, acquired = cls._acquire_lock(session_id)
+            # Acquire Redis lock for recreation (returns tuple: lock_value, acquired)
+            lock_key = f"lock:sandbox:{session_id}"
+            lock_value, acquired = cls._acquire_lock(session_id)
             try:
                 # Double-check after acquiring lock (another process might have recreated)
                 if session_id in cls._sandboxes:
@@ -1217,7 +1322,7 @@ class SandboxManager:
                 return new_sandbox
 
             finally:
-                cls._release_lock(lock)
+                cls._release_lock(lock_key, lock_value)
 
         return sandbox
 

@@ -32,6 +32,9 @@ from services import (
     MODAL_AVAILABLE,
 )
 
+# Import question tools for ask_question capability
+from tools.question_tools import ask_question
+
 logger = logging.getLogger(__name__)
 
 # Timeout for tool operations (matches TypeScript implementation)
@@ -1178,6 +1181,7 @@ def get_environment_info(
 
 # All available coding tools
 ALL_CODING_TOOLS = [
+    ask_question,  # Question-first approach - available in all modes
     read_file,
     write_file,
     edit_file,
@@ -1191,9 +1195,10 @@ ALL_CODING_TOOLS = [
 ]
 
 # Tools by helpfulness level
-CONSULTANT_TOOLS = [read_file, list_files, grep_files, glob_files, get_environment_info]
+# Note: ask_question is included in ALL levels to support question-first approach
+CONSULTANT_TOOLS = [ask_question, read_file, list_files, grep_files, glob_files, get_environment_info]
 PAIR_PROGRAMMING_TOOLS = [
-    read_file, write_file, edit_file, list_files, grep_files, glob_files,
+    ask_question, read_file, write_file, edit_file, list_files, grep_files, glob_files,
     run_bash, run_tests, install_packages, get_environment_info,
 ]
 FULL_COPILOT_TOOLS = ALL_CODING_TOOLS

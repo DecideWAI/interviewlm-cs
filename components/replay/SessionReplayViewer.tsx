@@ -370,7 +370,7 @@ export function SessionReplayViewer({
                 <div className="h-full flex flex-col bg-background">
                   <div className="border-b border-border px-4 py-2 bg-background-secondary">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-text-primary">Claude Chat History</h3>
+                      <h3 className="text-sm font-semibold text-text-primary">AI Chat History</h3>
                       <span className="text-xs text-text-tertiary">
                         {currentAIInteractions.length} interactions
                       </span>

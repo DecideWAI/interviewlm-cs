@@ -76,7 +76,7 @@ export const POST = withErrorHandling(
             organization: true,
           },
         },
-        questions: {
+        generatedQuestions: {
           where: { status: 'COMPLETED' },
           orderBy: { order: 'asc' },
         },
@@ -169,15 +169,15 @@ export const POST = withErrorHandling(
         const evaluationInput: ComprehensiveEvaluationInput = {
           sessionId: candidateId,
           candidateId,
-          role: candidate.assessment.roleTitle,
-          seniority: candidate.assessment.seniority,
-          questions: candidate.questions.map((q) => ({
+          role: candidate.assessment.role,
+          seniority: candidate.assessment.seniority.toLowerCase() as any,
+          questions: candidate.generatedQuestions.map((q) => ({
             questionId: q.id,
             title: q.title,
             description: q.description,
-            difficulty: q.difficulty,
+            difficulty: q.difficulty.toLowerCase() as any,
             requirements: q.requirements || [],
-            assessmentType: q.assessmentType,
+            assessmentType: candidate.assessment.assessmentType.toLowerCase() as any,
           })),
         };
 
@@ -201,37 +201,36 @@ export const POST = withErrorHandling(
           data: {
             sessionId: candidateId,
             candidateId,
-            codeQuality: result.codeQuality,
+            codeQualityScore: result.codeQuality.score,
             codeQualityConfidence: result.codeQuality.confidence,
-            codeQualityEvidence: result.codeQuality.evidence,
-            problemSolving: result.problemSolving,
+            codeQualityEvidence: result.codeQuality.evidence as any,
+            problemSolvingScore: result.problemSolving.score,
             problemSolvingConfidence: result.problemSolving.confidence,
-            problemSolvingEvidence: result.problemSolving.evidence,
-            aiCollaboration: result.aiCollaboration,
+            problemSolvingEvidence: result.problemSolving.evidence as any,
+            aiCollaborationScore: result.aiCollaboration.score,
             aiCollaborationConfidence: result.aiCollaboration.confidence,
-            aiCollaborationEvidence: result.aiCollaboration.evidence,
-            communication: result.communication,
+            aiCollaborationEvidence: result.aiCollaboration.evidence as any,
+            communicationScore: result.communication.score,
             communicationConfidence: result.communication.confidence,
-            communicationEvidence: result.communication.evidence,
+            communicationEvidence: result.communication.evidence as any,
             overallScore: result.overallScore,
             confidence: result.overallConfidence,
             expertiseLevel: result.expertiseLevel,
             expertiseGrowthTrend: result.expertiseGrowthTrend,
             biasFlags: result.biasFlags,
-            biasDetection: result.biasDetection,
+            biasDetection: result.biasDetection as any,
             fairnessReport: result.fairnessReport,
             hiringRecommendation: result.hiringRecommendation.decision,
             hiringConfidence: result.hiringRecommendation.confidence,
-            hiringReasoning: result.hiringRecommendation.reasoning,
-            actionableReport: result.actionableReport,
+            hiringReasoning: result.hiringRecommendation.reasoning as any,
+            actionableReport: result.actionableReport as any,
             model: result.model,
-            evaluationTime: result.evaluationTimeMs,
           },
         });
 
         // Record event (only if session recording exists)
         if (sessionRecording) {
-          await recordEvent(sessionRecording.id, 'evaluation.comprehensive_complete', 'SYSTEM', {
+          await recordEvent(sessionRecording.id, 'evaluation.complete' as any, 'SYSTEM', {
             overallScore: result.overallScore,
             hiringDecision: result.hiringRecommendation.decision,
             evaluationTimeMs: result.evaluationTimeMs,
@@ -259,10 +258,9 @@ export const POST = withErrorHandling(
           },
         });
       } catch (error) {
-        logger.error('[EvaluateComprehensive] Immediate evaluation failed', {
+        logger.error('[EvaluateComprehensive] Immediate evaluation failed', error as Error, {
           candidateId,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
+        } as any);
 
         // Fall back to queued evaluation
         const queue = getQueue(QUEUE_NAMES.EVALUATION);
@@ -290,7 +288,7 @@ export const POST = withErrorHandling(
 
     // Record event (only if session recording exists)
     if (sessionRecording) {
-      await recordEvent(sessionRecording.id, 'evaluation.comprehensive_queued', 'SYSTEM', {
+      await recordEvent(sessionRecording.id, 'evaluation.queued' as any, 'SYSTEM', {
         jobId: job.id,
         priority,
       });

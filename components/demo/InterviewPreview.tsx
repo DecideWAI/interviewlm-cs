@@ -149,7 +149,7 @@ export function InterviewPreview({ techStack = [], question }: InterviewPreviewP
               }`}
           >
             <MessageSquare className="h-4 w-4" />
-            Claude AI
+            InterviewLM AI
           </button>
         </div>
 

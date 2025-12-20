@@ -8,7 +8,7 @@ import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { AIChat, AIChatHandle, Message } from "@/components/interview/AIChat";
 import { ProblemPanel } from "@/components/interview/ProblemPanel";
 import { InterviewLayout, PanelSizes, DEFAULT_PANEL_SIZES } from "@/components/interview/InterviewLayout";
-import { PanelGroup, Panel, PanelResizeHandle } from "react-resizable-panels";
+import { PanelGroup, Panel, PanelResizeHandle, ImperativePanelHandle } from "react-resizable-panels";
 import { useInterviewKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { KeyboardShortcutsPanel, defaultInterviewShortcuts } from "@/components/interview/KeyboardShortcutsPanel";
 import { QuestionProgressHeader } from "@/components/interview/QuestionProgressHeader";
@@ -71,6 +71,12 @@ import {
   Check,
   Sparkles,
   ClipboardCheck,
+  ChevronDown,
+  ChevronUp,
+  Maximize2,
+  Minimize2,
+  PanelBottomClose,
+  PanelBottom,
 } from "lucide-react";
 
 // Tab interface for multi-tab editor support
@@ -101,6 +107,7 @@ interface SessionData {
       expectedOutput: string;
       hidden: boolean;
     }>;
+    evaluationResult?: EvaluationResult; // Persisted evaluation for reload recovery
   };
   sandbox: {
     volumeId: string;
@@ -136,6 +143,7 @@ export default function InterviewPage() {
   const [fileCache, setFileCache] = useState<Map<string, string>>(new Map());
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAIChatOpen, setIsAIChatOpen] = useState(true);
+  const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [testResults, setTestResults] = useState({ passed: 0, total: 0 });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -169,6 +177,9 @@ export default function InterviewPage() {
 
   // Debounce timer ref
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Terminal panel ref for imperative collapse/expand
+  const terminalPanelRef = useRef<ImperativePanelHandle>(null);
 
   // AI Chat ref for resetConversation
   const aiChatRef = useRef<AIChatHandle>(null);
@@ -292,6 +303,16 @@ export default function InterviewPage() {
         console.error("Failed to parse panel sizes:", e);
       }
     }
+
+    // Load terminal collapsed state
+    const savedTerminalCollapsed = localStorage.getItem(`interview-terminal-collapsed-${candidateId}`);
+    if (savedTerminalCollapsed === "true") {
+      setIsTerminalCollapsed(true);
+      // Collapse the panel after a short delay to ensure ref is available
+      setTimeout(() => {
+        terminalPanelRef.current?.collapse();
+      }, 100);
+    }
   }, [candidateId]);
 
   // Save sidebar tab preference
@@ -325,6 +346,24 @@ export default function InterviewPage() {
     setPanelSizes(newSizes);
     localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
   }, [candidateId, panelSizes]);
+
+  // Handle terminal collapse toggle using imperative Panel API
+  const handleTerminalCollapse = useCallback(() => {
+    const panel = terminalPanelRef.current;
+    if (!panel) return;
+
+    if (isTerminalCollapsed) {
+      // Expand the panel
+      panel.expand();
+      setIsTerminalCollapsed(false);
+      localStorage.setItem(`interview-terminal-collapsed-${candidateId}`, "false");
+    } else {
+      // Collapse the panel
+      panel.collapse();
+      setIsTerminalCollapsed(true);
+      localStorage.setItem(`interview-terminal-collapsed-${candidateId}`, "true");
+    }
+  }, [candidateId, isTerminalCollapsed]);
 
   // Prefetch all file contents for instant navigation
   const prefetchAllFiles = useCallback(async () => {
@@ -371,6 +410,16 @@ export default function InterviewPage() {
             // They'll see errors when they try to interact
           } else {
             console.log('[FastRestore] Background validation successful');
+
+            // Restore evaluation result from API if available (not cached in localStorage)
+            const responseJson = await response.json();
+            const data = responseJson.data || responseJson;
+            if (data.question?.evaluationResult) {
+              console.log('[FastRestore] Restoring evaluation result from server');
+              setEvaluationResult(data.question.evaluationResult);
+              setRightPanelTab('evaluation');
+            }
+
             // Optionally refresh file contents in background
             prefetchAllFiles();
           }
@@ -416,6 +465,14 @@ export default function InterviewPage() {
 
         setSessionData(data);
         setTimeRemaining(data.timeRemaining);
+
+        // Restore evaluation state if available (persistence across page reloads)
+        if (data.question.evaluationResult) {
+          console.log('[Session] Restoring evaluation result from server');
+          setEvaluationResult(data.question.evaluationResult);
+          // Switch to evaluation tab to show the restored results
+          setRightPanelTab('evaluation');
+        }
 
         // Pre-fetch all file contents for instant navigation (non-blocking)
         prefetchAllFiles();
@@ -2044,25 +2101,74 @@ export default function InterviewPage() {
                 </div>
               </Panel>
 
-              <PanelResizeHandle className="h-1 bg-border hover:bg-primary transition-colors" />
+              {/* Terminal resize handle - VS Code style */}
+              <PanelResizeHandle className={cn(
+                "h-1 bg-border hover:bg-primary transition-colors",
+                isTerminalCollapsed && "hover:bg-primary cursor-row-resize"
+              )} />
 
-              {/* Terminal */}
-              <Panel defaultSize={panelSizes.vertical[1]} minSize={20}>
-                <div className="h-full flex flex-col">
-                  <div className="border-b border-border bg-background-secondary px-3 py-2 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <TerminalIcon className="h-4 w-4 text-success" />
-                      <p className="text-xs font-semibold text-text-secondary uppercase tracking-wide">
-                        Terminal
-                      </p>
-                    </div>
-                    {showCompletionCard && (
-                      <Badge variant="success" className="animate-pulse">
-                        Ready for next question!
-                      </Badge>
+              {/* Terminal Panel - VS Code style collapsible */}
+              <Panel
+                ref={terminalPanelRef}
+                defaultSize={panelSizes.vertical[1]}
+                minSize={3}
+                collapsible={true}
+                collapsedSize={3}
+                onCollapse={() => setIsTerminalCollapsed(true)}
+                onExpand={() => setIsTerminalCollapsed(false)}
+              >
+                <div className="h-full flex flex-col bg-background">
+                  {/* VS Code-style terminal header - clickable to toggle */}
+                  <div
+                    className={cn(
+                      "border-t border-border bg-background-secondary px-2 flex items-center justify-between select-none",
+                      isTerminalCollapsed ? "py-1 cursor-pointer hover:bg-background-tertiary" : "py-1.5"
                     )}
+                    onClick={isTerminalCollapsed ? handleTerminalCollapse : undefined}
+                    onDoubleClick={!isTerminalCollapsed ? handleTerminalCollapse : undefined}
+                    title={isTerminalCollapsed ? "Click to expand" : "Double-click to collapse"}
+                  >
+                    {/* Left side - Terminal label with icon */}
+                    <div className="flex items-center gap-1.5">
+                      <TerminalIcon className="h-3.5 w-3.5 text-text-tertiary" />
+                      <span className={cn(
+                        "text-xs font-medium uppercase tracking-wider",
+                        isTerminalCollapsed ? "text-text-tertiary" : "text-text-secondary"
+                      )}>
+                        Terminal
+                      </span>
+                      {showCompletionCard && !isTerminalCollapsed && (
+                        <Badge variant="success" className="ml-2 animate-pulse text-[10px] py-0 px-1.5">
+                          Ready!
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Right side - VS Code style action buttons */}
+                    <div className="flex items-center gap-0.5">
+                      {/* Toggle button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleTerminalCollapse();
+                        }}
+                        className="p-1 rounded hover:bg-background-hover transition-colors text-text-tertiary hover:text-text-secondary"
+                        title={isTerminalCollapsed ? "Maximize Panel" : "Minimize Panel"}
+                      >
+                        {isTerminalCollapsed ? (
+                          <Maximize2 className="h-3.5 w-3.5" />
+                        ) : (
+                          <Minimize2 className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex-1 min-h-0 relative">
+
+                  {/* Terminal content - hidden when collapsed to preserve history */}
+                  <div className={cn(
+                    "flex-1 min-h-0 relative",
+                    isTerminalCollapsed && "hidden"
+                  )}>
                     <Terminal sessionId={candidateId} />
 
                     {/* Completion Card Overlay */}

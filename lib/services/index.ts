@@ -84,6 +84,7 @@ export {
   recordClaudeInteraction,
   recordCodeSnapshot,
   recordTestResult,
+  recordTestRunComplete,
   closeSession,
   getSessionRecording,
   getSessionStats,

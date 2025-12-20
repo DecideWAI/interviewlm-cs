@@ -342,15 +342,15 @@ export class ComprehensiveEvaluationAgent {
         overallConfidence,
         progressiveResult,
         expertiseLevel: progressiveResult?.expertiseLevel,
-        expertiseGrowth: progressiveResult?.expertiseGrowth,
-        expertiseGrowthTrend: progressiveResult?.growthTrend,
+        expertiseGrowth: (progressiveResult as any)?.expertiseGrowth,
+        expertiseGrowthTrend: (progressiveResult as any)?.growthTrend,
         actionableReport,
         hiringRecommendation,
         confidenceMetrics,
         biasDetection: {
           biasesDetected: biasFlags,
           recommendations: this.getBiasRecommendations(biasFlags),
-        },
+        } as any,
         biasFlags,
         fairnessReport,
         evaluatedAt: new Date(),
@@ -369,10 +369,9 @@ export class ComprehensiveEvaluationAgent {
 
       return result;
     } catch (error) {
-      logger.error('[ComprehensiveEvaluationAgent] Evaluation failed', {
+      logger.error('[ComprehensiveEvaluationAgent] Evaluation failed', error as Error, {
         sessionId: this.input.sessionId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      } as any);
       throw error;
     }
   }
@@ -471,7 +470,7 @@ export class ComprehensiveEvaluationAgent {
     try {
       const result = await analyzeAICollaboration(
         analysisData.claudeInteractions,
-        analysisData.interviewMetrics
+        analysisData.interviewMetrics as any
       );
       return {
         ...result,

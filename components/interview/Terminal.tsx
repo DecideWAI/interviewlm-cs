@@ -44,6 +44,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const lastDataTimeRef = useRef<number>(Date.now());
     const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const silentReconnectRef = useRef<boolean>(false);
+    // Batching state lifted to refs to prevent stale closures on reconnection
+    const inputBufferRef = useRef<string>("");
+    const batchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const lastSendTimeRef = useRef<number>(0);
     const MAX_TUNNEL_RECONNECT_ATTEMPTS = 3;
     const MAX_SSE_RECONNECT_ATTEMPTS = 5;
     const HEARTBEAT_TIMEOUT_MS = 30000; // Consider connection dead if no data for 30s
@@ -66,6 +70,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         onDataDisposableRef.current.dispose();
         onDataDisposableRef.current = null;
       }
+
+      // IMPORTANT: Clear batching state on reconnection to prevent stale data
+      if (batchTimeoutRef.current) {
+        clearTimeout(batchTimeoutRef.current);
+        batchTimeoutRef.current = null;
+      }
+      inputBufferRef.current = "";
 
       try {
         updateConnectionStatus("connecting");
@@ -115,6 +126,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
                   reconnectPTY();
                 }
               }, 5000); // Check every 5 seconds
+            }
+
+            // Handle history replay on reconnect (server sends previous output)
+            if (data.history) {
+              console.log(`[PTY] Replaying ${data.history.length} chars of history`);
+              terminal.write(data.history);
             }
 
             if (data.output) {
@@ -173,9 +190,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
         // Handle terminal input - optimized for low latency
         // Strategy: Immediate send for first keystroke, smart batching for rapid typing
-        let inputBuffer = "";
-        let batchTimeout: ReturnType<typeof setTimeout> | null = null;
-        let lastSendTime = 0;
+        // Batching state is stored in refs (inputBufferRef, batchTimeoutRef, lastSendTimeRef)
+        // to prevent stale closures on reconnection
         const CONTINUATION_BATCH_MS = 8; // Batch rapid typing within 8ms
 
         // Track if we're currently reconnecting to avoid multiple reconnect attempts
@@ -245,13 +261,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         };
 
         const flushInput = () => {
-          if (inputBuffer && connectionStatusRef.current === "connected") {
-            const data = inputBuffer;
-            inputBuffer = "";
-            lastSendTime = Date.now();
+          if (inputBufferRef.current && connectionStatusRef.current === "connected") {
+            const data = inputBufferRef.current;
+            inputBufferRef.current = "";
+            lastSendTimeRef.current = Date.now();
             sendInput(data);
           }
-          batchTimeout = null;
+          batchTimeoutRef.current = null;
         };
 
         // Store the disposable to prevent duplicate handlers on reconnection
@@ -261,21 +277,21 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
           // NOTE: No local echo needed - PTY already echoes characters back
           // Local echo would cause double characters since the shell echoes input
 
-          inputBuffer += data;
+          inputBufferRef.current += data;
 
           // Smart batching: send immediately if no recent send, otherwise batch
-          const timeSinceLastSend = Date.now() - lastSendTime;
+          const timeSinceLastSend = Date.now() - lastSendTimeRef.current;
 
-          if (batchTimeout) {
+          if (batchTimeoutRef.current) {
             // Already in a batch window - extend it
-            clearTimeout(batchTimeout);
-            batchTimeout = setTimeout(flushInput, CONTINUATION_BATCH_MS);
+            clearTimeout(batchTimeoutRef.current);
+            batchTimeoutRef.current = setTimeout(flushInput, CONTINUATION_BATCH_MS);
           } else if (timeSinceLastSend > CONTINUATION_BATCH_MS) {
             // No recent activity - send immediately
             flushInput();
           } else {
             // Recent send - start a short batch window
-            batchTimeout = setTimeout(flushInput, CONTINUATION_BATCH_MS);
+            batchTimeoutRef.current = setTimeout(flushInput, CONTINUATION_BATCH_MS);
           }
         });
 
@@ -521,14 +537,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         setConnectionMode("pty");
         updateConnectionStatus("connected");
         terminal.writeln("\x1b[32m✓ Connected to AI Sandbox\x1b[0m");
-        terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
+        terminal.writeln("\x1b[32m✓ InterviewLM CLI initialized\x1b[0m");
         terminal.writeln("\x1b[90m[Demo Mode] Using simulated terminal\x1b[0m");
         terminal.writeln("");
         terminal.write("\x1b[1;32m$\x1b[0m ");
       } else {
         // Real session: use PTY bridge for low-latency terminal
         terminal.writeln("\x1b[32m✓ Connected to AI Sandbox\x1b[0m");
-        terminal.writeln("\x1b[32m✓ Claude Code CLI initialized\x1b[0m");
+        terminal.writeln("\x1b[32m✓ InterviewLM CLI initialized\x1b[0m");
         terminal.writeln("");
         connectPTY(terminal);
       }

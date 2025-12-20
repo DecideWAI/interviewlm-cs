@@ -330,6 +330,10 @@ export const POST = withErrorHandling(async (
     });
   }
 
+  if (!checkpoint) {
+    throw new Error('Failed to create or retrieve checkpoint');
+  }
+
   logger.info('[Checkpoint] Checkpoint saved', {
     candidateId,
     messageId,

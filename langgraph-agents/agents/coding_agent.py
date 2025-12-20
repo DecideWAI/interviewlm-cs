@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_anthropic import ChatAnthropic, convert_to_anthropic_tool
+from langchain_anthropic import convert_to_anthropic_tool
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
@@ -22,8 +22,9 @@ from typing_extensions import TypedDict
 
 from tools.coding_tools import CODING_TOOLS
 from config import settings, generate_coding_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware
+from middleware import SummarizationMiddleware, system_prompt_middleware, IterationTrackingMiddleware
 from services.gcs import capture_file_snapshots
+from services.model_factory import create_model_from_context, is_anthropic_model
 
 
 # =============================================================================
@@ -46,6 +47,13 @@ class CodingAgentState(TypedDict, total=False):
     files_modified: list[str]
     tool_call_count: int
     iteration_count: int
+    # Step budget tracking (managed by IterationTrackingMiddleware)
+    step_budget: int  # Maximum steps allowed (default: 100)
+    step_count: int  # Current step count
+    loop_detected: bool  # Flag when loop pattern detected
+    last_warning_threshold: float  # Track highest warning threshold crossed
+    budget_exhausted_warned: bool  # Whether we've warned about budget exhaustion
+    warnings_issued: list[str]  # List of warnings issued (e.g., ["50%", "75%"])
 
 
 # =============================================================================
@@ -58,6 +66,9 @@ class CodingAgentContext(TypedDict, total=False):
     candidate_id: str
     helpfulness_level: str
     problem_statement: str | None
+    # Multi-provider LLM configuration
+    provider: str  # "anthropic", "openai", or "gemini"
+    model: str     # Model name override (e.g., "gpt-4o", "gemini-2.0-flash")
 
 
 # =============================================================================
@@ -316,6 +327,61 @@ When the candidate asks you to implement something, follow this pattern:
 
 **Goal:** Every interaction should reveal something about the candidate's thinking. Their choices, questions, and reasoning are as valuable as the final code.
 
+**QUESTION-FIRST APPROACH - READ THIS CAREFULLY:**
+
+You are a thoughtful senior engineer. Before taking ANY significant action, ask clarifying questions.
+
+**Golden Rule:** When in doubt, ASK. Don't guess.
+
+**Before Writing ANY Code:**
+1. Confirm you understand what the candidate wants
+2. Ask about edge cases, constraints, preferences
+3. Present 2-3 approaches and let THEM choose
+4. Only write code after they've given clear direction
+
+**Questions to Ask Before Acting:**
+- "What's the expected behavior when [edge case]?"
+- "Should I prioritize readability or performance here?"
+- "Do you have a preference for [approach A] vs [approach B]?"
+- "Before I implement, can you confirm [assumption]?"
+
+**When to Ask vs. When to Act:**
+| Situation | Action |
+|-----------|--------|
+| Ambiguous request | ASK for clarification |
+| Multiple valid approaches | PRESENT options, let them choose |
+| Clear, specific request | Proceed, but confirm approach first |
+| Trivial fix (typo, syntax) | Just do it |
+
+**Example Interaction:**
+- BAD: "Let me implement a caching layer..." [immediately writes code]
+- GOOD: "I see a few ways to add caching here:
+   - Option A: In-memory LRU cache (fast, no persistence)
+   - Option B: Redis (persistent, distributed)
+   - Option C: File-based cache (simple, persistent)
+   Which fits your use case better? Or should I explore the requirements first?"
+
+**Why This Matters:**
+- Reveals candidate's thinking through their choices
+- Prevents wasted effort on wrong approach
+- Creates natural conversation, not just code generation
+
+**ITERATION EFFICIENCY:**
+You have a budget of approximately 100 tool calls per task. Each read/write/bash/test counts as one step.
+
+**Efficiency Rules:**
+1. READ once, keep content in context - don't re-read the same file repeatedly
+2. Batch related edits into a single edit_file call when possible
+3. If the same approach fails twice, ASK the candidate before trying again
+4. Test strategically after grouping changes, not after every tiny edit
+
+**If You Notice Yourself Looping (read -> edit -> read -> edit on same file):**
+STOP. Explain what you've tried. Ask: "What would you like me to try next?"
+
+**Budget Warnings:**
+- At 50%/75%/90% of your step budget, you'll see system warnings. Acknowledge and adjust.
+- At 100% budget: Ask the candidate "I've used my step budget. Should I continue or take a different approach?"
+
 Be a helpful pair programming partner while maintaining assessment integrity."""
 
     if problem_statement:
@@ -325,57 +391,58 @@ Be a helpful pair programming partner while maintaining assessment integrity."""
 
 
 # =============================================================================
-# Middleware: Model Selection with Caching
+# Middleware: Model Selection with Multi-Provider Support
 # =============================================================================
 
-def _create_anthropic_model(model_name: str) -> ChatAnthropic:
-    """Create Anthropic model with prompt caching configuration.
+# Store context for middleware access (set by agent before each invocation)
+_current_context: dict = {}
 
-    Uses BOTH betas param AND default_headers for caching.
-    Reference: TheBlueOne model_selection.py
-    """
-    default_headers = {}
-    beta_versions = []
 
-    if settings.enable_prompt_caching:
-        beta_versions = ["prompt-caching-2024-07-31"]
-        default_headers["anthropic-beta"] = ",".join(beta_versions)
-
-    return ChatAnthropic(
-        model_name=model_name,
-        max_tokens=32000,
-        betas=beta_versions,
-        streaming=settings.enable_code_streaming,
-        default_headers=default_headers,
-        api_key=settings.anthropic_api_key,
-    )
+def set_model_context(context: dict) -> None:
+    """Set the current context for model selection middleware."""
+    global _current_context
+    _current_context = context or {}
 
 
 @wrap_model_call
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Middleware that selects the appropriate model and converts tools.
 
+    Supports multiple LLM providers (Anthropic, OpenAI, Gemini) with per-request
+    override via context. Uses model_factory for unified model creation.
+
     This middleware:
-    1. Creates the Anthropic model with caching headers
-    2. Converts tools to Anthropic format
+    1. Creates the appropriate model based on context/settings
+    2. Converts tools to the correct format for the provider
     3. Binds tools to the model
     """
-    # Create model with caching support
-    model = _create_anthropic_model(settings.coding_agent_model)
+    global _current_context
 
-    # Convert tools to Anthropic format (without cache_control yet)
+    # Create model using factory with context override support
+    model = create_model_from_context(
+        context=_current_context,
+        default_provider=settings.coding_agent_provider,
+        default_model=settings.coding_agent_model,
+        streaming=settings.enable_code_streaming,
+        max_tokens=32000,
+    )
+
+    # Convert and bind tools
     if request.tools:
-        converted_tools = []
-        for tool in request.tools:
-            try:
-                anthropic_tool = convert_to_anthropic_tool(tool)
-                converted_tools.append(anthropic_tool)
-            except Exception as e:
-                print(f"[ModelSelection] Warning: Failed to convert tool: {e}")
-                converted_tools.append(tool)
-
-        # Bind converted tools to model
-        model = model.bind_tools(converted_tools)
+        # For Anthropic, convert to Anthropic format for better caching
+        if is_anthropic_model(model):
+            converted_tools = []
+            for tool in request.tools:
+                try:
+                    anthropic_tool = convert_to_anthropic_tool(tool)
+                    converted_tools.append(anthropic_tool)
+                except Exception as e:
+                    print(f"[ModelSelection] Warning: Failed to convert tool: {e}")
+                    converted_tools.append(tool)
+            model = model.bind_tools(converted_tools)
+        else:
+            # Other providers: LangChain handles tool format conversion
+            model = model.bind_tools(request.tools)
 
     # Replace model in request
     request.model = model
@@ -489,14 +556,21 @@ def create_coding_agent_graph(
     system_prompt = build_system_prompt(helpfulness_level, problem_statement, tech_stack)
 
     # Create default model (will be replaced by middleware)
-    model = _create_anthropic_model(settings.coding_agent_model)
+    model = create_model_from_context(
+        context={},
+        default_provider=settings.coding_agent_provider,
+        default_model=settings.coding_agent_model,
+        streaming=settings.enable_code_streaming,
+        max_tokens=32000,
+    )
 
     # Build middleware list
     # Order matters: summarization -> system_prompt -> model_selection -> caching (caching MUST be last)
     # IMPORTANT: system_prompt_middleware MUST run AFTER summarization_middleware
     # because summarization can re-introduce system messages from recent_messages
     middleware = [
-        SummarizationMiddleware(),     # Summarize long conversations (persists to state)
+        IterationTrackingMiddleware(step_budget=100),  # Track step budget, inject warnings (MUST run FIRST)
+        SummarizationMiddleware(model_name="claude-haiku-4-5-20251001"),  # Summarize long conversations (persists to state)
         system_prompt_middleware,      # Deduplicate system messages AFTER summarization
         model_selection_middleware,    # Select model and convert tools
         anthropic_caching_middleware,  # Add cache_control (MUST run LAST)
@@ -559,7 +633,7 @@ class CodingAgentGraph:
                 "session_id": self.session_id,
                 "candidate_id": self.candidate_id,  # Required for sandbox operations and event emission
             },
-            "recursion_limit": 100,  # Increased from default 25 for complex tasks
+            "recursion_limit": 150,  # Step budget (100) enforces earlier stop; this is safety margin
         }
 
         # Context for middleware
@@ -645,7 +719,7 @@ class CodingAgentGraph:
                 "session_id": self.session_id,
                 "candidate_id": self.candidate_id,  # Required for sandbox operations and event emission
             },
-            "recursion_limit": 100,  # Increased from default 25 for complex tasks
+            "recursion_limit": 150,  # Step budget (100) enforces earlier stop; this is safety margin
         }
 
         context = {
