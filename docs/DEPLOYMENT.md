@@ -201,6 +201,37 @@ gcloud run jobs create prisma-migrate \
 gcloud run jobs execute prisma-migrate --region us-central1 --wait
 ```
 
+### 9. Run Production Seeds (System Data)
+
+After migrations, seed the system-level data that all organizations depend on:
+
+```bash
+# Create seed job (one-time)
+gcloud run jobs create prisma-seed-prod \
+  --image us-central1-docker.pkg.dev/interviewlm-480415/interviewlm-prod-docker/app:latest \
+  --region us-central1 \
+  --service-account interviewlm-prod-cloud-run@interviewlm-480415.iam.gserviceaccount.com \
+  --vpc-connector projects/interviewlm-480415/locations/us-central1/connectors/ilm-prod-vpc-conn \
+  --set-secrets "DATABASE_URL=interviewlm-prod-database-url:latest" \
+  --set-env-vars "ALLOW_SEED_IN_PRODUCTION=true" \
+  --command npx \
+  --args "tsx,prisma/production-seed.ts" \
+  --task-timeout 600s
+
+# Execute production seed
+gcloud run jobs execute prisma-seed-prod --region us-central1 --wait
+```
+
+**What gets seeded:**
+- Configuration data (security, model, sandbox, role, seniority, tier configs)
+- Technologies (35+ languages, frameworks, databases, tools)
+- Pricing plans (4 credit packs: Starter, Growth, Scale, Enterprise)
+- Assessment add-ons (Video Recording, Live Proctoring)
+- Default backend seeds (10 seeds: 5 seniorities × 2 assessment types)
+- Complexity profiles (for dynamic question generation)
+
+**Note**: This is idempotent and safe to run multiple times. System seeds have `organizationId: null` and are shared across all organizations.
+
 ---
 
 ## Routine Deployments

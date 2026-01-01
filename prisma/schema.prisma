@@ -169,8 +169,8 @@ model AssessmentQuestion {
 }
 
 model ProblemSeed {
-  id             String     @id @default(cuid())
-  organizationId String     @map("organization_id")
+  id             String  @id @default(cuid())
+  organizationId String? @map("organization_id") // Optional: null for system-wide seeds, set for org-specific seeds
   title          String
   description    String
   difficulty     Difficulty
@@ -216,13 +216,14 @@ model ProblemSeed {
   createdAt    DateTime             @default(now()) @map("created_at")
   updatedAt    DateTime             @updatedAt @map("updated_at")
   questions    AssessmentQuestion[]
-  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade) // Optional: null for system seeds
   parentSeed   ProblemSeed?         @relation("SeedClones", fields: [parentSeedId], references: [id], onDelete: SetNull)
   clonedSeeds  ProblemSeed[]        @relation("SeedClones")
   poolStats    QuestionPoolStats?
 
   @@index([targetRole, targetSeniority])
   @@index([assessmentType])
+  @@index([organizationId]) // Index for querying org-specific + system seeds
   @@map("problem_seeds")
 }
 
