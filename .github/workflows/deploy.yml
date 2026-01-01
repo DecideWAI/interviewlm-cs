@@ -1,0 +1,234 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_migrations:
+        description: 'Skip database migrations'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  PROJECT_ID: interviewlm-480415
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev
+  REPOSITORY: interviewlm-prod-docker
+  IMAGE_NAME: app
+  APP_SERVICE: interviewlm-prod-app
+  WORKER_SERVICE: interviewlm-prod-worker
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and Push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker $REGISTRY --quiet
+
+      - name: Generate image metadata
+        id: meta
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+          IMAGE_TAG="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${SHORT_SHA}"
+          echo "tags=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker build \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest" \
+            -t "$IMAGE_TAG" \
+            -t "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest" \
+            .
+
+      - name: Push Docker image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker push "$IMAGE_TAG"
+          docker push "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest"
+
+  migrate:
+    name: Run Migrations
+    needs: build
+    if: ${{ github.event.inputs.skip_migrations != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Update migration job image
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          gcloud run jobs update prisma-migrate \
+            --image "$IMAGE_TAG" \
+            --region "$REGION" \
+            --quiet
+
+      - name: Run migrations
+        run: |
+          gcloud run jobs execute prisma-migrate \
+            --region "$REGION" \
+            --wait
+
+  deploy-app:
+    name: Deploy App
+    needs: [build, migrate]
+    if: always() && needs.build.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          gcloud run services update "$APP_SERVICE" \
+            --image "$IMAGE_TAG" \
+            --region "$REGION" \
+            --quiet
+
+      - name: Verify deployment
+        run: |
+          APP_URL=$(gcloud run services describe "$APP_SERVICE" \
+            --region "$REGION" \
+            --format='value(status.url)')
+
+          # Wait for new revision to be ready
+          sleep 30
+
+          # Health check with retries
+          for i in {1..5}; do
+            if curl -sf "${APP_URL}/api/health" > /dev/null; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Health check failed after 5 attempts"
+          exit 1
+
+  deploy-workers:
+    name: Deploy Workers
+    needs: [build, migrate]
+    if: always() && needs.build.result == 'success' && (needs.migrate.result == 'success' || needs.migrate.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          gcloud run services update "$WORKER_SERVICE" \
+            --image "$IMAGE_TAG" \
+            --region "$REGION" \
+            --quiet
+
+      - name: Verify worker health
+        run: |
+          # Check worker logs for successful startup
+          sleep 30
+
+          LOGS=$(gcloud logging read \
+            "resource.type=cloud_run_revision AND resource.labels.service_name=${WORKER_SERVICE} AND textPayload:\"All Workers Started Successfully\"" \
+            --limit=1 \
+            --freshness=5m \
+            --format="value(textPayload)" \
+            2>/dev/null || true)
+
+          if [ -n "$LOGS" ]; then
+            echo "Workers started successfully!"
+          else
+            echo "Warning: Could not verify worker startup from logs"
+          fi
+
+  notify:
+    name: Notify
+    needs: [build, deploy-app, deploy-workers]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deployment Summary
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          APP_RESULT: ${{ needs.deploy-app.result }}
+          WORKER_RESULT: ${{ needs.deploy-workers.result }}
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| App | ${APP_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Workers | ${WORKER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${COMMIT_SHA}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**App URL:** https://interviewlm-prod-app-nfhx642nbq-uc.a.run.app" >> $GITHUB_STEP_SUMMARY
