@@ -155,8 +155,8 @@ resource "google_cloud_run_v2_service" "worker" {
     containers {
       image = var.worker_image != "" ? var.worker_image : var.app_image
 
-      # Workers run via npm run worker command
-      command = ["npm", "run", "worker"]
+      # Workers run via npm run workers command
+      command = ["npm", "run", "workers"]
 
       resources {
         limits = {
@@ -191,13 +191,25 @@ resource "google_cloud_run_v2_service" "worker" {
       }
 
       startup_probe {
-        tcp_socket {
-          port = 3000
+        http_get {
+          path = "/health"
+          port = 8080
         }
         initial_delay_seconds = 10
         timeout_seconds       = 5
         period_seconds        = 10
         failure_threshold     = 5
+      }
+
+      liveness_probe {
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+        initial_delay_seconds = 30
+        timeout_seconds       = 5
+        period_seconds        = 60
+        failure_threshold     = 3
       }
     }
 

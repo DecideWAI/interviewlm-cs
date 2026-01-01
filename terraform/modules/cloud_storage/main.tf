@@ -140,7 +140,7 @@ resource "google_storage_bucket" "artifacts" {
 # -----------------------------------------------------------------------------
 
 resource "google_storage_bucket_iam_member" "sessions_admin" {
-  count = var.service_account_email != "" ? 1 : 0
+  count = var.grant_service_account_access ? 1 : 0
 
   bucket = google_storage_bucket.sessions.name
   role   = "roles/storage.objectAdmin"
@@ -148,7 +148,7 @@ resource "google_storage_bucket_iam_member" "sessions_admin" {
 }
 
 resource "google_storage_bucket_iam_member" "artifacts_admin" {
-  count = var.create_artifacts_bucket && var.service_account_email != "" ? 1 : 0
+  count = var.create_artifacts_bucket && var.grant_service_account_access ? 1 : 0
 
   bucket = google_storage_bucket.artifacts[0].name
   role   = "roles/storage.objectAdmin"

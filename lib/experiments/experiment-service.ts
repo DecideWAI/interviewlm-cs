@@ -4,7 +4,7 @@
  * Core service for managing experiments, assignments, and metrics.
  */
 
-import { Redis } from 'ioredis';
+import { Redis, RedisOptions } from 'ioredis';
 import crypto from 'crypto';
 import type {
   Experiment,
@@ -19,12 +19,32 @@ const experimentCache = new Map<string, Experiment>();
 const assignmentCache = new Map<string, ExperimentAssignment>();
 
 /**
+ * Parse Redis URL into connection options
+ */
+function parseRedisUrl(url: string): RedisOptions {
+  const parsed = new URL(url);
+  const isTls = parsed.protocol === 'rediss:';
+
+  return {
+    host: parsed.hostname,
+    port: parseInt(parsed.port || (isTls ? '6378' : '6379'), 10),
+    password: parsed.password || undefined,
+    ...(isTls && { tls: { rejectUnauthorized: false } }),
+  };
+}
+
+/**
  * Get Redis client (lazy initialization)
  */
 let redisClient: Redis | null = null;
 function getRedis(): Redis {
   if (!redisClient) {
-    redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl) {
+      redisClient = new Redis(parseRedisUrl(redisUrl));
+    } else {
+      redisClient = new Redis('redis://localhost:6379');
+    }
   }
   return redisClient;
 }

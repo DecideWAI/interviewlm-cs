@@ -9,23 +9,56 @@ import { Queue, QueueOptions, ConnectionOptions } from 'bullmq';
 import { QUEUE_NAMES, type QueueName } from '../types/events';
 
 /**
- * Redis connection configuration
- * Uses environment variables with sensible defaults
+ * Parse Redis URL into connection options
+ * Supports both redis:// and rediss:// (TLS) protocols
  */
-export const redisConnection: ConnectionOptions = {
-  host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379', 10),
-  password: process.env.REDIS_PASSWORD,
-  db: parseInt(process.env.REDIS_DB || '0', 10),
-  maxRetriesPerRequest: null, // Required for BullMQ
-  enableReadyCheck: false, // BullMQ handles this
-  retryStrategy: (times: number) => {
-    // Exponential backoff: 2^times * 100ms, max 3 seconds
-    const delay = Math.min(Math.pow(2, times) * 100, 3000);
-    console.log(`Redis connection retry ${times}, waiting ${delay}ms`);
-    return delay;
-  },
-};
+function parseRedisUrl(url: string): ConnectionOptions {
+  const parsed = new URL(url);
+  const isTls = parsed.protocol === 'rediss:';
+
+  return {
+    host: parsed.hostname,
+    port: parseInt(parsed.port || (isTls ? '6378' : '6379'), 10),
+    password: parsed.password || undefined,
+    db: parseInt(parsed.pathname?.slice(1) || '0', 10),
+    maxRetriesPerRequest: null, // Required for BullMQ
+    enableReadyCheck: false, // BullMQ handles this
+    ...(isTls && {
+      tls: {
+        // For GCP Memorystore, we need to skip certificate validation
+        // as it uses self-signed certs
+        rejectUnauthorized: false,
+      },
+    }),
+    retryStrategy: (times: number) => {
+      // Exponential backoff: 2^times * 100ms, max 3 seconds
+      const delay = Math.min(Math.pow(2, times) * 100, 3000);
+      console.log(`Redis connection retry ${times}, waiting ${delay}ms`);
+      return delay;
+    },
+  };
+}
+
+/**
+ * Redis connection configuration
+ * Uses REDIS_URL if available, otherwise falls back to individual env vars
+ */
+export const redisConnection: ConnectionOptions = process.env.REDIS_URL
+  ? parseRedisUrl(process.env.REDIS_URL)
+  : {
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379', 10),
+      password: process.env.REDIS_PASSWORD,
+      db: parseInt(process.env.REDIS_DB || '0', 10),
+      maxRetriesPerRequest: null, // Required for BullMQ
+      enableReadyCheck: false, // BullMQ handles this
+      retryStrategy: (times: number) => {
+        // Exponential backoff: 2^times * 100ms, max 3 seconds
+        const delay = Math.min(Math.pow(2, times) * 100, 3000);
+        console.log(`Redis connection retry ${times}, waiting ${delay}ms`);
+        return delay;
+      },
+    };
 
 /**
  * Default queue options

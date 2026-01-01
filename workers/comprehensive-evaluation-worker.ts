@@ -63,10 +63,9 @@ class ComprehensiveEvaluationWorker {
 
     this.worker.on('failed', async (job: Job | undefined, err: Error) => {
       if (job?.name === 'comprehensive') {
-        logger.error('[ComprehensiveEvaluationWorker] Evaluation failed', {
+        logger.error('[ComprehensiveEvaluationWorker] Evaluation failed', err, {
           sessionId: job?.data.sessionId,
           jobId: job?.id,
-          error: err.message,
         });
 
         // Move to dead letter queue if exceeded max attempts
@@ -77,9 +76,7 @@ class ComprehensiveEvaluationWorker {
     });
 
     this.worker.on('error', (err: Error) => {
-      logger.error('[ComprehensiveEvaluationWorker] Worker error', {
-        error: err.message,
-      });
+      logger.error('[ComprehensiveEvaluationWorker] Worker error', err);
     });
 
     logger.info('[ComprehensiveEvaluationWorker] Worker started');
@@ -119,7 +116,7 @@ class ComprehensiveEvaluationWorker {
       where: { id: data.candidateId },
       include: {
         assessment: true,
-        questions: {
+        generatedQuestions: {
           where: { status: 'COMPLETED' },
           orderBy: { order: 'asc' },
         },
@@ -127,7 +124,7 @@ class ComprehensiveEvaluationWorker {
     });
 
     if (!candidate) {
-      logger.error('[ComprehensiveEvaluationWorker] Candidate not found', {
+      logger.error('[ComprehensiveEvaluationWorker] Candidate not found', undefined, {
         candidateId: data.candidateId,
       });
       throw new Error(`Candidate not found: ${data.candidateId}`);
@@ -137,15 +134,15 @@ class ComprehensiveEvaluationWorker {
     const evaluationInput: ComprehensiveEvaluationInput = {
       sessionId: data.sessionId,
       candidateId: data.candidateId,
-      role: candidate.assessment.roleTitle,
-      seniority: candidate.assessment.seniority,
-      questions: candidate.questions.map((q) => ({
+      role: candidate.assessment.role,
+      seniority: candidate.assessment.seniority.toLowerCase() as import('@/types/assessment').SeniorityLevel,
+      questions: candidate.generatedQuestions.map((q) => ({
         questionId: q.id,
         title: q.title,
         description: q.description,
-        difficulty: q.difficulty,
+        difficulty: q.difficulty.toLowerCase(),
         requirements: q.requirements || [],
-        assessmentType: q.assessmentType,
+        assessmentType: candidate.assessment.assessmentType.toLowerCase() as import('@/types/assessment').AssessmentType,
       })),
     };
 
@@ -166,36 +163,35 @@ class ComprehensiveEvaluationWorker {
       result = await agent.evaluate();
     }
 
-    // Save to database
+    // Save to database - cast complex objects to JSON for Prisma compatibility
     await prisma.evaluation.create({
       data: {
         sessionId: data.sessionId,
         candidateId: data.candidateId,
-        codeQuality: result.codeQuality,
+        codeQualityScore: Math.round(result.codeQuality.score),
         codeQualityConfidence: result.codeQuality.confidence,
-        codeQualityEvidence: result.codeQuality.evidence,
-        problemSolving: result.problemSolving,
+        codeQualityEvidence: JSON.parse(JSON.stringify(result.codeQuality.evidence)),
+        problemSolvingScore: Math.round(result.problemSolving.score),
         problemSolvingConfidence: result.problemSolving.confidence,
-        problemSolvingEvidence: result.problemSolving.evidence,
-        aiCollaboration: result.aiCollaboration,
+        problemSolvingEvidence: JSON.parse(JSON.stringify(result.problemSolving.evidence)),
+        aiCollaborationScore: Math.round(result.aiCollaboration.score),
         aiCollaborationConfidence: result.aiCollaboration.confidence,
-        aiCollaborationEvidence: result.aiCollaboration.evidence,
-        communication: result.communication,
+        aiCollaborationEvidence: JSON.parse(JSON.stringify(result.aiCollaboration.evidence)),
+        communicationScore: Math.round(result.communication.score),
         communicationConfidence: result.communication.confidence,
-        communicationEvidence: result.communication.evidence,
-        overallScore: result.overallScore,
+        communicationEvidence: JSON.parse(JSON.stringify(result.communication.evidence)),
+        overallScore: Math.round(result.overallScore),
         confidence: result.overallConfidence,
         expertiseLevel: result.expertiseLevel,
         expertiseGrowthTrend: result.expertiseGrowthTrend,
         biasFlags: result.biasFlags,
-        biasDetection: result.biasDetection,
+        biasDetection: result.biasDetection ? JSON.parse(JSON.stringify(result.biasDetection)) : null,
         fairnessReport: result.fairnessReport,
         hiringRecommendation: result.hiringRecommendation.decision,
         hiringConfidence: result.hiringRecommendation.confidence,
         hiringReasoning: result.hiringRecommendation.reasoning,
-        actionableReport: result.actionableReport,
+        actionableReport: JSON.parse(JSON.stringify(result.actionableReport)),
         model: result.model,
-        evaluationTime: result.evaluationTimeMs,
       },
     });
 
@@ -209,7 +205,7 @@ class ComprehensiveEvaluationWorker {
     });
 
     // Record completion event
-    await recordEvent(data.sessionId, 'evaluation.comprehensive_complete', 'SYSTEM', {
+    await recordEvent(data.sessionId, 'evaluation.complete', 'SYSTEM', {
       overallScore: result.overallScore,
       hiringDecision: result.hiringRecommendation.decision,
       hiringConfidence: result.hiringRecommendation.confidence,

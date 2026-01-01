@@ -74,6 +74,12 @@ variable "database_instance_name" {
   default     = ""
 }
 
+variable "enable_database_monitoring" {
+  description = "Enable database monitoring alerts (set true when database_instance_name is known)"
+  type        = bool
+  default     = true
+}
+
 # Feature flags
 variable "alerts_enabled" {
   description = "Enable alert policies"

@@ -10,9 +10,33 @@
  *   npm run workers:dev    # Start with hot reload
  */
 
+import http from "http";
 import { startInterviewAgent } from "./interview-agent";
 import { startEvaluationAgent } from "./evaluation-agent";
 import { startQuestionGenerator } from "./question-generator";
+
+// Health check server for Cloud Run
+const PORT = parseInt(process.env.PORT || "8080", 10);
+let workersHealthy = false;
+
+const healthServer = http.createServer((req, res) => {
+  if (req.url === "/health" || req.url === "/") {
+    if (workersHealthy) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "healthy", workers: true }));
+    } else {
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "starting", workers: false }));
+    }
+  } else {
+    res.writeHead(404);
+    res.end("Not Found");
+  }
+});
+
+healthServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`[Workers] Health check server listening on port ${PORT}`);
+});
 
 // Graceful shutdown handler
 let isShuttingDown = false;
@@ -106,6 +130,9 @@ async function startWorkers() {
     console.log();
     console.log("Workers running. Press Ctrl+C to stop.");
     console.log();
+
+    // Mark workers as healthy for health checks
+    workersHealthy = true;
 
     // Keep process alive
     process.stdin.resume();

@@ -120,6 +120,12 @@ variable "service_account_email" {
   default     = ""
 }
 
+variable "grant_service_account_access" {
+  description = "Grant service account access to buckets (set true when service_account_email is known)"
+  type        = bool
+  default     = true
+}
+
 # Labels
 variable "labels" {
   description = "Labels to apply to resources"

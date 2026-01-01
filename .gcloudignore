@@ -1,0 +1,30 @@
+# This file specifies files that are *not* uploaded to Google Cloud Build
+# These are the same patterns as .gitignore
+.git/
+.gitignore
+node_modules/
+.next/
+.env*
+*.log
+*.md
+docs/
+.vscode/
+.idea/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+__tests__/
+coverage/
+.nyc_output/
+*.tgz
+*.tar.gz
+*.zip
+langgraph-agents/
+admin/
+infrastructure/
+terraform/
+scripts/
+*.pem
+*.key
+.gcs-credentials.json

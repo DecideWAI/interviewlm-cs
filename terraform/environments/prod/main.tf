@@ -356,11 +356,8 @@ module "cloud_run" {
     GCS_BUCKET_SESSIONS   = module.cloud_storage.sessions_bucket_name
     GCS_BUCKET_ARTIFACTS  = module.cloud_storage.artifacts_bucket_name
     ENABLE_CODE_STREAMING = "true"
-    # Payment configuration
-    PADDLE_VENDOR_ID          = var.paddle_vendor_id
-    PADDLE_PRODUCT_SINGLE     = var.paddle_product_single
-    PADDLE_PRODUCT_MEDIUM     = var.paddle_product_medium
-    PADDLE_PRODUCT_ENTERPRISE = var.paddle_product_enterprise
+    # Payment configuration (product IDs are stored in database)
+    PADDLE_VENDOR_ID = var.paddle_vendor_id
     # Email configuration
     RESEND_FROM_EMAIL = var.resend_from_email
     # Observability
@@ -417,7 +414,6 @@ module "cloud_run" {
   depends_on_resources = [
     module.cloud_sql.instance_name,
     module.memorystore.instance_name,
-    module.secrets.all_secret_ids,
   ]
 
   depends_on = [

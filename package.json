@@ -33,10 +33,10 @@
     "docker:build": "docker build -t interviewlm-app .",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "workers": "ts-node workers/start.ts",
-    "workers:dev": "ts-node-dev --respawn --transpile-only workers/start.ts",
-    "workers:interview": "ts-node workers/interview-agent.ts",
-    "workers:evaluation": "ts-node workers/evaluation-agent.ts"
+    "workers": "tsx workers/start.ts",
+    "workers:dev": "tsx watch workers/start.ts",
+    "workers:interview": "tsx workers/interview-agent.ts",
+    "workers:evaluation": "tsx workers/evaluation-agent.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^2.0.59",
@@ -80,6 +80,7 @@
     "resend": "^6.4.2",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
+    "tsx": "^4.21.0",
     "uuid": "^13.0.0",
     "ws": "^8.18.0",
     "zod": "^3.23.8"

@@ -20,7 +20,7 @@ output "alert_policy_ids" {
   value = {
     high_error_rate   = google_monitoring_alert_policy.high_error_rate.name
     high_latency      = google_monitoring_alert_policy.high_latency.name
-    database_high_cpu = var.database_instance_name != "" ? google_monitoring_alert_policy.database_high_cpu[0].name : null
+    database_high_cpu = var.enable_database_monitoring ? google_monitoring_alert_policy.database_high_cpu[0].name : null
     uptime_failure    = var.app_url != "" ? google_monitoring_alert_policy.uptime_failure[0].name : null
   }
 }

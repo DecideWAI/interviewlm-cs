@@ -91,6 +91,7 @@ resource "google_secret_manager_secret" "redis_url" {
 resource "google_secret_manager_secret_version" "redis_url" {
   count = var.store_url_in_secret_manager ? 1 : 0
 
-  secret      = google_secret_manager_secret.redis_url[0].id
-  secret_data = var.auth_enabled ? "redis://:${google_redis_instance.main.auth_string}@${google_redis_instance.main.host}:${google_redis_instance.main.port}" : "redis://${google_redis_instance.main.host}:${google_redis_instance.main.port}"
+  secret = google_secret_manager_secret.redis_url[0].id
+  # Use rediss:// for TLS connections (when transit_encryption_mode is not DISABLED)
+  secret_data = var.auth_enabled ? "${var.transit_encryption_mode != "DISABLED" ? "rediss" : "redis"}://:${google_redis_instance.main.auth_string}@${google_redis_instance.main.host}:${google_redis_instance.main.port}" : "${var.transit_encryption_mode != "DISABLED" ? "rediss" : "redis"}://${google_redis_instance.main.host}:${google_redis_instance.main.port}"
 }

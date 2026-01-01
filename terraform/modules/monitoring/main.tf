@@ -193,7 +193,7 @@ resource "google_monitoring_alert_policy" "high_latency" {
 
 # Cloud SQL high CPU alert
 resource "google_monitoring_alert_policy" "database_high_cpu" {
-  count = var.database_instance_name != "" ? 1 : 0
+  count = var.enable_database_monitoring ? 1 : 0
 
   project      = var.project_id
   display_name = "${var.name_prefix} - Database High CPU"

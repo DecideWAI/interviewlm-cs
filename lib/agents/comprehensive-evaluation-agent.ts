@@ -524,8 +524,6 @@ export class ComprehensiveEvaluationAgent {
     }
 
     try {
-      const calculator = new ProgressiveScoringCalculator();
-
       // Fetch question scores from database
       const questions = await prisma.generatedQuestion.findMany({
         where: {
@@ -535,19 +533,24 @@ export class ComprehensiveEvaluationAgent {
         orderBy: { order: 'asc' },
       });
 
-      for (const question of questions) {
-        if (question.score !== null) {
-          calculator.addQuestionScore(
-            question.id,
-            question.score,
-            question.difficulty,
-            question.timeSpent || undefined,
-            question.expectedTime || undefined
-          );
-        }
+      // Build question scores array for the static calculator
+      const questionScores = questions
+        .filter((q) => q.score !== null)
+        .map((q, index) => ({
+          questionNumber: index + 1,
+          score: q.score! / 100, // Normalize to 0-1
+          difficultyAssessment: q.difficultyAssessment
+            ? (JSON.parse(
+                JSON.stringify(q.difficultyAssessment)
+              ) as import('@/types/seed').DifficultyAssessment)
+            : undefined,
+        }));
+
+      if (questionScores.length === 0) {
+        return undefined;
       }
 
-      return calculator.calculateFinalScore();
+      return ProgressiveScoringCalculator.calculateScore(questionScores);
     } catch (error) {
       logger.warn('[ComprehensiveEvaluationAgent] Progressive scoring failed', {
         error,
@@ -697,29 +700,28 @@ export class ComprehensiveEvaluationAgent {
       sessionId: this.input.sessionId,
       role: this.input.role,
       seniority: this.input.seniority,
-      scores: {
-        codeQuality: scores.codeQuality.score,
-        problemSolving: scores.problemSolving.score,
-        aiCollaboration: scores.aiCollaboration.score,
-        communication: scores.communication.score,
-        overall: overallScore,
+      techStack: [], // Tech stack extracted from session/questions if needed
+      codeQuality: {
+        score: scores.codeQuality.score,
+        evidence: scores.codeQuality.evidence.map((e) => e.description),
+        breakdown: scores.codeQuality.breakdown || undefined,
       },
-      confidence: {
-        codeQuality: scores.codeQuality.confidence,
-        problemSolving: scores.problemSolving.confidence,
-        aiCollaboration: scores.aiCollaboration.confidence,
-        communication: scores.communication.confidence,
-        overall: overallConfidence,
+      problemSolving: {
+        score: scores.problemSolving.score,
+        evidence: scores.problemSolving.evidence.map((e) => e.description),
+        breakdown: scores.problemSolving.breakdown || undefined,
       },
-      evidence: {
-        codeQuality: scores.codeQuality.evidence.map((e) => e.description),
-        problemSolving: scores.problemSolving.evidence.map((e) => e.description),
-        aiCollaboration: scores.aiCollaboration.evidence.map((e) => e.description),
-        communication: scores.communication.evidence.map((e) => e.description),
+      aiCollaboration: {
+        score: scores.aiCollaboration.score,
+        evidence: scores.aiCollaboration.evidence.map((e) => e.description),
+        breakdown: scores.aiCollaboration.breakdown || undefined,
       },
-      aiInteractionCount: sessionData.aiInteractions.length,
-      testResultCount: sessionData.testResults.length,
-      codeSnapshotCount: sessionData.codeSnapshots.length,
+      communication: {
+        score: scores.communication.score,
+        evidence: scores.communication.evidence.map((e) => e.description),
+        breakdown: scores.communication.breakdown || undefined,
+      },
+      overallScore,
     };
   }
 
@@ -730,8 +732,7 @@ export class ComprehensiveEvaluationAgent {
     evaluationData: EvaluationData
   ): Promise<ActionableReport> {
     try {
-      const generator = new ActionableReportGenerator();
-      return await generator.generateReport(evaluationData);
+      return await ActionableReportGenerator.generateReport(evaluationData);
     } catch (error) {
       logger.warn('[ComprehensiveEvaluationAgent] Report generation failed', {
         error,
@@ -745,7 +746,7 @@ export class ComprehensiveEvaluationAgent {
         seniority: this.input.seniority,
         generatedAt: new Date(),
         skillsGapMatrix: {
-          overallFit: evaluationData.scores.overall,
+          overallFit: evaluationData.overallScore,
           categories: [],
           criticalGaps: [],
           strengths: [],

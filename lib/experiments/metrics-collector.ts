@@ -5,7 +5,7 @@
  * Supports real-time collection and batch analysis.
  */
 
-import { Redis } from 'ioredis';
+import { Redis, RedisOptions } from 'ioredis';
 import type {
   ExperimentMetric,
   ExperimentResults,
@@ -14,12 +14,32 @@ import type {
 } from './types';
 
 /**
+ * Parse Redis URL into connection options
+ */
+function parseRedisUrl(url: string): RedisOptions {
+  const parsed = new URL(url);
+  const isTls = parsed.protocol === 'rediss:';
+
+  return {
+    host: parsed.hostname,
+    port: parseInt(parsed.port || (isTls ? '6378' : '6379'), 10),
+    password: parsed.password || undefined,
+    ...(isTls && { tls: { rejectUnauthorized: false } }),
+  };
+}
+
+/**
  * Get Redis client (lazy initialization)
  */
 let redisClient: Redis | null = null;
 function getRedis(): Redis {
   if (!redisClient) {
-    redisClient = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl) {
+      redisClient = new Redis(parseRedisUrl(redisUrl));
+    } else {
+      redisClient = new Redis('redis://localhost:6379');
+    }
   }
   return redisClient;
 }

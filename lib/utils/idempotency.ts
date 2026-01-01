@@ -10,8 +10,31 @@
  * - Handle race conditions in distributed workers
  */
 
-import Redis from 'ioredis';
+import Redis, { RedisOptions } from 'ioredis';
 import crypto from 'crypto';
+
+/**
+ * Parse Redis URL into connection options
+ * Supports both redis:// and rediss:// (TLS) protocols
+ */
+function parseRedisUrl(url: string): RedisOptions {
+  const parsed = new URL(url);
+  const isTls = parsed.protocol === 'rediss:';
+
+  return {
+    host: parsed.hostname,
+    port: parseInt(parsed.port || (isTls ? '6378' : '6379'), 10),
+    password: parsed.password || undefined,
+    db: parseInt(parsed.pathname?.slice(1) || '0', 10),
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    ...(isTls && {
+      tls: {
+        rejectUnauthorized: false,
+      },
+    }),
+  };
+}
 
 /**
  * Idempotency manager
@@ -25,14 +48,19 @@ export class IdempotencyManager {
   private readonly lockRetryDelay: number = 100; // ms
 
   constructor(redis?: Redis) {
-    this.redis = redis || new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379', 10),
-      password: process.env.REDIS_PASSWORD,
-      db: parseInt(process.env.REDIS_DB || '0', 10),
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-    });
+    // Use REDIS_URL if available, otherwise fall back to individual env vars
+    const redisOptions: RedisOptions = process.env.REDIS_URL
+      ? parseRedisUrl(process.env.REDIS_URL)
+      : {
+          host: process.env.REDIS_HOST || 'localhost',
+          port: parseInt(process.env.REDIS_PORT || '6379', 10),
+          password: process.env.REDIS_PASSWORD,
+          db: parseInt(process.env.REDIS_DB || '0', 10),
+          maxRetriesPerRequest: null,
+          enableReadyCheck: false,
+        };
+
+    this.redis = redis || new Redis(redisOptions);
   }
 
   /**

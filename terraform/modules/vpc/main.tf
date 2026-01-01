@@ -48,8 +48,9 @@ resource "google_compute_subnetwork" "main" {
 }
 
 # Serverless VPC Access connector for Cloud Run
+# Note: Connector name must be max 25 chars (pattern: ^[a-z][-a-z0-9]{0,23}[a-z0-9]$)
 resource "google_vpc_access_connector" "main" {
-  name          = "${var.name_prefix}-vpc-connector"
+  name          = "ilm-${var.environment}-vpc-conn"
   project       = var.project_id
   region        = var.region
   network       = google_compute_network.main.id
