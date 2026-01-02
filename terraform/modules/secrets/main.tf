@@ -177,6 +177,23 @@ resource "google_secret_manager_secret" "google_client_secret" {
   })
 }
 
+# Cloudflare Turnstile Secret Key (Bot Protection)
+resource "google_secret_manager_secret" "turnstile_secret_key" {
+  count = var.create_security_secrets ? 1 : 0
+
+  secret_id = "${var.name_prefix}-turnstile-secret-key"
+  project   = var.project_id
+
+  replication {
+    auto {}
+  }
+
+  labels = merge(var.labels, {
+    "app"         = "interviewlm"
+    "secret-type" = "security"
+  })
+}
+
 # -----------------------------------------------------------------------------
 # IAM - Service Account Access to Secrets
 # -----------------------------------------------------------------------------
@@ -200,7 +217,8 @@ locals {
     var.create_oauth_secrets ? [
       "${var.name_prefix}-github-client-secret",
       "${var.name_prefix}-google-client-secret",
-    ] : []
+    ] : [],
+    var.create_security_secrets ? ["${var.name_prefix}-turnstile-secret-key"] : []
   )
 }
 
@@ -223,5 +241,6 @@ resource "google_secret_manager_secret_iam_member" "accessor" {
     google_secret_manager_secret.langsmith_api_key,
     google_secret_manager_secret.github_client_secret,
     google_secret_manager_secret.google_client_secret,
+    google_secret_manager_secret.turnstile_secret_key,
   ]
 }

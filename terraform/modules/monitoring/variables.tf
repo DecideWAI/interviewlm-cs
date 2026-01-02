@@ -51,15 +51,21 @@ variable "app_url" {
 
 # Alert thresholds
 variable "error_rate_threshold" {
-  description = "Error rate threshold (percentage)"
+  description = "Error rate threshold (percentage) - lower for earlier detection"
   type        = number
-  default     = 5
+  default     = 1  # Reduced from 5% for earlier incident detection
 }
 
 variable "latency_threshold_ms" {
-  description = "P99 latency threshold in milliseconds"
+  description = "P99 latency threshold in milliseconds (accounts for cold starts)"
   type        = number
-  default     = 2000
+  default     = 2000  # Kept at 2000ms to accommodate cold starts
+}
+
+variable "failed_jobs_threshold" {
+  description = "Number of failed jobs to trigger alert"
+  type        = number
+  default     = 10  # Alert when DLQ has >10 failed jobs
 }
 
 variable "database_cpu_threshold" {

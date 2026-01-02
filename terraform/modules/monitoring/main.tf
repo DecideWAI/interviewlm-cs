@@ -282,6 +282,78 @@ resource "google_monitoring_alert_policy" "uptime_failure" {
   enabled = var.alerts_enabled
 }
 
+# Log-based metric for failed jobs
+resource "google_logging_metric" "failed_jobs" {
+  project     = var.project_id
+  name        = "${var.name_prefix}-failed-jobs"
+  description = "Count of failed background jobs (BullMQ)"
+
+  filter = <<-EOT
+    resource.type="cloud_run_revision"
+    resource.labels.service_name=~".*worker.*"
+    jsonPayload.message=~"failed|error|Error processing job"
+    severity>=ERROR
+  EOT
+
+  metric_descriptor {
+    metric_kind = "DELTA"
+    value_type  = "INT64"
+    unit        = "1"
+    labels {
+      key         = "queue_name"
+      value_type  = "STRING"
+      description = "Name of the queue"
+    }
+  }
+
+  label_extractors = {
+    "queue_name" = "REGEXP_EXTRACT(jsonPayload.queue, \"(.*)\")"
+  }
+}
+
+# Alert for high failed job count
+resource "google_monitoring_alert_policy" "failed_jobs" {
+  project      = var.project_id
+  display_name = "${var.name_prefix} - High Failed Job Count"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Failed jobs > ${var.failed_jobs_threshold}"
+
+    condition_threshold {
+      filter          = "resource.type = \"cloud_run_revision\" AND metric.type = \"logging.googleapis.com/user/${google_logging_metric.failed_jobs.name}\""
+      duration        = "300s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = var.failed_jobs_threshold
+
+      aggregations {
+        alignment_period     = "300s"
+        per_series_aligner   = "ALIGN_SUM"
+        cross_series_reducer = "REDUCE_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = [for ch in google_monitoring_notification_channel.email : ch.id]
+
+  alert_strategy {
+    auto_close = "3600s"
+  }
+
+  documentation {
+    content   = "High number of failed background jobs detected. Check the DLQ at /api/admin/dlq for details."
+    mime_type = "text/markdown"
+  }
+
+  user_labels = var.labels
+
+  enabled = var.alerts_enabled
+}
+
 # -----------------------------------------------------------------------------
 # Dashboard
 # -----------------------------------------------------------------------------

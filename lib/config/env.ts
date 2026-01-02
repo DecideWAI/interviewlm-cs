@@ -70,12 +70,19 @@ const envSchema = z.object({
     .transform((val) => val === "true")
     .default("false"), // Disabled by default for safety
 
-  // Monitoring
+  // Monitoring (Sentry)
   SENTRY_DSN: z.string().url("Invalid SENTRY_DSN").optional(),
+  NEXT_PUBLIC_SENTRY_DSN: z.string().url("Invalid NEXT_PUBLIC_SENTRY_DSN").optional(),
+  SENTRY_ORG: z.string().optional(),
+  SENTRY_PROJECT: z.string().optional(),
+  SENTRY_AUTH_TOKEN: z.string().optional(),
 
   // Cloudflare Turnstile (Bot Protection)
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
   TURNSTILE_SECRET_KEY: z.string().optional(),
+
+  // CORS Configuration
+  ALLOWED_ORIGINS: z.string().optional(), // Comma-separated list of allowed origins
 });
 
 // Parse and validate environment variables
@@ -121,6 +128,7 @@ export const features = {
   hasTurnstile: Boolean(
     env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
   ),
+  hasSentry: Boolean(env.SENTRY_DSN || env.NEXT_PUBLIC_SENTRY_DSN),
 } as const;
 
 // Helper to check if running in production

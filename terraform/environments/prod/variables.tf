@@ -194,3 +194,23 @@ variable "resend_from_email" {
   type        = string
   default     = "noreply@interviewlm.com"
 }
+
+# -----------------------------------------------------------------------------
+# Security Configuration (Turnstile)
+# -----------------------------------------------------------------------------
+
+variable "turnstile_site_key" {
+  description = "Cloudflare Turnstile site key (public, safe to expose)"
+  type        = string
+  default     = ""
+}
+
+# -----------------------------------------------------------------------------
+# Monitoring Configuration (Sentry)
+# -----------------------------------------------------------------------------
+
+variable "sentry_dsn" {
+  description = "Sentry DSN for error monitoring (safe to expose)"
+  type        = string
+  default     = ""
+}

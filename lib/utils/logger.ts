@@ -2,9 +2,10 @@
  * Production Logger
  *
  * Structured logging with different levels and contexts.
- * Integrates with monitoring services in production.
+ * Integrates with Sentry for error monitoring in production.
  */
 
+import * as Sentry from "@sentry/nextjs";
 import { isProd, isDev } from "@/lib/config/env";
 
 export enum LogLevel {
@@ -120,8 +121,28 @@ class Logger {
   }
 
   private sendToMonitoring(entry: LogEntry): void {
-    // TODO: Integrate with Sentry or other monitoring service
-    // Example: Sentry.captureException(entry.error, { extra: entry.context });
+    // Send errors to Sentry
+    if (entry.error) {
+      Sentry.captureException(entry.error, {
+        level: entry.level === LogLevel.FATAL ? "fatal" : "error",
+        extra: {
+          message: entry.message,
+          ...entry.context,
+        },
+        tags: {
+          logLevel: LogLevel[entry.level],
+        },
+      });
+    } else {
+      // For errors without an Error object, send as a message
+      Sentry.captureMessage(entry.message, {
+        level: entry.level === LogLevel.FATAL ? "fatal" : "error",
+        extra: entry.context,
+        tags: {
+          logLevel: LogLevel[entry.level],
+        },
+      });
+    }
   }
 
   debug(message: string, context?: LogContext): void {

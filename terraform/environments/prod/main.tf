@@ -306,6 +306,7 @@ module "secrets" {
   create_payment_secrets       = true
   create_observability_secrets = true
   create_oauth_secrets         = var.enable_oauth
+  create_security_secrets      = true
 
   service_account_email = module.iam.cloud_run_service_account_email
 
@@ -364,6 +365,11 @@ module "cloud_run" {
     LANGSMITH_TRACING  = "true"
     LANGSMITH_PROJECT  = "interviewlm-prod"
     LANGSMITH_ENDPOINT = "https://api.smith.langchain.com"
+    # Security (Cloudflare Turnstile)
+    NEXT_PUBLIC_TURNSTILE_SITE_KEY = var.turnstile_site_key
+    # Monitoring (Sentry)
+    SENTRY_DSN             = var.sentry_dsn
+    NEXT_PUBLIC_SENTRY_DSN = var.sentry_dsn
   }
 
   app_secret_env_vars = {
@@ -405,6 +411,10 @@ module "cloud_run" {
     }
     LANGSMITH_API_KEY = {
       secret_id = module.secrets.langsmith_api_key_secret_id
+      version   = "latest"
+    }
+    TURNSTILE_SECRET_KEY = {
+      secret_id = module.secrets.turnstile_secret_key_secret_id
       version   = "latest"
     }
   }

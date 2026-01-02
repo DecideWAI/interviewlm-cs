@@ -40,6 +40,12 @@ variable "create_oauth_secrets" {
   default     = false
 }
 
+variable "create_security_secrets" {
+  description = "Create security secrets (Cloudflare Turnstile)"
+  type        = bool
+  default     = true
+}
+
 # IAM
 variable "service_account_email" {
   description = "Service account email for secret access"
