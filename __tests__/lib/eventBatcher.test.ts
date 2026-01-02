@@ -251,8 +251,10 @@ describe('EventBatcher', () => {
       jest.advanceTimersByTime(5000);
       await Promise.resolve();
 
-      // Should only be called once (from destroy), not from timer
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      // Fetch should not be called:
+      // - destroy() with empty queue doesn't flush
+      // - timer is stopped so adding event after destroy doesn't trigger flush
+      expect(global.fetch).not.toHaveBeenCalled();
     });
   });
 

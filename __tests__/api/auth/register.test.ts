@@ -15,6 +15,12 @@ jest.mock('@/lib/prisma', () => ({
       findUnique: jest.fn(),
       create: jest.fn(),
     },
+    organization: {
+      findUnique: jest.fn().mockResolvedValue(null), // No existing org with same slug
+    },
+    verificationToken: {
+      create: jest.fn().mockResolvedValue({ identifier: 'test@test.com', token: 'token', expires: new Date() }),
+    },
   },
 }))
 

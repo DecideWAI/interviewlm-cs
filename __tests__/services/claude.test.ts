@@ -412,7 +412,10 @@ describe("Claude AI Service", () => {
       );
 
       const callArgs = mockAnthropicInstance.messages.create.mock.calls[0][0];
-      const systemPrompt = callArgs.system;
+      // System prompt can be array of text blocks or a string
+      const systemPrompt = Array.isArray(callArgs.system)
+        ? callArgs.system.map((block: { text: string }) => block.text).join('')
+        : callArgs.system;
 
       expect(systemPrompt).toContain("Palindrome Checker");
       expect(systemPrompt).toContain("Check if a string is a palindrome");
@@ -444,7 +447,10 @@ describe("Claude AI Service", () => {
       );
 
       const callArgs = mockAnthropicInstance.messages.create.mock.calls[0][0];
-      const systemPrompt = callArgs.system;
+      // System prompt can be array of text blocks or a string
+      const systemPrompt = Array.isArray(callArgs.system)
+        ? callArgs.system.map((block: { text: string }) => block.text).join('')
+        : callArgs.system;
 
       expect(systemPrompt).toContain("Simple Problem");
       expect(systemPrompt).toContain("Solve it");
