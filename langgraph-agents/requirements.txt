@@ -7,10 +7,11 @@ langchain>=1.1.2
 langchain-core>=1.1.1
 langchain-anthropic>=1.2.0
 
-# LLM providers (Anthropic only - Google GenAI conflicts with langgraph-api protobuf)
+# LLM providers
 anthropic>=0.75.0
 langchain-openai>=0.3.0
 openai>=1.50.0
+langchain-google-genai>=2.1.0
 
 # HTTP API server
 fastapi>=0.115.0
