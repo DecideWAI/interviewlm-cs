@@ -16,8 +16,8 @@ Sentry.init({
   // Performance monitoring - sample more in production for APM
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
 
-  // Only send errors in production
-  enabled: process.env.NODE_ENV === "production",
+  // Enable in all environments (set to false to disable)
+  enabled: true,
 
   // Server-specific settings
   serverName: process.env.HOSTNAME || "interviewlm-server",
@@ -35,11 +35,6 @@ Sentry.init({
 
   // Filter and enrich events before sending
   beforeSend(event, hint) {
-    // Don't send events in development
-    if (process.env.NODE_ENV !== "production") {
-      return null;
-    }
-
     // Add extra context from the original exception
     const error = hint.originalException;
     if (error instanceof Error) {

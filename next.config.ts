@@ -45,9 +45,6 @@ const sentryWebpackPluginOptions = {
   // Upload source maps for better stack traces
   widenClientFileUpload: true,
 
-  // Automatically tree-shake Sentry from client bundle when not needed
-  disableLogger: true,
-
   // Hide source maps from production build
   hideSourceMaps: true,
 
@@ -57,8 +54,10 @@ const sentryWebpackPluginOptions = {
   // Route browser requests to Sentry through Next.js rewrite to avoid ad-blockers
   tunnelRoute: '/monitoring-tunnel',
 
-  // Automatically instrument with Sentry
-  automaticVercelMonitors: true,
+  // Webpack-specific options (new format to fix deprecation warnings)
+  bundleSizeOptimizations: {
+    excludeDebugStatements: true,
+  },
 };
 
 // Only apply Sentry config in production or if explicitly enabled

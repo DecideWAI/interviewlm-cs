@@ -16,8 +16,8 @@ Sentry.init({
   // Performance monitoring
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
 
-  // Only send errors in production
-  enabled: process.env.NODE_ENV === "production",
+  // Enable in all environments (set to false to disable)
+  enabled: true,
 
   // Ignore expected errors
   ignoreErrors: [

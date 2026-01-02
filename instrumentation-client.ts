@@ -1,11 +1,20 @@
 /**
- * Sentry Client Configuration
+ * Next.js Client Instrumentation
  *
  * This file configures Sentry for the browser/client-side.
  * It captures JavaScript errors, performance metrics, and user interactions.
+ *
+ * Note: This is the new convention for Turbopack compatibility.
+ * The content is identical to sentry.client.config.ts which is kept for
+ * backwards compatibility with Webpack.
  */
 
 import * as Sentry from "@sentry/nextjs";
+
+/**
+ * Capture router transitions for navigation performance monitoring.
+ */
+export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
 
 Sentry.init({
   dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
@@ -20,8 +29,8 @@ Sentry.init({
   replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
 
-  // Only send errors in production
-  enabled: process.env.NODE_ENV === "production",
+  // Enable in all environments (set to false to disable)
+  enabled: true,
 
   // Ignore common browser errors that aren't actionable
   ignoreErrors: [
@@ -50,11 +59,6 @@ Sentry.init({
 
   // Filter out noisy events
   beforeSend(event, hint) {
-    // Don't send events in development
-    if (process.env.NODE_ENV !== "production") {
-      return null;
-    }
-
     // Filter out ResizeObserver loop errors (browser bug, not actionable)
     const error = hint.originalException;
     if (

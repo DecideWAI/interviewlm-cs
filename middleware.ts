@@ -70,6 +70,8 @@ const getCSP = (): string => {
     "base-uri 'self'",
     // Object sources: none
     "object-src 'none'",
+    // Workers: self and blob (for Sentry replay)
+    "worker-src 'self' blob:",
     // Upgrade insecure requests in production
     ...(process.env.NODE_ENV === "production" ? ["upgrade-insecure-requests"] : []),
   ];

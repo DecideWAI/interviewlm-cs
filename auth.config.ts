@@ -6,6 +6,8 @@ import { compare } from "bcryptjs";
 import prisma from "@/lib/prisma";
 
 export default {
+  // Trust the host when behind a reverse proxy (Cloud Run, Vercel, etc.)
+  trustHost: true,
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
