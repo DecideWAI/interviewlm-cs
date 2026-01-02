@@ -2,10 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import crypto from "crypto";
 import { sendPasswordReset } from "@/lib/services/email";
+import { redisPasswordResetRateLimit } from "@/lib/middleware/redis-rate-limit";
+import { authTurnstileVerifier } from "@/lib/middleware/turnstile";
 
 export async function POST(req: NextRequest) {
   try {
-    const { email } = await req.json();
+    // Apply rate limiting first
+    const rateLimited = await redisPasswordResetRateLimit(req);
+    if (rateLimited) return rateLimited;
+
+    const body = await req.json();
+    const { email } = body;
+
+    // Verify Turnstile token
+    const turnstileResult = await authTurnstileVerifier(req, body);
+    if (turnstileResult) return turnstileResult;
 
     if (!email || typeof email !== "string") {
       return NextResponse.json(

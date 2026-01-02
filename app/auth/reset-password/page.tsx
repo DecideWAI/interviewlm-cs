@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, Suspense, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,11 +10,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Logo } from "@/components/Logo";
 import { Lock, ArrowRight, Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { toast } from "sonner";
+import { Turnstile, type TurnstileRef } from "@/components/security/Turnstile";
 
 function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  const turnstileRef = useRef<TurnstileRef>(null);
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -61,10 +63,13 @@ function ResetPasswordForm() {
     setIsLoading(true);
 
     try {
+      // Get Turnstile token
+      const turnstileToken = await turnstileRef.current?.getToken();
+
       const response = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, password }),
+        body: JSON.stringify({ token, password, turnstileToken }),
       });
 
       const data = await response.json();
@@ -75,9 +80,11 @@ function ResetPasswordForm() {
         setTimeout(() => router.push("/auth/signin"), 3000);
       } else {
         toast.error(data.error || "Failed to reset password");
+        turnstileRef.current?.reset();
       }
     } catch (error) {
       toast.error("Something went wrong");
+      turnstileRef.current?.reset();
     } finally {
       setIsLoading(false);
     }
@@ -250,6 +257,9 @@ function ResetPasswordForm() {
                   />
                 </div>
               </div>
+
+              {/* Invisible Turnstile bot protection */}
+              <Turnstile ref={turnstileRef} action="reset-password" />
 
               <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
                 {isLoading ? (

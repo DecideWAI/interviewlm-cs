@@ -72,6 +72,10 @@ const envSchema = z.object({
 
   // Monitoring
   SENTRY_DSN: z.string().url("Invalid SENTRY_DSN").optional(),
+
+  // Cloudflare Turnstile (Bot Protection)
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: z.string().optional(),
+  TURNSTILE_SECRET_KEY: z.string().optional(),
 });
 
 // Parse and validate environment variables
@@ -114,6 +118,9 @@ export const features = {
     github: Boolean(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET),
     google: Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET),
   },
+  hasTurnstile: Boolean(
+    env.NEXT_PUBLIC_TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET_KEY
+  ),
 } as const;
 
 // Helper to check if running in production
@@ -145,6 +152,10 @@ export function logMissingFeatures() {
 
   if (!features.hasRedis) {
     warnings.push("⚠️  Redis not configured - background jobs and caching disabled");
+  }
+
+  if (!features.hasTurnstile) {
+    warnings.push("⚠️  Turnstile not configured - bot protection disabled");
   }
 
   if (warnings.length > 0 && isProd) {

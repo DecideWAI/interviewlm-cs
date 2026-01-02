@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Logo } from "@/components/Logo";
 import { Mail, Lock, ArrowRight, Github, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Turnstile, type TurnstileRef } from "@/components/security/Turnstile";
 
 export default function SignInPage() {
   const router = useRouter();
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
@@ -25,10 +27,14 @@ export default function SignInPage() {
     setIsLoading(true);
 
     try {
+      // Get Turnstile token for bot protection
+      const turnstileToken = await turnstileRef.current?.getToken();
+
       console.log("Attempting sign in with:", email);
       const result = await signIn("credentials", {
         email,
         password,
+        turnstileToken,
         redirect: false,
       });
       console.log("Sign in result:", result);
@@ -36,6 +42,7 @@ export default function SignInPage() {
       if (result?.error) {
         console.error("Sign in error:", result.error);
         toast.error("Invalid email or password");
+        turnstileRef.current?.reset();
       } else {
         console.log("Sign in success, redirecting...");
         toast.success("Welcome back!");
@@ -44,6 +51,7 @@ export default function SignInPage() {
     } catch (error) {
       console.error("Sign in exception:", error);
       toast.error("Something went wrong");
+      turnstileRef.current?.reset();
     } finally {
       setIsLoading(false);
     }
@@ -191,6 +199,9 @@ export default function SignInPage() {
                   Forgot password?
                 </Link>
               </div>
+
+              {/* Invisible Turnstile bot protection */}
+              <Turnstile ref={turnstileRef} action="signin" />
 
               <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
                 {isLoading ? (

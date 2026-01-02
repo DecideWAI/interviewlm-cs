@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
@@ -12,9 +12,11 @@ import { Select } from "@/components/ui/select";
 import { Logo } from "@/components/Logo";
 import { Mail, Lock, User, Building, ArrowRight, Github, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Turnstile, type TurnstileRef } from "@/components/security/Turnstile";
 
 export default function SignUpPage() {
   const router = useRouter();
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,11 +29,14 @@ export default function SignUpPage() {
     setIsLoading(true);
 
     try {
+      // Get Turnstile token
+      const turnstileToken = await turnstileRef.current?.getToken();
+
       // Register user
       const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, turnstileToken }),
       });
 
       const data = await response.json();
@@ -59,6 +64,7 @@ export default function SignUpPage() {
       }
     } catch (error) {
       toast.error("Something went wrong");
+      turnstileRef.current?.reset();
       setIsLoading(false);
     }
   };
@@ -243,6 +249,9 @@ export default function SignUpPage() {
                   Must be at least 8 characters
                 </p>
               </div>
+
+              {/* Invisible Turnstile bot protection */}
+              <Turnstile ref={turnstileRef} action="signup" />
 
               <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
                 {isLoading ? (

@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Turnstile, type TurnstileRef } from "@/components/security/Turnstile";
 
 interface CandidateData {
   candidate: {
@@ -56,6 +57,7 @@ interface CandidateData {
 export default function CandidateLandingPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = use(params);
   const router = useRouter();
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<CandidateData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,8 +89,13 @@ export default function CandidateLandingPage({ params }: { params: Promise<{ tok
     setStarting(true);
 
     try {
+      // Get Turnstile token for bot protection
+      const turnstileToken = await turnstileRef.current?.getToken();
+
       const response = await fetch(`/api/interview/start/${token}`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turnstileToken }),
       });
 
       if (response.ok) {
@@ -97,10 +104,12 @@ export default function CandidateLandingPage({ params }: { params: Promise<{ tok
       } else {
         const json = await response.json();
         toast.error(json.error || "Failed to start interview");
+        turnstileRef.current?.reset();
         setStarting(false);
       }
     } catch (err) {
       toast.error("Something went wrong");
+      turnstileRef.current?.reset();
       setStarting(false);
     }
   };
@@ -379,6 +388,9 @@ export default function CandidateLandingPage({ params }: { params: Promise<{ tok
                 </div>
               </div>
             )}
+
+            {/* Invisible Turnstile bot protection */}
+            <Turnstile ref={turnstileRef} action="interview-start" />
 
             {/* CTA */}
             <Button

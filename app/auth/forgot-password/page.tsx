@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,8 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Logo } from "@/components/Logo";
 import { Mail, ArrowLeft, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
+import { Turnstile, type TurnstileRef } from "@/components/security/Turnstile";
 
 export default function ForgotPasswordPage() {
+  const turnstileRef = useRef<TurnstileRef>(null);
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
@@ -20,10 +22,13 @@ export default function ForgotPasswordPage() {
     setIsLoading(true);
 
     try {
+      // Get Turnstile token
+      const turnstileToken = await turnstileRef.current?.getToken();
+
       const response = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, turnstileToken }),
       });
 
       const data = await response.json();
@@ -33,9 +38,11 @@ export default function ForgotPasswordPage() {
         toast.success("Password reset email sent");
       } else {
         toast.error(data.error || "Something went wrong");
+        turnstileRef.current?.reset();
       }
     } catch (error) {
       toast.error("Failed to send reset email");
+      turnstileRef.current?.reset();
     } finally {
       setIsLoading(false);
     }
@@ -146,6 +153,9 @@ export default function ForgotPasswordPage() {
                   />
                 </div>
               </div>
+
+              {/* Invisible Turnstile bot protection */}
+              <Turnstile ref={turnstileRef} action="forgot-password" />
 
               <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
                 {isLoading ? (

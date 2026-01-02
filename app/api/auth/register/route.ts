@@ -3,10 +3,21 @@ import { hash } from "bcryptjs";
 import prisma from "@/lib/prisma";
 import crypto from "crypto";
 import { sendEmailVerification } from "@/lib/services/email";
+import { redisRegistrationRateLimit } from "@/lib/middleware/redis-rate-limit";
+import { authTurnstileVerifier } from "@/lib/middleware/turnstile";
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, email, password } = await req.json();
+    // Apply rate limiting first
+    const rateLimited = await redisRegistrationRateLimit(req);
+    if (rateLimited) return rateLimited;
+
+    const body = await req.json();
+    const { name, email, password } = body;
+
+    // Verify Turnstile token
+    const turnstileResult = await authTurnstileVerifier(req, body);
+    if (turnstileResult) return turnstileResult;
 
     // Validation
     if (!email || !password) {

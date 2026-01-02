@@ -54,6 +54,7 @@
     "@google-cloud/storage": "^7.18.0",
     "@langchain/langgraph-sdk": "^1.2.0",
     "@lezer/highlight": "^1.2.3",
+    "@marsidev/react-turnstile": "^1.4.1",
     "@prisma/client": "6.19.0",
     "@uiw/codemirror-theme-vscode": "^4.25.3",
     "@uiw/codemirror-themes": "^4.25.3",

@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
-import crypto from "crypto";
 import { withErrorHandling, NotFoundError, ValidationError } from "@/lib/utils/errors";
 import { success } from "@/lib/utils/api-response";
 import { logger } from "@/lib/utils/logger";
-import { relaxedRateLimit } from "@/lib/middleware/rate-limit";
+import { redisRelaxedRateLimit } from "@/lib/middleware/redis-rate-limit";
+import { interviewTurnstileVerifier } from "@/lib/middleware/turnstile";
 
 export const POST = withErrorHandling(async (
   req: NextRequest,
@@ -12,9 +12,21 @@ export const POST = withErrorHandling(async (
 ) => {
   const { token } = await params;
 
-  // Apply relaxed rate limiting (public endpoint for candidates)
-  const rateLimited = await relaxedRateLimit(req);
+  // Apply Redis rate limiting (public endpoint for candidates)
+  const rateLimited = await redisRelaxedRateLimit(req);
   if (rateLimited) return rateLimited;
+
+  // Parse body for Turnstile token (may be empty)
+  let body: Record<string, unknown> = {};
+  try {
+    body = await req.clone().json();
+  } catch {
+    // Empty body is acceptable
+  }
+
+  // Verify Turnstile token
+  const turnstileResult = await interviewTurnstileVerifier(req, body);
+  if (turnstileResult) return turnstileResult;
 
   if (!token) {
     throw new ValidationError("Invalid invitation token");
