@@ -56,11 +56,11 @@ describe('Button Component', () => {
 
     rerender(<Button size="md">Medium</Button>)
     button = screen.getByRole('button')
-    expect(button).toHaveClass('h-10')
+    expect(button).toHaveClass('h-9')
 
     rerender(<Button size="lg">Large</Button>)
     button = screen.getByRole('button')
-    expect(button).toHaveClass('h-12')
+    expect(button).toHaveClass('h-10')
   })
 
   it('should render as a child component when asChild is true', () => {

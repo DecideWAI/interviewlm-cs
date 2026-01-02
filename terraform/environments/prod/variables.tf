@@ -35,25 +35,25 @@ variable "custom_domain" {
 variable "app_cpu" {
   description = "CPU for app containers"
   type        = string
-  default     = "1"  # Budget: 1 vCPU (was 4)
+  default     = "1" # Budget: 1 vCPU (was 4)
 }
 
 variable "app_memory" {
   description = "Memory for app containers"
   type        = string
-  default     = "1Gi"  # Budget: 1GB (was 2Gi)
+  default     = "1Gi" # Budget: 1GB (was 2Gi)
 }
 
 variable "app_min_instances" {
   description = "Minimum app instances (0 for scale-to-zero)"
   type        = number
-  default     = 0  # Budget: Scale-to-zero (was 2)
+  default     = 0 # Budget: Scale-to-zero (was 2)
 }
 
 variable "app_max_instances" {
   description = "Maximum app instances"
   type        = number
-  default     = 10  # Budget: Max 10 (was 20)
+  default     = 10 # Budget: Max 10 (was 20)
 }
 
 # -----------------------------------------------------------------------------
@@ -63,25 +63,25 @@ variable "app_max_instances" {
 variable "worker_cpu" {
   description = "CPU for worker containers"
   type        = string
-  default     = "1"  # Budget: 1 vCPU (was 2)
+  default     = "1" # Budget: 1 vCPU (was 2)
 }
 
 variable "worker_memory" {
   description = "Memory for worker containers"
   type        = string
-  default     = "1Gi"  # Budget: 1GB (was 2Gi)
+  default     = "1Gi" # Budget: 1GB (was 2Gi)
 }
 
 variable "worker_min_instances" {
   description = "Minimum worker instances (0 for scale-to-zero)"
   type        = number
-  default     = 0  # Budget: Scale-to-zero (was 2)
+  default     = 0 # Budget: Scale-to-zero (was 2)
 }
 
 variable "worker_max_instances" {
   description = "Maximum worker instances"
   type        = number
-  default     = 5  # Budget: Max 5 (was 10)
+  default     = 5 # Budget: Max 5 (was 10)
 }
 
 # -----------------------------------------------------------------------------
@@ -91,7 +91,7 @@ variable "worker_max_instances" {
 variable "database_tier" {
   description = "Cloud SQL machine tier"
   type        = string
-  default     = "db-g1-small"  # Budget: ~$25/month (was db-custom-2-4096)
+  default     = "db-g1-small" # Budget: ~$25/month (was db-custom-2-4096)
 }
 
 # -----------------------------------------------------------------------------
@@ -101,7 +101,7 @@ variable "database_tier" {
 variable "redis_memory_gb" {
   description = "Redis memory in GB"
   type        = number
-  default     = 1  # Budget: 1GB (was 5)
+  default     = 1 # Budget: 1GB (was 5)
 }
 
 # -----------------------------------------------------------------------------

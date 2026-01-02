@@ -59,16 +59,16 @@ output "turnstile_secret_key_secret_id" {
 output "all_secret_ids" {
   description = "Map of all secret IDs"
   value = {
-    nextauth_secret       = google_secret_manager_secret.nextauth_secret.secret_id
-    anthropic_api_key     = google_secret_manager_secret.anthropic_api_key.secret_id
-    modal_token_id        = google_secret_manager_secret.modal_token_id.secret_id
-    modal_token_secret    = google_secret_manager_secret.modal_token_secret.secret_id
-    resend_api_key        = var.create_email_secrets ? google_secret_manager_secret.resend_api_key[0].secret_id : null
-    paddle_api_key        = var.create_payment_secrets ? google_secret_manager_secret.paddle_api_key[0].secret_id : null
-    paddle_webhook        = var.create_payment_secrets ? google_secret_manager_secret.paddle_webhook_secret[0].secret_id : null
-    langsmith_api_key     = var.create_observability_secrets ? google_secret_manager_secret.langsmith_api_key[0].secret_id : null
-    github_client_secret  = var.create_oauth_secrets ? google_secret_manager_secret.github_client_secret[0].secret_id : null
-    google_client_secret  = var.create_oauth_secrets ? google_secret_manager_secret.google_client_secret[0].secret_id : null
-    turnstile_secret_key  = var.create_security_secrets ? google_secret_manager_secret.turnstile_secret_key[0].secret_id : null
+    nextauth_secret      = google_secret_manager_secret.nextauth_secret.secret_id
+    anthropic_api_key    = google_secret_manager_secret.anthropic_api_key.secret_id
+    modal_token_id       = google_secret_manager_secret.modal_token_id.secret_id
+    modal_token_secret   = google_secret_manager_secret.modal_token_secret.secret_id
+    resend_api_key       = var.create_email_secrets ? google_secret_manager_secret.resend_api_key[0].secret_id : null
+    paddle_api_key       = var.create_payment_secrets ? google_secret_manager_secret.paddle_api_key[0].secret_id : null
+    paddle_webhook       = var.create_payment_secrets ? google_secret_manager_secret.paddle_webhook_secret[0].secret_id : null
+    langsmith_api_key    = var.create_observability_secrets ? google_secret_manager_secret.langsmith_api_key[0].secret_id : null
+    github_client_secret = var.create_oauth_secrets ? google_secret_manager_secret.github_client_secret[0].secret_id : null
+    google_client_secret = var.create_oauth_secrets ? google_secret_manager_secret.google_client_secret[0].secret_id : null
+    turnstile_secret_key = var.create_security_secrets ? google_secret_manager_secret.turnstile_secret_key[0].secret_id : null
   }
 }

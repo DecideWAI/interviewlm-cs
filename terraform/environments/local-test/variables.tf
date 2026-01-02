@@ -8,11 +8,11 @@ variable "project_id" {
 variable "region" {
   description = "GCP region (different from production us-central1)"
   type        = string
-  default     = "us-east1"  # Different from prod (us-central1)
+  default     = "us-east1" # Different from prod (us-central1)
 }
 
 variable "retention_days" {
   description = "Number of days to retain test files before auto-deletion"
   type        = number
-  default     = 7  # Short retention for test data
+  default     = 7 # Short retention for test data
 }

@@ -177,7 +177,7 @@ resource "google_secret_manager_secret" "database_url" {
 resource "google_secret_manager_secret_version" "database_url" {
   count = var.store_password_in_secret_manager ? 1 : 0
 
-  secret      = google_secret_manager_secret.database_url[0].id
+  secret = google_secret_manager_secret.database_url[0].id
   # Include sslmode=require when SSL is enforced (ENCRYPTED_ONLY or TRUSTED_CLIENT_CERTIFICATE_REQUIRED)
   secret_data = var.ssl_mode != "ALLOW_UNENCRYPTED_AND_ENCRYPTED" ? "postgresql://${var.database_user}:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/${var.database_name}?schema=public&sslmode=require" : "postgresql://${var.database_user}:${random_password.db_password.result}@${google_sql_database_instance.main.private_ip_address}:5432/${var.database_name}?schema=public"
 }
