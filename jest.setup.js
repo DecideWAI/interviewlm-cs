@@ -73,9 +73,17 @@ jest.mock('@/lib/services/email', () => ({
   sendVerificationEmail: jest.fn().mockResolvedValue({ success: true }),
 }))
 
-// Mock @auth/prisma-adapter (ESM module)
+// Mock @auth modules (ESM modules)
 jest.mock('@auth/prisma-adapter', () => ({
   PrismaAdapter: jest.fn(() => ({})),
+}))
+
+jest.mock('@auth/core/providers/google', () => ({
+  default: jest.fn(() => ({ id: 'google', name: 'Google' })),
+}))
+
+jest.mock('@auth/core/providers/credentials', () => ({
+  default: jest.fn(() => ({ id: 'credentials', name: 'Credentials' })),
 }))
 
 // Mock msgpackr (ESM module used by ioredis)
