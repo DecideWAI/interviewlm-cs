@@ -1,0 +1,27 @@
+{
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "framework": "nextjs",
+  "env": {
+    "PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING": "1",
+    "SKIP_ENV_VALIDATION": "1",
+    "NEXT_TELEMETRY_DISABLED": "1"
+  },
+  "build": {
+    "env": {
+      "PRISMA_ENGINES_CHECKSUM_IGNORE_MISSING": "1",
+      "SKIP_ENV_VALIDATION": "1"
+    }
+  },
+  "functions": {
+    "app/**/*.{js,ts}": {
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/:path*"
+    }
+  ]
+}

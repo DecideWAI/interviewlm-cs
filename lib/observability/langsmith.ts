@@ -1,0 +1,447 @@
+/**
+ * LangSmith Observability Integration
+ *
+ * Provides automatic tracing for Claude API calls using LangSmith.
+ * All agent interactions, tool uses, and responses are captured for monitoring.
+ *
+ * Uses RunTree for proper parent-child trace hierarchies with thread support.
+ */
+
+import { wrapSDK } from "langsmith/wrappers";
+import { traceable } from "langsmith/traceable";
+import { Client } from "langsmith";
+import Anthropic from "@anthropic-ai/sdk";
+import { v5 as uuidv5 } from "uuid";
+import { logger } from "../utils/logger";
+
+// =============================================================================
+// Thread ID Generation (must match LangGraph SDK usage)
+// =============================================================================
+
+// Namespace UUID for generating deterministic thread IDs (DNS namespace - same as langgraph-client.ts)
+const LANGGRAPH_NAMESPACE = "6ba7b810-9dad-11d1-80b4-00c04fd430c8";
+
+/**
+ * Generate a deterministic UUID from session ID and agent type.
+ * This MUST match the logic in:
+ * - lib/services/langgraph-client.ts (generateThreadUUID)
+ * - app/api/interview/[id]/chat/agent/stream/route.ts (generateThreadUUID)
+ *
+ * This ensures all traces (LangSmith, LangGraph) use the same thread ID.
+ */
+function generateThreadUUID(sessionId: string, agentType: string = "coding_agent"): string {
+  const input = `${agentType}:${sessionId}`;
+  return uuidv5(input, LANGGRAPH_NAMESPACE);
+}
+
+// LangSmith client singleton
+let langsmithClient: Client | null = null;
+
+// Check if LangSmith is enabled
+const isLangSmithEnabled = (): boolean => {
+  return process.env.LANGSMITH_TRACING === "true" && !!process.env.LANGSMITH_API_KEY;
+};
+
+/**
+ * Get or create LangSmith client
+ */
+function getLangSmithClient(): Client | null {
+  if (!isLangSmithEnabled()) {
+    return null;
+  }
+
+  if (!langsmithClient) {
+    langsmithClient = new Client({
+      apiKey: process.env.LANGSMITH_API_KEY,
+      apiUrl: process.env.LANGSMITH_ENDPOINT || "https://api.smith.langchain.com",
+    });
+  }
+  return langsmithClient;
+}
+
+// Singleton for the base Anthropic client (not wrapped - we wrap per-call for context)
+let baseClient: Anthropic | null = null;
+
+// Store for wrapped clients per thread to ensure proper context
+const wrappedClients = new Map<string, Anthropic>();
+
+/**
+ * Get the base Anthropic client
+ */
+function getBaseAnthropicClient(): Anthropic {
+  if (!baseClient) {
+    baseClient = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      defaultHeaders: {
+        "anthropic-beta": "prompt-caching-2024-07-31",
+      },
+    });
+  }
+  return baseClient;
+}
+
+/**
+ * Get an Anthropic client with LangSmith tracing enabled
+ * Falls back to regular client if LangSmith is not configured
+ *
+ * @param sessionId - Optional session ID to group traces (will be converted to deterministic UUID)
+ */
+export function getTracedAnthropicClient(sessionId?: string): Anthropic {
+  const client = getBaseAnthropicClient();
+
+  if (isLangSmithEnabled()) {
+    try {
+      // Convert sessionId to deterministic UUID for consistent thread grouping
+      const threadUUID = sessionId ? generateThreadUUID(sessionId) : undefined;
+
+      // Check if we already have a wrapped client for this thread
+      const cacheKey = threadUUID || "default";
+      let wrappedClient = wrappedClients.get(cacheKey);
+
+      if (!wrappedClient) {
+        // Wrap with SDK wrapper - this will pick up parent context from traceable
+        wrappedClient = wrapSDK(client, {
+          name: "anthropic",
+          runName: threadUUID ? `claude-${threadUUID.slice(0, 8)}` : "claude",
+          metadata: threadUUID ? { thread_id: threadUUID } : undefined,
+        });
+        wrappedClients.set(cacheKey, wrappedClient);
+
+        // Limit cache size
+        if (wrappedClients.size > 100) {
+          const firstKey = wrappedClients.keys().next().value;
+          if (firstKey) wrappedClients.delete(firstKey);
+        }
+      }
+
+      return wrappedClient;
+    } catch (error) {
+      logger.warn("[LangSmith] Failed to wrap SDK, using untraced client", { error });
+      return client;
+    }
+  }
+
+  return client;
+}
+
+// Current thread context for nested traces
+let currentThreadId: string | null = null;
+let currentRunId: string | null = null;
+
+/**
+ * Generate a proper UUID v4 for LangSmith run IDs
+ * LangSmith requires valid UUID format (8-4-4-4-12 hex characters)
+ */
+function generateRunId(_sessionId: string): string {
+  // Generate a proper UUID v4
+  const hex = '0123456789abcdef';
+  let uuid = '';
+
+  for (let i = 0; i < 36; i++) {
+    if (i === 8 || i === 13 || i === 18 || i === 23) {
+      uuid += '-';
+    } else if (i === 14) {
+      uuid += '4'; // UUID v4
+    } else if (i === 19) {
+      uuid += hex[(Math.random() * 4) | 8]; // 8, 9, a, or b
+    } else {
+      uuid += hex[(Math.random() * 16) | 0];
+    }
+  }
+
+  return uuid;
+}
+
+/**
+ * Create a parent trace for an agent turn (single chat message)
+ * All child operations (API calls, tool executions) will be grouped under this trace
+ *
+ * Uses:
+ * - thread_id (sessionId) to group all traces from the same session together
+ * - run_id (unique per message) to identify each chat turn
+ */
+export async function withAgentTrace<T>(
+  name: string,
+  metadata: {
+    sessionId: string;
+    candidateId: string;
+    message?: string;
+    messageId?: string; // Optional: provide a specific message ID
+  },
+  fn: () => Promise<T>
+): Promise<T> {
+  if (!isLangSmithEnabled()) {
+    return fn();
+  }
+
+  // Set thread context for child traces
+  const previousThreadId = currentThreadId;
+  const previousRunId = currentRunId;
+
+  // Generate deterministic thread UUID to match LangGraph SDK
+  // This ensures all traces (LangSmith + LangGraph) share the same thread_id
+  const threadUUID = generateThreadUUID(metadata.sessionId);
+  currentThreadId = threadUUID;
+  // Generate unique run ID for this message, or use provided messageId
+  currentRunId = metadata.messageId || generateRunId(metadata.sessionId);
+
+  try {
+    // Create a traceable wrapper that will be the parent for all child operations
+    const traced = traceable(fn, {
+      name,
+      run_type: "chain",
+      project_name: process.env.LANGSMITH_PROJECT || "interviewlm",
+      id: currentRunId, // Unique ID for this message turn
+      metadata: {
+        component: "CodingAgent",
+        sessionId: metadata.sessionId,
+        candidateId: metadata.candidateId,
+        thread_id: threadUUID, // Deterministic UUID matching LangGraph thread
+        run_id: currentRunId, // Unique per message
+        message_preview: metadata.message?.slice(0, 100), // First 100 chars of message
+      },
+      tags: [
+        "agent",
+        "interview",
+        `thread:${threadUUID.slice(0, 8)}`, // Use UUID prefix for consistency
+        `run:${currentRunId.slice(0, 12)}`,
+      ],
+    });
+
+    return await traced();
+  } finally {
+    // Restore previous context
+    currentThreadId = previousThreadId;
+    currentRunId = previousRunId;
+  }
+}
+
+/**
+ * Trace a tool execution within the current context
+ * Will be nested under the parent agent trace if one exists
+ */
+export async function traceToolExecution<T>(
+  toolName: string,
+  input: Record<string, unknown>,
+  executor: () => Promise<T>
+): Promise<T> {
+  if (!isLangSmithEnabled()) {
+    return executor();
+  }
+
+  const traced = traceable(
+    async () => {
+      const startTime = Date.now();
+      try {
+        const result = await executor();
+        const duration = Date.now() - startTime;
+        logger.debug(`[LangSmith] Tool ${toolName} completed in ${duration}ms`);
+        return result;
+      } catch (error) {
+        const duration = Date.now() - startTime;
+        logger.error(`[LangSmith] Tool ${toolName} failed after ${duration}ms`, error as Error);
+        throw error;
+      }
+    },
+    {
+      name: `tool:${toolName}`,
+      run_type: "tool",
+      project_name: process.env.LANGSMITH_PROJECT || "interviewlm",
+      metadata: {
+        tool: toolName,
+        input: JSON.stringify(input).slice(0, 1000), // Truncate large inputs
+        thread_id: currentThreadId, // Link to parent thread
+        parent_run_id: currentRunId, // Link to parent message turn
+      },
+    }
+  );
+
+  return traced();
+}
+
+/**
+ * Trace an agent session - wraps the entire message handling
+ * This is the top-level trace that groups all operations for a single message
+ *
+ * @param sessionId - Session ID (used as thread_id to group messages)
+ * @param candidateId - Candidate ID
+ * @param executor - The async function to execute
+ * @param options - Optional: message content, custom messageId
+ */
+export async function traceAgentSession<T>(
+  sessionId: string,
+  candidateId: string,
+  executor: () => Promise<T>,
+  options?: {
+    message?: string;
+    messageId?: string;
+  }
+): Promise<T> {
+  return withAgentTrace(
+    "agent_turn",
+    {
+      sessionId,
+      candidateId,
+      message: options?.message,
+      messageId: options?.messageId,
+    },
+    executor
+  );
+}
+
+/**
+ * Trace an API call to Claude
+ * Will be nested under the parent agent trace if one exists
+ */
+export async function traceClaudeCall<T>(
+  operation: string,
+  executor: () => Promise<T>
+): Promise<T> {
+  if (!isLangSmithEnabled()) {
+    return executor();
+  }
+
+  const traced = traceable(executor, {
+    name: `claude:${operation}`,
+    run_type: "llm",
+    project_name: process.env.LANGSMITH_PROJECT || "interviewlm",
+    metadata: {
+      provider: "anthropic",
+      operation,
+      thread_id: currentThreadId, // Link to parent thread
+      parent_run_id: currentRunId, // Link to parent message turn
+    },
+  });
+
+  return traced();
+}
+
+/**
+ * Trace a Claude streaming call with full metadata
+ * Captures model, tokens, cache stats, and cost information
+ */
+export async function traceClaudeStreaming<T>(
+  params: {
+    model: string;
+    operation?: string;
+  },
+  executor: () => Promise<T & {
+    usage?: {
+      input_tokens: number;
+      output_tokens: number;
+      cache_creation_input_tokens?: number;
+      cache_read_input_tokens?: number;
+    };
+    model?: string;
+  }>
+): Promise<T> {
+  if (!isLangSmithEnabled()) {
+    return executor();
+  }
+
+  const startTime = Date.now();
+
+  const traced = traceable(
+    async () => {
+      const result = await executor();
+      return result;
+    },
+    {
+      name: `claude:${params.operation || 'stream'}`,
+      run_type: "llm",
+      project_name: process.env.LANGSMITH_PROJECT || "interviewlm",
+      metadata: {
+        provider: "anthropic",
+        ls_provider: "anthropic",
+        ls_model_name: params.model,
+        ls_model_type: "chat",
+        thread_id: currentThreadId,
+        parent_run_id: currentRunId,
+      },
+      // This function is called after execution to extract metadata
+      processOutputs: (outputs: any) => {
+        const usage = outputs?.usage;
+        const model = outputs?.model || params.model;
+        const latency = Date.now() - startTime;
+
+        // Calculate cost (Sonnet pricing as default)
+        const inputCost = (usage?.input_tokens || 0) * 0.000003; // $3/1M tokens
+        const outputCost = (usage?.output_tokens || 0) * 0.000015; // $15/1M tokens
+        const cacheReadSavings = (usage?.cache_read_input_tokens || 0) * 0.0000027; // 90% discount
+        const totalCost = inputCost + outputCost - cacheReadSavings;
+
+        return {
+          ...outputs,
+          // LangSmith standard fields for token tracking
+          llm_output: {
+            model_name: model,
+            token_usage: {
+              prompt_tokens: usage?.input_tokens || 0,
+              completion_tokens: usage?.output_tokens || 0,
+              total_tokens: (usage?.input_tokens || 0) + (usage?.output_tokens || 0),
+              cache_creation_input_tokens: usage?.cache_creation_input_tokens || 0,
+              cache_read_input_tokens: usage?.cache_read_input_tokens || 0,
+            },
+          },
+          // Additional metadata
+          _metadata: {
+            model,
+            latency_ms: latency,
+            cost_usd: totalCost.toFixed(6),
+            input_tokens: usage?.input_tokens,
+            output_tokens: usage?.output_tokens,
+            cache_read_tokens: usage?.cache_read_input_tokens,
+            cache_creation_tokens: usage?.cache_creation_input_tokens,
+          },
+        };
+      },
+    }
+  );
+
+  return traced();
+}
+
+/**
+ * Get current thread ID (useful for manual tracing)
+ */
+export function getCurrentThreadId(): string | null {
+  return currentThreadId;
+}
+
+/**
+ * Get current run ID (useful for manual tracing)
+ */
+export function getCurrentRunId(): string | null {
+  return currentRunId;
+}
+
+/**
+ * Get LangSmith configuration status
+ */
+export function getLangSmithStatus(): {
+  enabled: boolean;
+  project: string;
+  endpoint: string;
+} {
+  return {
+    enabled: isLangSmithEnabled(),
+    project: process.env.LANGSMITH_PROJECT || "default",
+    endpoint: process.env.LANGSMITH_ENDPOINT || "https://api.smith.langchain.com",
+  };
+}
+
+/**
+ * Initialize LangSmith (call at app startup)
+ */
+export function initializeLangSmith(): void {
+  const status = getLangSmithStatus();
+
+  if (status.enabled) {
+    logger.info("[LangSmith] Observability initialized", {
+      project: status.project,
+      endpoint: status.endpoint,
+    });
+  } else {
+    logger.info("[LangSmith] Observability not enabled. Set LANGSMITH_TRACING=true to enable.");
+  }
+}

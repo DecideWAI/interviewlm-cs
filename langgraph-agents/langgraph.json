@@ -1,0 +1,12 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "coding_agent": "./agents/coding_agent.py:graph",
+    "evaluation_agent": "./agents/evaluation_agent.py:evaluation_graph",
+    "interview_agent": "./agents/interview_agent.py:interview_graph",
+    "question_evaluation_agent": "./agents/question_evaluation_agent.py:question_evaluation_graph",
+    "supervisor": "./agents/supervisor.py:supervisor_graph"
+  },
+  "env": ".env",
+  "python_version": "3.12"
+}

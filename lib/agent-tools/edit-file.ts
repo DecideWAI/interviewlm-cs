@@ -1,0 +1,127 @@
+/**
+ * Edit File Tool for Claude Agent
+ * Allows AI to make surgical edits to files in the candidate's Modal sandbox
+ * Uses string replacement for precise modifications
+ */
+
+import { modalService as modal } from "@/lib/services";
+import { fileStreamManager } from "@/lib/services/file-streaming";
+import type { Anthropic } from "@anthropic-ai/sdk";
+
+export interface EditFileToolOutput {
+  success: boolean;
+  path: string;
+  matchFound: boolean;
+  replacementsCount?: number;
+  error?: string;
+}
+
+/**
+ * Tool definition for Claude API
+ */
+export const editFileTool: Anthropic.Tool = {
+  name: "Edit",
+  description:
+    "Make targeted edits to a file by replacing specific text. Use this to:\n" +
+    "- Fix bugs in existing code\n" +
+    "- Update function implementations\n" +
+    "- Modify specific sections without rewriting the whole file\n\n" +
+    "IMPORTANT: The old_string must match EXACTLY, including all whitespace and indentation.\n" +
+    "Read the file first to see the exact content. Only the first occurrence is replaced.",
+  input_schema: {
+    type: "object",
+    properties: {
+      file_path: {
+        type: "string",
+        description: "Path to the file to edit (e.g., 'solution.js'). Paths are relative to /workspace.",
+      },
+      old_string: {
+        type: "string",
+        description: "The exact text to find and replace. Must match character-for-character including whitespace, newlines, and indentation.",
+      },
+      new_string: {
+        type: "string",
+        description: "The replacement text. Can be empty string to delete the old_string.",
+      },
+    },
+    required: ["file_path", "old_string", "new_string"],
+  },
+};
+
+/**
+ * Execute the Edit tool
+ * Reads the file, replaces the old_string with new_string, and writes back
+ */
+export async function executeEditFile(
+  sessionId: string,
+  rawFilePath: string,
+  oldString: string,
+  newString: string
+): Promise<EditFileToolOutput> {
+  // Normalize path to always be absolute (matching file tree paths)
+  const filePath = rawFilePath.startsWith("/") ? rawFilePath : `/workspace/${rawFilePath}`;
+
+  try {
+    // Read the current file content
+    const readResult = await modal.readFile(sessionId, filePath);
+    if (!readResult.success || !readResult.content) {
+      return {
+        success: false,
+        path: filePath,
+        matchFound: false,
+        error: readResult.error || `Could not read file: ${filePath}`,
+      };
+    }
+    const currentContent = readResult.content;
+
+    // Check if the old string exists in the file
+    if (!currentContent.includes(oldString)) {
+      return {
+        success: false,
+        path: filePath,
+        matchFound: false,
+        error: `Could not find the exact string to replace. Make sure the old_string matches exactly, including whitespace and indentation.`,
+      };
+    }
+
+    // Count occurrences
+    const occurrences = (currentContent.match(new RegExp(escapeRegExp(oldString), 'g')) || []).length;
+
+    // Replace the old string with the new string
+    const newContent = currentContent.replace(oldString, newString);
+
+    // Write the modified content back
+    await modal.writeFile(sessionId, filePath, newContent);
+
+    // Broadcast file change event for real-time file tree updates
+    fileStreamManager.broadcastFileChange({
+      sessionId,
+      type: 'update',
+      path: filePath,
+      fileType: 'file',
+      name: filePath.split('/').pop() || filePath,
+      timestamp: new Date().toISOString(),
+    });
+
+    return {
+      success: true,
+      path: filePath,  // Return normalized absolute path
+      matchFound: true,
+      replacementsCount: 1, // Only replaces first occurrence
+    };
+  } catch (error) {
+    return {
+      success: false,
+      path: filePath,
+      matchFound: false,
+      error: error instanceof Error ? error.message : "Failed to edit file",
+    };
+  }
+}
+
+/**
+ * Escape special regex characters
+ */
+function escapeRegExp(string: string): string {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
