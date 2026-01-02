@@ -1,13 +1,16 @@
 # InterviewLM - Production Environment (Budget-Optimized)
 # Terraform configuration with security best practices for Cloudflare integration
 #
-# Estimated Monthly Cost: ~$135-165
+# Estimated Monthly Cost: ~$225-285 (including LangGraph)
 # - Cloud SQL db-g1-small (ZONAL): ~$25
 # - Memorystore Redis 1GB (BASIC): ~$35
-# - Cloud Run (scale-to-zero): ~$20-50
+# - Cloud Run Main App (scale-to-zero): ~$20-50
 # - VPC Connector (e2-micro): ~$15
 # - Cloud NAT: ~$30
 # - Storage + Secrets: ~$10
+# - LangGraph Cloud SQL (db-g1-small): ~$25
+# - LangGraph Memorystore (1GB BASIC): ~$35
+# - LangGraph Cloud Run (min=1): ~$30-60
 
 terraform {
   required_version = ">= 1.5.0"
@@ -345,11 +348,12 @@ module "cloud_run" {
   worker_max_instances = var.worker_max_instances
 
   # Security: Restrict ingress for Cloudflare setup
-  # This blocks direct access to Cloud Run URL
-  # Traffic must come through Cloud Load Balancing (which Cloudflare can route to)
+  # When using load balancer, Cloud Run only accepts traffic from LB
+  # Domain mapping is handled by the load balancer, not Cloud Run
   allow_public_access = true
   ingress             = var.cloud_run_ingress
   custom_domain       = var.custom_domain
+  use_load_balancer   = var.enable_load_balancer
 
   app_env_vars = {
     NODE_ENV              = "production"
@@ -370,6 +374,8 @@ module "cloud_run" {
     # Monitoring (Sentry)
     SENTRY_DSN             = var.sentry_dsn
     NEXT_PUBLIC_SENTRY_DSN = var.sentry_dsn
+    # LangGraph AI Agents (set after langgraph module is deployed)
+    # LANGGRAPH_API_URL is set via depends_on cycle - use output value
   }
 
   app_secret_env_vars = {
@@ -435,6 +441,36 @@ module "cloud_run" {
 }
 
 # -----------------------------------------------------------------------------
+# Load Balancer Module (Cloudflare-only access via Cloud Armor)
+# Creates Global HTTP(S) Load Balancer with Cloud Armor IP whitelisting
+# Only Cloudflare IPs can reach the application
+# -----------------------------------------------------------------------------
+
+module "load_balancer" {
+  source = "../../modules/load_balancer"
+  count  = var.enable_load_balancer ? 1 : 0
+
+  project_id  = var.project_id
+  region      = var.region
+  name_prefix = local.name_prefix
+
+  cloud_run_service_name = module.cloud_run.app_service_name
+
+  # SSL certificate for custom domain
+  ssl_domains = [var.custom_domain]
+
+  # Optional features
+  enable_cdn             = false # Disable CDN (Cloudflare handles caching)
+  enable_quic            = false # QUIC may conflict with Cloudflare
+  enable_ddos_protection = true  # Enable Layer 7 DDoS protection
+  log_sample_rate        = 1.0   # Log all requests for debugging
+
+  labels = local.labels
+
+  depends_on = [module.cloud_run]
+}
+
+# -----------------------------------------------------------------------------
 # Monitoring Module (Essential alerts only for budget)
 # -----------------------------------------------------------------------------
 
@@ -463,6 +499,69 @@ module "monitoring" {
   labels = local.labels
 
   depends_on = [module.cloud_run, module.cloud_sql]
+}
+
+# -----------------------------------------------------------------------------
+# LangGraph Agents Module (AI Agents Service)
+# Separate Cloud Run service with dedicated PostgreSQL and Redis
+# -----------------------------------------------------------------------------
+
+module "langgraph" {
+  source = "../../modules/langgraph"
+
+  project_id  = var.project_id
+  region      = var.region
+  environment = local.environment
+  name_prefix = local.name_prefix
+
+  # Networking (shared VPC)
+  network_id       = module.vpc.network_id
+  vpc_connector_id = module.vpc.vpc_connector_id
+
+  # Private services connection for Cloud SQL
+  private_services_connection = module.vpc.private_services_connection
+
+  # Container image
+  langgraph_image = var.langgraph_image
+
+  # Main app service account (for IAM permissions to invoke LangGraph)
+  main_app_service_account_email = module.iam.cloud_run_service_account_email
+
+  # Cloud Run sizing (min=1 because LangGraph needs persistent connections)
+  cpu           = var.langgraph_cpu
+  memory        = var.langgraph_memory
+  min_instances = var.langgraph_min_instances
+  max_instances = var.langgraph_max_instances
+
+  # Database sizing
+  database_tier = var.langgraph_database_tier
+
+  # Redis sizing
+  redis_memory_size_gb = var.langgraph_redis_memory_gb
+
+  # Modal service URLs (for sandbox execution)
+  modal_execute_url         = var.modal_execute_url
+  modal_write_file_url      = var.modal_write_file_url
+  modal_read_file_url       = var.modal_read_file_url
+  modal_list_files_url      = var.modal_list_files_url
+  modal_execute_command_url = var.modal_execute_command_url
+
+  # Next.js callback URL (for SSE notifications)
+  nextjs_internal_url = module.cloud_run.app_url
+
+  # Shared secrets from main app
+  anthropic_api_key_secret_id  = module.secrets.anthropic_api_key_secret_id
+  langsmith_api_key_secret_id  = module.secrets.langsmith_api_key_secret_id
+  modal_token_id_secret_id     = module.secrets.modal_token_id_secret_id
+  modal_token_secret_secret_id = module.secrets.modal_token_secret_secret_id
+
+  labels = local.labels
+
+  depends_on = [
+    module.vpc,
+    module.iam,
+    module.secrets,
+  ]
 }
 
 # Outputs are defined in outputs.tf

@@ -2,7 +2,16 @@
  * LangGraph Client
  *
  * Client for interacting with LangGraph server using the official SDK.
- * Supports both LangGraph dev server and LangGraph Cloud.
+ * Supports both LangGraph dev server and production deployment on Cloud Run.
+ *
+ * Authentication:
+ * - Production: Uses Google Cloud Run IAM (ID tokens) + internal API key
+ * - Development: Uses internal API key only
+ *
+ * User context is passed via custom headers for audit trails:
+ * - X-User-Id: The user making the request
+ * - X-Session-Id: The interview session ID
+ * - X-Request-Id: Correlation ID for distributed tracing
  */
 
 import { Client } from '@langchain/langgraph-sdk';
@@ -10,12 +19,107 @@ import type { HelpfulnessLevel } from '../types/agent';
 import type { FastEvaluationResult, FastEvaluationInput } from '../types/fast-evaluation';
 import type { ComprehensiveEvaluationResult, ComprehensiveEvaluationInput } from '../types/comprehensive-evaluation';
 import type { AssessmentType } from '@/types/seed';
+import { randomUUID } from 'crypto';
 
 // Configuration
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || 'http://localhost:2024';
+const INTERNAL_API_KEY = process.env.INTERNAL_API_KEY || '';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
-// Initialize LangGraph client
-const client = new Client({ apiUrl: LANGGRAPH_API_URL });
+// Cache for ID token (Cloud Run tokens are valid for ~1 hour)
+let cachedIdToken: { token: string; expiresAt: number } | null = null;
+
+/**
+ * Get Google ID token from Cloud Run metadata server.
+ * Only used in production (Cloud Run environment).
+ */
+async function getGoogleIdToken(): Promise<string | null> {
+  if (!IS_PRODUCTION) {
+    return null;
+  }
+
+  // Return cached token if still valid (with 5 minute buffer)
+  if (cachedIdToken && cachedIdToken.expiresAt > Date.now() + 5 * 60 * 1000) {
+    return cachedIdToken.token;
+  }
+
+  try {
+    const metadataUrl = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity';
+    const response = await fetch(`${metadataUrl}?audience=${LANGGRAPH_API_URL}`, {
+      headers: { 'Metadata-Flavor': 'Google' },
+    });
+
+    if (!response.ok) {
+      console.error('[LangGraph] Failed to fetch ID token:', response.status);
+      return null;
+    }
+
+    const token = await response.text();
+
+    // Cache the token (Cloud Run tokens are valid for ~1 hour)
+    cachedIdToken = {
+      token,
+      expiresAt: Date.now() + 55 * 60 * 1000, // 55 minutes
+    };
+
+    return token;
+  } catch (error) {
+    console.error('[LangGraph] Error fetching ID token:', error);
+    return null;
+  }
+}
+
+/**
+ * Get authentication headers for LangGraph requests.
+ * Includes authorization and user context headers.
+ */
+async function getAuthHeaders(
+  userId?: string,
+  sessionId?: string
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'X-Request-Id': randomUUID(),
+  };
+
+  if (userId) headers['X-User-Id'] = userId;
+  if (sessionId) headers['X-Session-Id'] = sessionId;
+
+  if (IS_PRODUCTION) {
+    // Production: Use Google ID token for Cloud Run IAM authentication
+    const idToken = await getGoogleIdToken();
+    if (idToken) {
+      headers['Authorization'] = `Bearer ${idToken}`;
+    } else if (INTERNAL_API_KEY) {
+      // Fallback to API key if ID token fetch fails
+      headers['Authorization'] = `ApiKey ${INTERNAL_API_KEY}`;
+    }
+  } else {
+    // Development: Use internal API key
+    if (INTERNAL_API_KEY) {
+      headers['Authorization'] = `ApiKey ${INTERNAL_API_KEY}`;
+    }
+  }
+
+  return headers;
+}
+
+/**
+ * Create a LangGraph client with authentication headers.
+ * Creates a new client per request to include proper auth context.
+ */
+async function createAuthenticatedClient(
+  userId?: string,
+  sessionId?: string
+): Promise<Client> {
+  const headers = await getAuthHeaders(userId, sessionId);
+  return new Client({
+    apiUrl: LANGGRAPH_API_URL,
+    defaultHeaders: headers,
+  });
+}
+
+// Default client for operations that don't need user context
+const defaultClient = new Client({ apiUrl: LANGGRAPH_API_URL });
 
 // =============================================================================
 // Types
@@ -127,9 +231,16 @@ function generateThreadUUID(sessionId: string, agentType: string): string {
  * Uses deterministic UUID v5 generated from agentType and sessionId
  * This ensures conversation history persists across requests.
  */
-export async function getOrCreateThread(sessionId: string, agentType: string = 'coding_agent'): Promise<string> {
+export async function getOrCreateThread(
+  sessionId: string,
+  agentType: string = 'coding_agent',
+  userId?: string
+): Promise<string> {
   // Generate deterministic UUID for consistent history
   const threadId = generateThreadUUID(sessionId, agentType);
+
+  // Use authenticated client with user context
+  const client = await createAuthenticatedClient(userId, sessionId);
 
   try {
     // Try to get existing thread
@@ -168,7 +279,10 @@ export async function streamCodingChat(
   request: CodingChatRequest,
   callbacks: StreamingCallbacks
 ): Promise<void> {
-  const threadId = await getOrCreateThread(request.sessionId);
+  const threadId = await getOrCreateThread(request.sessionId, 'coding_agent', request.candidateId);
+
+  // Create authenticated client with user context
+  const client = await createAuthenticatedClient(request.candidateId, request.sessionId);
 
   let fullText = '';
   const toolsUsed: string[] = [];
@@ -257,7 +371,10 @@ export async function streamCodingChat(
 export async function sendCodingChat(
   request: CodingChatRequest
 ): Promise<CodingChatResponse> {
-  const threadId = await getOrCreateThread(request.sessionId);
+  const threadId = await getOrCreateThread(request.sessionId, 'coding_agent', request.candidateId);
+
+  // Create authenticated client with user context
+  const client = await createAuthenticatedClient(request.candidateId, request.sessionId);
 
   const result = await client.runs.wait(threadId, 'coding_agent', {
     input: {
@@ -298,7 +415,10 @@ export async function sendCodingChat(
 export async function recordInterviewEvent(
   event: InterviewEventData
 ): Promise<InterviewMetrics> {
-  const threadId = await getOrCreateThread(event.sessionId, 'interview_agent');
+  const threadId = await getOrCreateThread(event.sessionId, 'interview_agent', event.candidateId);
+
+  // Create authenticated client with user context
+  const client = await createAuthenticatedClient(event.candidateId, event.sessionId);
 
   const result = await client.runs.wait(threadId, 'interview_agent', {
     input: {
@@ -329,9 +449,13 @@ export async function recordInterviewEvent(
  * Get current interview metrics for a session.
  */
 export async function getInterviewMetrics(
-  sessionId: string
+  sessionId: string,
+  candidateId?: string
 ): Promise<InterviewMetrics> {
-  const threadId = await getOrCreateThread(sessionId, 'interview_agent');
+  const threadId = await getOrCreateThread(sessionId, 'interview_agent', candidateId);
+
+  // Create authenticated client with user context
+  const client = await createAuthenticatedClient(candidateId, sessionId);
 
   try {
     const state = await client.threads.getState(threadId);
@@ -372,7 +496,10 @@ export async function getInterviewMetrics(
 export async function evaluateSession(
   request: EvaluationRequest
 ): Promise<EvaluationResult> {
-  const threadId = await getOrCreateThread(request.sessionId, 'evaluation_agent');
+  const threadId = await getOrCreateThread(request.sessionId, 'evaluation_agent', request.candidateId);
+
+  // Create authenticated client with user context
+  const client = await createAuthenticatedClient(request.candidateId, request.sessionId);
 
   const evaluationPrompt = `Evaluate interview session ${request.sessionId}.
 Start by using get_session_metadata to understand the context, then explore the workspace
@@ -426,8 +553,12 @@ export async function evaluateFastProgression(
   // Each question evaluation is independent and shouldn't see history from other questions
   const threadId = await getOrCreateThread(
     `${input.sessionId}:question:${input.questionId}`,
-    'fast_progression_agent'
+    'fast_progression_agent',
+    input.candidateId
   );
+
+  // Create authenticated client with user context
+  const client = await createAuthenticatedClient(input.candidateId, input.sessionId);
 
   // Build evaluation prompt
   const evaluationPrompt = `Evaluate the candidate's solution for question "${input.questionTitle}".
@@ -529,7 +660,10 @@ Be decisive. This is a gate check, not comprehensive review.`;
 export async function evaluateComprehensive(
   input: ComprehensiveEvaluationInput
 ): Promise<ComprehensiveEvaluationResult> {
-  const threadId = await getOrCreateThread(input.sessionId, 'comprehensive_agent');
+  const threadId = await getOrCreateThread(input.sessionId, 'comprehensive_agent', input.candidateId);
+
+  // Create authenticated client with user context
+  const client = await createAuthenticatedClient(input.candidateId, input.sessionId);
 
   // Build evaluation prompt
   const evaluationPrompt = `Conduct a COMPREHENSIVE evaluation of this interview session.
@@ -641,7 +775,7 @@ Begin your evaluation now.`;
 /**
  * Clear/delete all agent threads for a session.
  */
-export async function clearSession(sessionId: string): Promise<void> {
+export async function clearSession(sessionId: string, userId?: string): Promise<void> {
   const agentTypes = [
     'coding_agent',
     'interview_agent',
@@ -649,6 +783,9 @@ export async function clearSession(sessionId: string): Promise<void> {
     'fast_progression_agent',
     'comprehensive_agent',
   ];
+
+  // Use authenticated client for deletion
+  const client = await createAuthenticatedClient(userId, sessionId);
 
   for (const agentType of agentTypes) {
     try {
@@ -667,7 +804,7 @@ export async function clearSession(sessionId: string): Promise<void> {
 export async function checkHealth(): Promise<boolean> {
   try {
     // Try to list assistants - this will fail if server is down
-    await client.assistants.search({ limit: 1 });
+    await defaultClient.assistants.search({ limit: 1 });
     return true;
   } catch {
     return false;
@@ -675,8 +812,20 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 /**
- * Get the LangGraph client instance for advanced usage.
+ * Get the default LangGraph client instance for advanced usage.
+ * Note: For authenticated requests with user context, use createAuthenticatedClient() instead.
  */
 export function getLangGraphClient(): Client {
-  return client;
+  return defaultClient;
+}
+
+/**
+ * Get an authenticated LangGraph client with user context.
+ * Use this for requests that need to be associated with a specific user/session.
+ */
+export async function getAuthenticatedLangGraphClient(
+  userId?: string,
+  sessionId?: string
+): Promise<Client> {
+  return createAuthenticatedClient(userId, sessionId);
 }

@@ -1,5 +1,11 @@
 # LangGraph Agents Dockerfile
 # Production-ready container for InterviewLM AI agents
+#
+# This container runs the LangGraph server which:
+# - Serves multiple agent graphs (coding, evaluation, interview, etc.)
+# - Persists state in PostgreSQL
+# - Uses Redis for pub-sub streaming
+# - Implements custom authentication middleware
 
 FROM python:3.12-slim
 
@@ -38,12 +44,13 @@ RUN chown -R agents:agents /app
 # Switch to non-root user
 USER agents
 
-# Expose port for FastAPI server
+# Expose port for LangGraph server
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+# Health check - LangGraph uses /ok endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/ok || exit 1
 
-# Default command - run the API server
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Default command - run the production FastAPI server
+# Reads langgraph.json and serves all graphs via REST API
+CMD ["python", "server.py"]

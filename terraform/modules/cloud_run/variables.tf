@@ -121,13 +121,13 @@ variable "allow_public_access" {
 }
 
 variable "ingress" {
-  description = "Ingress settings for Cloud Run (INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING)"
+  description = "Ingress settings for Cloud Run (INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER)"
   type        = string
   default     = "INGRESS_TRAFFIC_ALL"
 
   validation {
-    condition     = contains(["INGRESS_TRAFFIC_ALL", "INGRESS_TRAFFIC_INTERNAL_ONLY", "INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING"], var.ingress)
-    error_message = "Ingress must be one of: INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING."
+    condition     = contains(["INGRESS_TRAFFIC_ALL", "INGRESS_TRAFFIC_INTERNAL_ONLY", "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"], var.ingress)
+    error_message = "Ingress must be one of: INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER."
   }
 }
 
@@ -135,6 +135,12 @@ variable "custom_domain" {
   description = "Custom domain for the application (optional)"
   type        = string
   default     = ""
+}
+
+variable "use_load_balancer" {
+  description = "Whether traffic is routed through an external load balancer (disables Cloud Run domain mapping)"
+  type        = bool
+  default     = false
 }
 
 # Labels

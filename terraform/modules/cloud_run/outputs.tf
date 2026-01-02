@@ -36,6 +36,6 @@ output "worker_url" {
 }
 
 output "custom_domain_status" {
-  description = "Custom domain mapping status"
-  value       = var.custom_domain != "" ? google_cloud_run_domain_mapping.app[0].status : null
+  description = "Custom domain mapping status (null when using load balancer)"
+  value       = var.custom_domain != "" && !var.use_load_balancer ? google_cloud_run_domain_mapping.app[0].status : null
 }

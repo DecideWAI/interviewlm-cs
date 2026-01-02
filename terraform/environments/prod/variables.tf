@@ -108,14 +108,20 @@ variable "redis_memory_gb" {
 # Security Configuration
 # -----------------------------------------------------------------------------
 
+variable "enable_load_balancer" {
+  description = "Enable Global HTTP(S) Load Balancer with Cloud Armor for Cloudflare-only access"
+  type        = bool
+  default     = false
+}
+
 variable "cloud_run_ingress" {
-  description = "Cloud Run ingress setting. Use INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING for Cloudflare setup"
+  description = "Cloud Run ingress setting. Use INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER when enable_load_balancer=true"
   type        = string
-  default     = "INGRESS_TRAFFIC_ALL"
+  default     = "INGRESS_TRAFFIC_ALL" # Change to INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER when using load balancer
 
   validation {
-    condition     = contains(["INGRESS_TRAFFIC_ALL", "INGRESS_TRAFFIC_INTERNAL_ONLY", "INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING"], var.cloud_run_ingress)
-    error_message = "Ingress must be one of: INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_AND_CLOUD_LOAD_BALANCING."
+    condition     = contains(["INGRESS_TRAFFIC_ALL", "INGRESS_TRAFFIC_INTERNAL_ONLY", "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"], var.cloud_run_ingress)
+    error_message = "Ingress must be one of: INGRESS_TRAFFIC_ALL, INGRESS_TRAFFIC_INTERNAL_ONLY, INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER."
   }
 }
 
@@ -211,6 +217,86 @@ variable "turnstile_site_key" {
 
 variable "sentry_dsn" {
   description = "Sentry DSN for error monitoring (safe to expose)"
+  type        = string
+  default     = ""
+}
+
+# -----------------------------------------------------------------------------
+# LangGraph Agents Configuration
+# Separate Cloud Run service for AI agents with dedicated resources
+# -----------------------------------------------------------------------------
+
+variable "langgraph_image" {
+  description = "Container image for LangGraph agents service"
+  type        = string
+}
+
+variable "langgraph_cpu" {
+  description = "CPU for LangGraph containers"
+  type        = string
+  default     = "1"
+}
+
+variable "langgraph_memory" {
+  description = "Memory for LangGraph containers"
+  type        = string
+  default     = "2Gi" # LangGraph needs more memory for AI models
+}
+
+variable "langgraph_min_instances" {
+  description = "Minimum LangGraph instances (1 recommended - no scale-to-zero)"
+  type        = number
+  default     = 1 # LangGraph needs persistent connections
+}
+
+variable "langgraph_max_instances" {
+  description = "Maximum LangGraph instances"
+  type        = number
+  default     = 5
+}
+
+variable "langgraph_database_tier" {
+  description = "Cloud SQL machine tier for LangGraph state database"
+  type        = string
+  default     = "db-g1-small"
+}
+
+variable "langgraph_redis_memory_gb" {
+  description = "Redis memory in GB for LangGraph pub-sub"
+  type        = number
+  default     = 1
+}
+
+# -----------------------------------------------------------------------------
+# Modal Service URLs (for LangGraph sandbox execution)
+# -----------------------------------------------------------------------------
+
+variable "modal_execute_url" {
+  description = "Modal execute URL for sandbox code execution"
+  type        = string
+  default     = ""
+}
+
+variable "modal_write_file_url" {
+  description = "Modal write file URL"
+  type        = string
+  default     = ""
+}
+
+variable "modal_read_file_url" {
+  description = "Modal read file URL"
+  type        = string
+  default     = ""
+}
+
+variable "modal_list_files_url" {
+  description = "Modal list files URL"
+  type        = string
+  default     = ""
+}
+
+variable "modal_execute_command_url" {
+  description = "Modal execute command URL"
   type        = string
   default     = ""
 }

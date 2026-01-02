@@ -256,10 +256,15 @@ resource "google_cloud_run_v2_service_iam_member" "app_public" {
 
 # -----------------------------------------------------------------------------
 # Custom Domain Mapping (Optional)
+# Only created when NOT using external load balancer
+# When using load balancer, domain is configured on the LB instead
 # -----------------------------------------------------------------------------
 
 resource "google_cloud_run_domain_mapping" "app" {
-  count = var.custom_domain != "" ? 1 : 0
+  # Only create domain mapping if:
+  # 1. A custom domain is specified
+  # 2. NOT using external load balancer (domain goes on LB instead)
+  count = var.custom_domain != "" && !var.use_load_balancer ? 1 : 0
 
   location = var.region
   name     = var.custom_domain
