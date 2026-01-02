@@ -18,7 +18,7 @@ const customJestConfig = {
   ],
   // Transform ESM modules that Jest can't parse by default
   transformIgnorePatterns: [
-    '/node_modules/(?!(uuid|langsmith|@langchain)/)',
+    '/node_modules/(?!(uuid|langsmith|@langchain|@marsidev|resend)/)',
   ],
   collectCoverageFrom: [
     'app/**/*.{js,jsx,ts,tsx}',

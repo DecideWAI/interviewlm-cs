@@ -48,6 +48,31 @@ jest.mock('next/navigation', () => ({
   useSearchParams: jest.fn(() => new URLSearchParams()),
 }))
 
+// Mock Cloudflare Turnstile (ESM module)
+jest.mock('@marsidev/react-turnstile', () => ({
+  Turnstile: jest.fn().mockImplementation(({ onSuccess }) => {
+    // Auto-succeed for tests
+    if (onSuccess) setTimeout(() => onSuccess('test-token'), 0);
+    return null;
+  }),
+}))
+
+// Mock Resend email service (requires API key at load time)
+jest.mock('resend', () => ({
+  Resend: jest.fn().mockImplementation(() => ({
+    emails: {
+      send: jest.fn().mockResolvedValue({ id: 'test-email-id' }),
+    },
+  })),
+}))
+
+// Mock our email service
+jest.mock('@/lib/services/email', () => ({
+  sendInvitationEmail: jest.fn().mockResolvedValue({ success: true }),
+  sendPasswordResetEmail: jest.fn().mockResolvedValue({ success: true }),
+  sendVerificationEmail: jest.fn().mockResolvedValue({ success: true }),
+}))
+
 // Mock LangSmith to avoid ESM import issues
 jest.mock('langsmith', () => ({
   Client: jest.fn().mockImplementation(() => ({
