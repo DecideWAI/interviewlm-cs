@@ -73,6 +73,20 @@ jest.mock('@/lib/services/email', () => ({
   sendVerificationEmail: jest.fn().mockResolvedValue({ success: true }),
 }))
 
+// Mock @auth/prisma-adapter (ESM module)
+jest.mock('@auth/prisma-adapter', () => ({
+  PrismaAdapter: jest.fn(() => ({})),
+}))
+
+// Mock msgpackr (ESM module used by ioredis)
+jest.mock('msgpackr', () => ({
+  Packr: jest.fn(),
+  Encoder: jest.fn(),
+  addExtension: jest.fn(),
+  pack: jest.fn(),
+  encode: jest.fn(),
+}))
+
 // Mock LangSmith to avoid ESM import issues
 jest.mock('langsmith', () => ({
   Client: jest.fn().mockImplementation(() => ({
