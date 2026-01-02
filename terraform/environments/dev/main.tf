@@ -205,9 +205,9 @@ module "cloud_storage" {
   environment = local.environment
   name_prefix = local.name_prefix
 
-  storage_class           = "STANDARD"
-  versioning_enabled      = true
-  create_artifacts_bucket = true
+  storage_class            = "STANDARD"
+  versioning_enabled       = true
+  create_artifacts_bucket  = true
   artifacts_retention_days = 30
 
   # Simplified lifecycle for dev
@@ -237,10 +237,10 @@ module "secrets" {
   environment = local.environment
   name_prefix = local.name_prefix
 
-  create_email_secrets        = true
-  create_payment_secrets      = false # Disable payments in dev
+  create_email_secrets         = true
+  create_payment_secrets       = false # Disable payments in dev
   create_observability_secrets = true
-  create_oauth_secrets        = false
+  create_oauth_secrets         = false
 
   service_account_email = module.iam.cloud_run_service_account_email
 
@@ -281,11 +281,11 @@ module "cloud_run" {
 
   # Environment variables
   app_env_vars = {
-    NODE_ENV                   = "development"
-    NEXTAUTH_URL               = "" # Will be set after deployment
-    GCS_BUCKET_SESSIONS        = module.cloud_storage.sessions_bucket_name
-    GCS_BUCKET_ARTIFACTS       = module.cloud_storage.artifacts_bucket_name
-    ENABLE_CODE_STREAMING      = "true"
+    NODE_ENV              = "development"
+    NEXTAUTH_URL          = "" # Will be set after deployment
+    GCS_BUCKET_SESSIONS   = module.cloud_storage.sessions_bucket_name
+    GCS_BUCKET_ARTIFACTS  = module.cloud_storage.artifacts_bucket_name
+    ENABLE_CODE_STREAMING = "true"
   }
 
   # Secret references

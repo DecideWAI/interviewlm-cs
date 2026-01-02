@@ -16,6 +16,10 @@ const customJestConfig = {
     '**/__tests__/**/*.test.[jt]s?(x)',
     '**/?(*.)+(spec|test).[jt]s?(x)',
   ],
+  // Transform ESM modules that Jest can't parse by default
+  transformIgnorePatterns: [
+    '/node_modules/(?!(uuid|langsmith|@langchain)/)',
+  ],
   collectCoverageFrom: [
     'app/**/*.{js,jsx,ts,tsx}',
     'components/**/*.{js,jsx,ts,tsx}',

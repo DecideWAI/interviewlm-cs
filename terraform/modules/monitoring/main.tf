@@ -359,7 +359,7 @@ resource "google_monitoring_alert_policy" "failed_jobs" {
 # -----------------------------------------------------------------------------
 
 resource "google_monitoring_dashboard" "main" {
-  project        = var.project_id
+  project = var.project_id
   dashboard_json = jsonencode({
     displayName = "${var.name_prefix} - Overview"
     gridLayout = {

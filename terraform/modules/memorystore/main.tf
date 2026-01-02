@@ -16,10 +16,10 @@ terraform {
 # -----------------------------------------------------------------------------
 
 resource "google_redis_instance" "main" {
-  name           = "${var.name_prefix}-redis"
-  project        = var.project_id
-  region         = var.region
-  display_name   = "InterviewLM Redis - ${var.environment}"
+  name         = "${var.name_prefix}-redis"
+  project      = var.project_id
+  region       = var.region
+  display_name = "InterviewLM Redis - ${var.environment}"
 
   tier           = var.tier
   memory_size_gb = var.memory_size_gb
@@ -49,8 +49,8 @@ resource "google_redis_instance" "main" {
   }
 
   # High availability (Standard tier only)
-  replica_count       = var.tier == "STANDARD_HA" ? var.replica_count : null
-  read_replicas_mode  = var.tier == "STANDARD_HA" ? "READ_REPLICAS_ENABLED" : "READ_REPLICAS_DISABLED"
+  replica_count      = var.tier == "STANDARD_HA" ? var.replica_count : null
+  read_replicas_mode = var.tier == "STANDARD_HA" ? "READ_REPLICAS_ENABLED" : "READ_REPLICAS_DISABLED"
 
   # Auth
   auth_enabled = var.auth_enabled

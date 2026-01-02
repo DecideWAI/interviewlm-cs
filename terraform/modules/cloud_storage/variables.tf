@@ -59,19 +59,19 @@ variable "lifecycle_rules" {
   }))
   default = [
     {
-      action_type        = "SetStorageClass"
-      storage_class      = "NEARLINE"
-      age_days           = 30
+      action_type   = "SetStorageClass"
+      storage_class = "NEARLINE"
+      age_days      = 30
     },
     {
-      action_type        = "SetStorageClass"
-      storage_class      = "COLDLINE"
-      age_days           = 90
+      action_type   = "SetStorageClass"
+      storage_class = "COLDLINE"
+      age_days      = 90
     },
     {
-      action_type        = "SetStorageClass"
-      storage_class      = "ARCHIVE"
-      age_days           = 365
+      action_type   = "SetStorageClass"
+      storage_class = "ARCHIVE"
+      age_days      = 365
     },
     {
       action_type        = "Delete"

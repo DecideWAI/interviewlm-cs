@@ -1,6 +1,12 @@
 // Learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom'
 
+// Polyfill TextEncoder/TextDecoder for Node.js test environment
+// Required by langsmith and other libraries
+import { TextEncoder, TextDecoder } from 'util'
+global.TextEncoder = TextEncoder
+global.TextDecoder = TextDecoder
+
 // Mock environment variables for tests
 process.env.NEXTAUTH_SECRET = 'test-secret-key-for-testing-only'
 process.env.NEXTAUTH_URL = 'http://localhost:3000'
@@ -23,6 +29,13 @@ jest.mock('next-auth/react', () => ({
   SessionProvider: ({ children }) => children,
 }))
 
+// Mock next-auth server module to avoid ESM issues
+jest.mock('next-auth', () => ({
+  __esModule: true,
+  default: jest.fn(),
+  NextAuth: jest.fn(),
+}))
+
 // Mock next/navigation
 jest.mock('next/navigation', () => ({
   useRouter: jest.fn(() => ({
@@ -33,6 +46,29 @@ jest.mock('next/navigation', () => ({
   })),
   usePathname: jest.fn(() => '/'),
   useSearchParams: jest.fn(() => new URLSearchParams()),
+}))
+
+// Mock LangSmith to avoid ESM import issues
+jest.mock('langsmith', () => ({
+  Client: jest.fn().mockImplementation(() => ({
+    createRun: jest.fn(),
+    updateRun: jest.fn(),
+  })),
+  wrapOpenAI: jest.fn((client) => client),
+}))
+
+jest.mock('langsmith/wrappers', () => ({
+  wrapOpenAI: jest.fn((client) => client),
+}))
+
+// Mock our langsmith observability module
+jest.mock('@/lib/observability/langsmith', () => ({
+  isLangSmithEnabled: jest.fn(() => false),
+  getLangSmithClient: jest.fn(() => null),
+  createLangSmithRun: jest.fn(() => null),
+  updateLangSmithRun: jest.fn(),
+  wrapWithLangSmith: jest.fn((fn) => fn),
+  traceLangSmithOperation: jest.fn((name, fn) => fn()),
 }))
 
 // Mock Prisma Client

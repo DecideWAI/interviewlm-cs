@@ -126,8 +126,8 @@ module "vpc" {
   environment = local.environment
   name_prefix = local.name_prefix
 
-  subnet_cidr                 = "10.2.0.0/20"
-  vpc_connector_cidr          = "10.10.0.0/28"
+  subnet_cidr        = "10.2.0.0/20"
+  vpc_connector_cidr = "10.10.0.0/28"
   # Budget: Use smallest connector instances
   vpc_connector_min_instances = 2
   vpc_connector_max_instances = 3
@@ -153,8 +153,8 @@ module "cloud_sql" {
 
   # Budget: Small instance, single zone (no HA)
   tier              = var.database_tier
-  availability_type = "ZONAL"  # Single zone for budget (upgrade to REGIONAL for HA)
-  disk_size         = 20       # Start smaller
+  availability_type = "ZONAL" # Single zone for budget (upgrade to REGIONAL for HA)
+  disk_size         = 20      # Start smaller
   disk_autoresize   = true
 
   # Essential backups (still important even on budget)
@@ -334,14 +334,14 @@ module "cloud_run" {
   app_image         = var.app_image
   app_cpu           = var.app_cpu
   app_memory        = var.app_memory
-  app_min_instances = var.app_min_instances  # 0 for scale-to-zero
+  app_min_instances = var.app_min_instances # 0 for scale-to-zero
   app_max_instances = var.app_max_instances
 
   # Workers: Also scale-to-zero
   enable_workers       = true
   worker_cpu           = var.worker_cpu
   worker_memory        = var.worker_memory
-  worker_min_instances = var.worker_min_instances  # 0 for scale-to-zero
+  worker_min_instances = var.worker_min_instances # 0 for scale-to-zero
   worker_max_instances = var.worker_max_instances
 
   # Security: Restrict ingress for Cloudflare setup
@@ -445,11 +445,11 @@ module "monitoring" {
   environment = local.environment
   name_prefix = local.name_prefix
 
-  alert_email_addresses  = var.alert_email_addresses
-  slack_webhook_url      = var.slack_webhook_url
-  slack_channel_name     = var.slack_channel_name
-  slack_auth_token       = var.slack_auth_token
-  app_url                = "https://${var.custom_domain}"
+  alert_email_addresses = var.alert_email_addresses
+  slack_webhook_url     = var.slack_webhook_url
+  slack_channel_name    = var.slack_channel_name
+  slack_auth_token      = var.slack_auth_token
+  app_url               = "https://${var.custom_domain}"
 
   # Reasonable thresholds for budget setup
   error_rate_threshold   = 5    # More tolerant for cold starts

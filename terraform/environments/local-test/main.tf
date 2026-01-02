@@ -134,7 +134,7 @@ resource "google_service_account_key" "local_dev_key" {
 resource "google_storage_bucket" "sessions" {
   name          = "${local.name_prefix}-sessions-${random_id.bucket_suffix.hex}"
   project       = var.project_id
-  location      = var.region  # Regional bucket in different region from prod
+  location      = var.region # Regional bucket in different region from prod
   storage_class = "STANDARD"
 
   # Enable uniform bucket-level access (recommended)

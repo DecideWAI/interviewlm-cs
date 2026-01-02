@@ -43,7 +43,7 @@ variable "tier" {
   default     = "db-f1-micro"
 
   validation {
-    condition = can(regex("^db-", var.tier))
+    condition     = can(regex("^db-", var.tier))
     error_message = "Tier must start with 'db-' prefix."
   }
 }
