@@ -32,8 +32,48 @@ jest.mock('next-auth/react', () => ({
 // Mock next-auth server module to avoid ESM issues
 jest.mock('next-auth', () => ({
   __esModule: true,
-  default: jest.fn(),
+  default: jest.fn(() => ({
+    handlers: { GET: jest.fn(), POST: jest.fn() },
+    auth: jest.fn(),
+    signIn: jest.fn(),
+    signOut: jest.fn(),
+  })),
   NextAuth: jest.fn(),
+}))
+
+// Mock next-auth providers (they use @auth/core which is ESM)
+jest.mock('next-auth/providers/google', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({ id: 'google', name: 'Google', type: 'oauth' })),
+}))
+
+jest.mock('next-auth/providers/github', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({ id: 'github', name: 'GitHub', type: 'oauth' })),
+}))
+
+jest.mock('next-auth/providers/credentials', () => ({
+  __esModule: true,
+  default: jest.fn(() => ({ id: 'credentials', name: 'Credentials', type: 'credentials' })),
+}))
+
+// Mock auth config to prevent provider imports
+jest.mock('@/auth.config', () => ({
+  __esModule: true,
+  default: {
+    providers: [],
+    pages: {
+      signIn: '/auth/signin',
+    },
+  },
+}))
+
+// Mock auth module
+jest.mock('@/auth', () => ({
+  auth: jest.fn(() => Promise.resolve(null)),
+  signIn: jest.fn(),
+  signOut: jest.fn(),
+  handlers: { GET: jest.fn(), POST: jest.fn() },
 }))
 
 // Mock next/navigation
