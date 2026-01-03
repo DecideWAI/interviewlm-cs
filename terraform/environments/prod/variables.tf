@@ -304,5 +304,5 @@ variable "modal_execute_command_url" {
 variable "modal_universal_image_id" {
   description = "Modal universal sandbox image ID (pre-built with all languages)"
   type        = string
-  default     = "im-UhzfcL6pcsKXlXuOVsTv4S"
+  default     = "im-nvLRpFpK5g2XpGMWhQwbfg"
 }
