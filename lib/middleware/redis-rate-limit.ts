@@ -338,11 +338,11 @@ export const redisAuthRateLimit = createRedisRateLimiter({
 
 /**
  * Registration rate limit
- * 3 registrations per hour per IP
+ * 10 registrations per hour per IP
  */
 export const redisRegistrationRateLimit = createRedisRateLimiter({
   name: "registration",
-  max: 3,
+  max: 10,
   windowSec: 60 * 60,
   message: "Too many registration attempts, please try again later",
 });
