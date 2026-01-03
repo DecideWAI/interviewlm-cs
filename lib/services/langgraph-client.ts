@@ -45,7 +45,8 @@ async function getGoogleIdToken(): Promise<string | null> {
 
   try {
     const metadataUrl = 'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity';
-    const response = await fetch(`${metadataUrl}?audience=${LANGGRAPH_API_URL}`, {
+    // URL-encode the audience parameter to handle special characters
+    const response = await fetch(`${metadataUrl}?audience=${encodeURIComponent(LANGGRAPH_API_URL)}`, {
       headers: { 'Metadata-Flavor': 'Google' },
     });
 
@@ -91,12 +92,18 @@ async function getAuthHeaders(
       headers['Authorization'] = `Bearer ${idToken}`;
     } else if (INTERNAL_API_KEY) {
       // Fallback to API key if ID token fetch fails
+      console.warn('[LangGraph] ID token unavailable, falling back to API key');
       headers['Authorization'] = `ApiKey ${INTERNAL_API_KEY}`;
+    } else {
+      // No authentication available - requests will fail
+      console.error('[LangGraph] No authentication available in production - requests will fail');
     }
   } else {
     // Development: Use internal API key
     if (INTERNAL_API_KEY) {
       headers['Authorization'] = `ApiKey ${INTERNAL_API_KEY}`;
+    } else {
+      console.warn('[LangGraph] INTERNAL_API_KEY not set - requests may fail in authenticated environments');
     }
   }
 
@@ -254,16 +261,18 @@ export async function getOrCreateThread(
 
   try {
     // Create thread with specific ID and metadata
+    // Use ifExists: 'do_nothing' for idempotent creation - returns existing thread if it exists
     await client.threads.create({
       threadId,
       metadata: { sessionId, agentType },
+      ifExists: 'do_nothing',
     });
-    console.log(`[LangGraph] Created thread ${threadId} for session ${sessionId}`);
+    console.log(`[LangGraph] Created/reused thread ${threadId} for session ${sessionId}`);
     return threadId;
-  } catch {
+  } catch (error) {
     // Thread may already exist (race condition) or creation failed
     // Either way, use the deterministic UUID
-    console.log(`[LangGraph] Using thread ${threadId}`);
+    console.log(`[LangGraph] Using thread ${threadId} (creation returned: ${error})`);
     return threadId;
   }
 }

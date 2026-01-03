@@ -114,7 +114,9 @@ resource "random_password" "db_password" {
   length  = 32
   special = true
   # Exclude problematic characters for connection strings
-  override_special = "!#$%&*()-_=+[]{}|:,.<>?"
+  # '@' is used to separate credentials from host in PostgreSQL URIs
+  # '?' is used to start query parameters
+  override_special = "!#$%&*()-_=+[]{}|:,.<>"
 }
 
 resource "google_sql_user" "langgraph" {

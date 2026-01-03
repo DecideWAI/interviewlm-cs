@@ -1,0 +1,3 @@
+[submodule "langgraph-agents/aegra"]
+	path = langgraph-agents/aegra
+	url = https://github.com/ibbybuilds/aegra.git

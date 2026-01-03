@@ -26,11 +26,12 @@ resource "google_project_iam_member" "langgraph_sql_client" {
 # Secret Manager Access (for reading secrets)
 # -----------------------------------------------------------------------------
 
-resource "google_project_iam_member" "langgraph_secret_accessor" {
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.langgraph.email}"
-}
+# NOTE: Project-level Secret Manager access has been intentionally removed.
+# The LangGraph service account should NOT have access to all secrets in the
+# project. Per-secret IAM bindings are granted in secrets.tf for only the
+# specific secrets the LangGraph service needs (database_url, redis_url,
+# internal_api_key, anthropic_api_key, langsmith_api_key, modal tokens).
+# This follows the principle of least privilege.
 
 # -----------------------------------------------------------------------------
 # Cloud Trace Agent (for distributed tracing)

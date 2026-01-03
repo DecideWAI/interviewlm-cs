@@ -16,6 +16,7 @@ User context is passed via custom headers for audit trails:
 
 import os
 import logging
+import time
 from typing import Optional
 
 import httpx
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 GOOGLE_TOKEN_INFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 
-# Cache for verified tokens (simple in-memory cache)
+# Cache for verified tokens with expiration tracking
 _token_cache: dict[str, dict] = {}
 _CACHE_MAX_SIZE = 100
 
@@ -35,6 +36,7 @@ _CACHE_MAX_SIZE = 100
 async def verify_google_id_token(token: str) -> Optional[dict]:
     """
     Verify Google ID token from Cloud Run IAM.
+    Caches valid tokens and validates expiration.
 
     Args:
         token: The ID token from the Authorization header
@@ -42,9 +44,15 @@ async def verify_google_id_token(token: str) -> Optional[dict]:
     Returns:
         Token info dict if valid, None otherwise
     """
-    # Check cache first
+    # Check cache first - with expiration validation
     if token in _token_cache:
-        return _token_cache[token]
+        cached = _token_cache[token]
+        exp = cached.get("exp")
+        if exp and int(exp) > time.time():
+            return cached
+        else:
+            # Token expired, remove from cache
+            del _token_cache[token]
 
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -55,9 +63,12 @@ async def verify_google_id_token(token: str) -> Optional[dict]:
             if resp.status_code == 200:
                 token_info = resp.json()
 
-                # Simple cache management - clear if too large
+                # Evict oldest entries if cache is full (FIFO eviction)
                 if len(_token_cache) >= _CACHE_MAX_SIZE:
-                    _token_cache.clear()
+                    # Remove first 10% of entries
+                    keys_to_remove = list(_token_cache.keys())[:_CACHE_MAX_SIZE // 10]
+                    for key in keys_to_remove:
+                        del _token_cache[key]
 
                 _token_cache[token] = token_info
                 return token_info
@@ -65,7 +76,7 @@ async def verify_google_id_token(token: str) -> Optional[dict]:
     except httpx.TimeoutException:
         logger.warning("Timeout verifying Google ID token")
     except Exception as e:
-        logger.error(f"Error verifying Google ID token: {e}")
+        logger.warning(f"Error verifying Google ID token: {e}")
 
     return None
 

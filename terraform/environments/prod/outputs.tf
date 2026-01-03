@@ -145,7 +145,7 @@ output "langgraph_deployment_instructions" {
 
     3. Get the internal API key secret value for local development:
        gcloud secrets versions access latest \
-         --secret=interviewlm-prod-internal-api-key
+         --secret=${local.name_prefix}-langgraph-internal-api-key
 
     The main app will use Cloud Run IAM authentication in production
     and API key authentication in development.

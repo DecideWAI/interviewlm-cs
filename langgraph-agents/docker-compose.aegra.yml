@@ -1,0 +1,112 @@
+# Docker Compose for Aegra (Open Source LangGraph Platform Alternative)
+# Usage: docker compose -f docker-compose.aegra.yml up
+
+services:
+  # PostgreSQL Database (for LangGraph checkpointing)
+  postgres:
+    image: postgres:16-alpine
+    container_name: aegra-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: interviewlm
+    volumes:
+      - aegra_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d interviewlm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - aegra-network
+
+  # Aegra Server
+  aegra:
+    build:
+      context: ./aegra
+      dockerfile: deployments/docker/Dockerfile
+    container_name: aegra-server
+    ports:
+      - "8000:8000"
+    environment:
+      # Database (asyncpg format for Aegra)
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/interviewlm
+      # Server settings
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+      - ENV_MODE=LOCAL
+      # Authentication
+      - AUTH_TYPE=noop
+      # LLM Providers
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Model configuration
+      - CODING_AGENT_MODEL=${CODING_AGENT_MODEL:-claude-haiku-4-5-20251001}
+      - EVALUATION_AGENT_MODEL=${EVALUATION_AGENT_MODEL:-claude-haiku-4-5-20251001}
+      # Modal service
+      - MODAL_TOKEN_ID=${MODAL_TOKEN_ID}
+      - MODAL_TOKEN_SECRET=${MODAL_TOKEN_SECRET}
+      - MODAL_WORKSPACE=${MODAL_WORKSPACE}
+      - MODAL_UNIVERSAL_IMAGE_ID=${MODAL_UNIVERSAL_IMAGE_ID}
+      # LangSmith (not Langfuse)
+      - LANGFUSE_LOGGING=false
+      - LANGCHAIN_TRACING_V2=true
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGSMITH_PROJECT=${LANGSMITH_PROJECT:-interviewlm-agents}
+      - LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # Mount our graphs and config
+      - ./langgraph.json:/app/langgraph.json:ro
+      - ./agents:/app/agents:ro
+      - ./tools:/app/tools:ro
+      - ./middleware:/app/middleware:ro
+      - ./.env:/app/.env:ro
+    command: >
+      sh -c "
+        echo 'Running database migrations...' &&
+        alembic upgrade head &&
+        echo 'Starting Aegra server...' &&
+        uvicorn src.agent_server.main:app --host 0.0.0.0 --port 8000
+      "
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - aegra-network
+
+  # Redis (optional - for future caching)
+  redis:
+    image: redis:7-alpine
+    container_name: aegra-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - aegra_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - redis
+    networks:
+      - aegra-network
+
+volumes:
+  aegra_postgres_data:
+  aegra_redis_data:
+
+networks:
+  aegra-network:
+    driver: bridge

@@ -1,5 +1,6 @@
-# LangGraph Module - Cloud Run Service
-# Main deployment configuration for LangGraph agents
+# LangGraph Module - Cloud Run Service (Aegra-based)
+# Main deployment configuration for LangGraph agents using Aegra
+# https://github.com/ibbybuilds/aegra
 
 terraform {
   required_version = ">= 1.5.0"
@@ -69,12 +70,39 @@ resource "google_cloud_run_v2_service" "langgraph" {
 
       env {
         name  = "PYTHONPATH"
-        value = "/app"
+        value = "/app:/app/agents:/app/tools:/app/middleware"
       }
 
       env {
         name  = "PYTHONUNBUFFERED"
         value = "1"
+      }
+
+      # Aegra Server Configuration
+      env {
+        name  = "AUTH_TYPE"
+        value = "noop" # Use IAM for auth at Cloud Run level
+      }
+
+      env {
+        name  = "ENV_MODE"
+        value = "PRODUCTION"
+      }
+
+      env {
+        name  = "LOG_LEVEL"
+        value = "INFO"
+      }
+
+      env {
+        name  = "DEBUG"
+        value = "false"
+      }
+
+      # Disable Langfuse (we use LangSmith)
+      env {
+        name  = "LANGFUSE_LOGGING"
+        value = "false"
       }
 
       # LangSmith/Observability
@@ -150,9 +178,9 @@ resource "google_cloud_run_v2_service" "langgraph" {
       # Secret Environment Variables
       # ---------------------------------------------------------------------
 
-      # Database URI (LangGraph expects DATABASE_URI, not DATABASE_URL)
+      # Database URL (Aegra uses postgresql+asyncpg:// format)
       env {
-        name = "DATABASE_URI"
+        name = "DATABASE_URL"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.database_url.secret_id
@@ -161,9 +189,9 @@ resource "google_cloud_run_v2_service" "langgraph" {
         }
       }
 
-      # Redis URI (LangGraph expects REDIS_URI, not REDIS_URL)
+      # Redis URL (for future caching, optional for Aegra)
       env {
-        name = "REDIS_URI"
+        name = "REDIS_URL"
         value_source {
           secret_key_ref {
             secret  = google_secret_manager_secret.redis_url.secret_id
@@ -231,23 +259,23 @@ resource "google_cloud_run_v2_service" "langgraph" {
       }
 
       # ---------------------------------------------------------------------
-      # Health Checks
+      # Health Checks (Aegra uses /health endpoint)
       # ---------------------------------------------------------------------
 
       startup_probe {
         http_get {
-          path = "/ok"
+          path = "/health"
           port = 8000
         }
-        initial_delay_seconds = 10
-        timeout_seconds       = 5
+        initial_delay_seconds = 15 # Allow time for migrations
+        timeout_seconds       = 10
         period_seconds        = 10
-        failure_threshold     = 6 # Allow up to 60s for startup
+        failure_threshold     = 12 # Allow up to 120s for startup + migrations
       }
 
       liveness_probe {
         http_get {
-          path = "/ok"
+          path = "/health"
           port = 8000
         }
         initial_delay_seconds = 30

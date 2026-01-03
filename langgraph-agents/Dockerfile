@@ -1,56 +1,90 @@
-# LangGraph Agents Dockerfile
+# LangGraph Agents Dockerfile (Aegra-based)
 # Production-ready container for InterviewLM AI agents
 #
-# This container runs the LangGraph server which:
+# Uses Aegra - open source LangGraph Platform alternative
 # - Serves multiple agent graphs (coding, evaluation, interview, etc.)
-# - Persists state in PostgreSQL
-# - Uses Redis for pub-sub streaming
-# - Implements custom authentication middleware
+# - Persists state in PostgreSQL with LangGraph checkpointer
+# - LangGraph SDK compatible API
+# - LangSmith observability
 
-FROM python:3.12-slim
+FROM python:3.11-slim-bookworm AS base
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=off \
+    PIP_DISABLE_PIP_VERSION_CHECK=on \
+    PIP_DEFAULT_TIMEOUT=100
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create non-root user for security
-RUN groupadd -r agents && useradd -r -g agents agents
-
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first (for better caching)
-COPY requirements.txt .
+# Create non-root user for runtime
+RUN addgroup --system app && adduser --system --ingroup app app
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# -----------------------------
+# Builder stage
+# -----------------------------
+FROM base AS builder
 
-# Copy application code
-COPY . .
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Change ownership to non-root user
-RUN chown -R agents:agents /app
+# Copy Aegra source and install
+COPY aegra/pyproject.toml ./
+COPY aegra/README.md ./
+COPY aegra/src/ ./src/
 
-# Switch to non-root user
-USER agents
+# Install Aegra and its dependencies
+RUN python -m pip install --upgrade pip && \
+    pip install --no-cache-dir .
 
-# Expose port for LangGraph server
+# Install additional dependencies for our agents
+COPY requirements.txt ./requirements-extra.txt
+RUN pip install --no-cache-dir -r requirements-extra.txt
+
+# -----------------------------
+# Final, minimal runtime image
+# -----------------------------
+FROM base AS final
+
+# Install minimal runtime libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages and console scripts from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
+COPY --from=builder /usr/local/bin/ /usr/local/bin/
+
+# Copy Aegra runtime assets
+COPY aegra/alembic.ini ./alembic.ini
+COPY aegra/alembic/ ./alembic/
+COPY aegra/src/ ./src/
+
+# Copy our noop auth.py (created for development/internal use)
+COPY auth.py ./auth.py
+
+# Copy our graph configuration and code
+COPY langgraph.json ./langgraph.json
+COPY agents/ ./agents/
+COPY tools/ ./tools/
+COPY middleware/ ./middleware/
+
+# Set PYTHONPATH to include our code
+ENV PYTHONPATH=/app:/app/agents:/app/tools:/app/middleware
+
 EXPOSE 8000
 
-# Health check - LangGraph uses /ok endpoint
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/ok || exit 1
+# Health check - Aegra uses /health endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
 
-# Default command - run the production FastAPI server
-# Reads langgraph.json and serves all graphs via REST API
-CMD ["python", "server.py"]
+# Run as non-root
+USER app
+
+# Run migrations then start server
+# Cloud Run sets PORT env var, Aegra reads it
+CMD ["sh", "-c", "alembic upgrade head && uvicorn src.agent_server.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

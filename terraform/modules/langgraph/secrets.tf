@@ -1,8 +1,8 @@
-# LangGraph Module - Secret Manager Configuration
-# Manages LangGraph-specific secrets
+# LangGraph Module - Secret Manager Configuration (Aegra-based)
+# Manages LangGraph-specific secrets for Aegra server
 
 # -----------------------------------------------------------------------------
-# Database URL Secret
+# Database URL Secret (Aegra requires postgresql+asyncpg:// format)
 # -----------------------------------------------------------------------------
 
 resource "google_secret_manager_secret" "database_url" {
@@ -20,8 +20,9 @@ resource "google_secret_manager_secret" "database_url" {
 }
 
 resource "google_secret_manager_secret_version" "database_url" {
-  secret      = google_secret_manager_secret.database_url.id
-  secret_data = "postgresql://${google_sql_user.langgraph.name}:${random_password.db_password.result}@${google_sql_database_instance.langgraph.private_ip_address}:5432/${google_sql_database.langgraph.name}?sslmode=require"
+  secret = google_secret_manager_secret.database_url.id
+  # Aegra uses asyncpg driver - format: postgresql+asyncpg://user:pass@host:port/db
+  secret_data = "postgresql+asyncpg://${google_sql_user.langgraph.name}:${random_password.db_password.result}@${google_sql_database_instance.langgraph.private_ip_address}:5432/${google_sql_database.langgraph.name}?ssl=require"
 }
 
 # -----------------------------------------------------------------------------
@@ -44,9 +45,9 @@ resource "google_secret_manager_secret" "redis_url" {
 
 resource "google_secret_manager_secret_version" "redis_url" {
   secret = google_secret_manager_secret.redis_url.id
-  # Use rediss:// for TLS connections with ssl_cert_reqs=none to skip CA verification
-  # This is safe because we're within a VPC and using Google's managed Redis
-  secret_data = "rediss://:${google_redis_instance.langgraph.auth_string}@${google_redis_instance.langgraph.host}:${google_redis_instance.langgraph.port}?ssl_cert_reqs=none"
+  # Use rediss:// for TLS connections with proper certificate verification
+  # Google Memorystore uses valid TLS certificates that should be verified
+  secret_data = "rediss://:${google_redis_instance.langgraph.auth_string}@${google_redis_instance.langgraph.host}:${google_redis_instance.langgraph.port}"
 }
 
 # -----------------------------------------------------------------------------

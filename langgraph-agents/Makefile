@@ -1,7 +1,7 @@
 # LangGraph Agents Makefile
 # Common commands for development, testing, and deployment
 
-.PHONY: help install test benchmark lint format clean docker-up docker-down langgraph-dev langgraph-deploy langgraph-up langgraph-down langgraph-test
+.PHONY: help install test benchmark lint format clean docker-up docker-down langgraph-dev langgraph-deploy langgraph-up langgraph-down langgraph-test aegra-dev aegra-docker aegra-migrate aegra-test
 
 # Default target
 help:
@@ -12,7 +12,13 @@ help:
 	@echo "  make install      - Install dependencies"
 	@echo "  make install-dev  - Install with dev dependencies"
 	@echo ""
-	@echo "LangGraph Server (Primary):"
+	@echo "Aegra Server (Primary - Recommended):"
+	@echo "  make aegra-dev      - Run Aegra server locally (port 8000)"
+	@echo "  make aegra-docker   - Start Aegra with Docker (includes postgres)"
+	@echo "  make aegra-migrate  - Run database migrations"
+	@echo "  make aegra-test     - Test Aegra server health"
+	@echo ""
+	@echo "LangGraph Server (Legacy):"
 	@echo "  make langgraph-dev    - Run LangGraph dev server (port 2024)"
 	@echo "  make langgraph-up     - Start LangGraph with Docker (port 8123)"
 	@echo "  make langgraph-down   - Stop LangGraph Docker services"
@@ -113,7 +119,52 @@ docker-restart:
 	docker-compose down && docker-compose up -d
 
 # =============================================================================
-# LangGraph Cloud
+# Aegra Server (Primary - Open Source LangGraph Platform Alternative)
+# =============================================================================
+
+# Run Aegra development server locally
+# Uses langgraph.json for graph configuration via AEGRA_CONFIG
+# Requires: PostgreSQL running on localhost:5432
+aegra-dev:
+	@echo "Starting Aegra server..."
+	@echo "Make sure PostgreSQL is running (docker compose up postgres -d)"
+	@echo "Graphs will be loaded from langgraph.json"
+	@echo "Server: http://localhost:8000"
+	@echo "Health: http://localhost:8000/health"
+	@echo "Docs:   http://localhost:8000/docs"
+	@# Sync Aegra deps first, then install our agent deps into the same venv
+	cd aegra && uv sync
+	cd aegra && uv pip install -q -r $(PWD)/requirements.txt
+	AEGRA_CONFIG=$(PWD)/langgraph.json \
+		PYTHONPATH=$(PWD)/aegra/src:$(PWD):$(PWD)/agents:$(PWD)/tools:$(PWD)/middleware:$$PYTHONPATH \
+		$(PWD)/aegra/.venv/bin/python -m uvicorn agent_server.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Start Aegra with Docker (includes PostgreSQL)
+aegra-docker:
+	docker compose -f docker-compose.aegra.yml up
+
+# Stop Aegra Docker services
+aegra-docker-down:
+	docker compose -f docker-compose.aegra.yml down
+
+# Run database migrations
+aegra-migrate:
+	cd aegra && uv run alembic upgrade head
+
+# Test Aegra server health
+aegra-test:
+	@echo "Testing Aegra server..."
+	curl -s http://localhost:8000/health | python -m json.tool || echo "Server not running"
+	@echo ""
+	@echo "Testing graph list..."
+	curl -s http://localhost:8000/assistants | python -m json.tool || echo "Failed to list graphs"
+
+# Install Aegra dependencies
+aegra-install:
+	cd aegra && uv sync
+
+# =============================================================================
+# LangGraph Cloud (Legacy - Requires License)
 # =============================================================================
 
 # Run LangGraph development server locally (uses langgraph.json)

@@ -44,6 +44,7 @@ pytest-cov>=4.0.0
 
 # PostgreSQL checkpointing for state persistence
 langgraph-checkpoint-postgres>=2.0.0
+psycopg[binary,pool]>=3.1.0
 
 # SDK for client integration (not the licensed server)
 langgraph-sdk>=0.3.0

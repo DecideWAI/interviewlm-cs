@@ -374,8 +374,8 @@ module "cloud_run" {
     # Monitoring (Sentry)
     SENTRY_DSN             = var.sentry_dsn
     NEXT_PUBLIC_SENTRY_DSN = var.sentry_dsn
-    # LangGraph AI Agents (set after langgraph module is deployed)
-    # LANGGRAPH_API_URL is set via depends_on cycle - use output value
+    # LangGraph AI Agents
+    LANGGRAPH_API_URL = module.langgraph.service_url
   }
 
   app_secret_env_vars = {
@@ -423,6 +423,10 @@ module "cloud_run" {
       secret_id = module.secrets.turnstile_secret_key_secret_id
       version   = "latest"
     }
+    LANGGRAPH_INTERNAL_API_KEY = {
+      secret_id = module.langgraph.internal_api_key_secret_id
+      version   = "latest"
+    }
   }
 
   labels = local.labels
@@ -430,6 +434,7 @@ module "cloud_run" {
   depends_on_resources = [
     module.cloud_sql.instance_name,
     module.memorystore.instance_name,
+    module.langgraph.service_name,
   ]
 
   depends_on = [
@@ -437,6 +442,7 @@ module "cloud_run" {
     module.cloud_sql,
     module.memorystore,
     module.secrets,
+    module.langgraph,
   ]
 }
 
@@ -547,7 +553,8 @@ module "langgraph" {
   modal_execute_command_url = var.modal_execute_command_url
 
   # Next.js callback URL (for SSE notifications)
-  nextjs_internal_url = module.cloud_run.app_url
+  # Using custom domain to avoid circular dependency with cloud_run module
+  nextjs_internal_url = "https://${var.custom_domain}"
 
   # Shared secrets from main app
   anthropic_api_key_secret_id  = module.secrets.anthropic_api_key_secret_id

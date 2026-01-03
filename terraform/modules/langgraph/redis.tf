@@ -39,8 +39,9 @@ resource "google_redis_instance" "langgraph" {
   }
 
   # High availability (Standard tier only)
+  # Note: read_replicas_mode is not valid for BASIC tier, so we use null
   replica_count      = var.redis_tier == "STANDARD_HA" ? 1 : null
-  read_replicas_mode = var.redis_tier == "STANDARD_HA" ? "READ_REPLICAS_ENABLED" : "READ_REPLICAS_DISABLED"
+  read_replicas_mode = var.redis_tier == "STANDARD_HA" ? "READ_REPLICAS_ENABLED" : null
 
   # Security - AUTH and transit encryption
   auth_enabled            = true

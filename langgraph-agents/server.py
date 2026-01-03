@@ -17,12 +17,13 @@ import json
 import asyncio
 import hmac
 import logging
+import time
 from pathlib import Path
 from typing import Any, Optional
 from contextlib import asynccontextmanager
-from functools import wraps
 
-from fastapi import FastAPI, HTTPException, Request, Depends, Header
+import httpx
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -114,29 +115,33 @@ async def init_checkpointer():
 
     try:
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        from psycopg_pool import AsyncConnectionPool
 
-        # Create async checkpointer
-        CHECKPOINTER = AsyncPostgresSaver.from_conn_string(DATABASE_URI)
+        # Create connection pool
+        pool = AsyncConnectionPool(
+            conninfo=DATABASE_URI,
+            max_size=20,
+            kwargs={"autocommit": True},
+        )
+        await pool.open()
 
-        # Setup tables (idempotent)
+        # Create checkpointer with the pool
+        CHECKPOINTER = AsyncPostgresSaver(pool)
+
+        # Setup tables (idempotent) - creates checkpoint tables if they don't exist
         await CHECKPOINTER.setup()
 
-        logger.info("PostgreSQL checkpointer initialized")
+        logger.info("PostgreSQL checkpointer initialized with connection pool")
         return CHECKPOINTER
 
-    except ImportError:
-        logger.warning("langgraph.checkpoint.postgres not available, trying SQLAlchemy")
-        try:
-            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-            # Fallback to in-memory for now
-            CHECKPOINTER = AsyncSqliteSaver.from_conn_string(":memory:")
-            logger.warning("Using in-memory checkpointer (state will not persist)")
-            return CHECKPOINTER
-        except Exception as e:
-            logger.error(f"Failed to initialize any checkpointer: {e}")
-            return None
+    except ImportError as e:
+        logger.warning(f"langgraph.checkpoint.postgres not available: {e}")
+        logger.warning("State persistence disabled - install langgraph-checkpoint-postgres and psycopg")
+        return None
     except Exception as e:
         logger.error(f"Failed to initialize PostgreSQL checkpointer: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -175,8 +180,8 @@ async def lifespan(app: FastAPI):
     if CHECKPOINTER:
         try:
             await CHECKPOINTER.conn.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to close checkpointer connection: {e}")
 
 
 # Create FastAPI app
@@ -192,8 +197,64 @@ app = FastAPI(
 # Authentication Middleware
 # =============================================================================
 
+# Google token verification endpoint
+GOOGLE_TOKEN_INFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+
+# Token cache with expiration tracking
+_token_cache: dict[str, dict] = {}
+_TOKEN_CACHE_MAX_SIZE = 100
+
+
+async def verify_google_id_token(token: str) -> Optional[dict]:
+    """
+    Verify Google ID token against Google's tokeninfo endpoint.
+    Caches valid tokens based on their expiration time.
+
+    Args:
+        token: The ID token from the Authorization header
+
+    Returns:
+        Token info dict if valid, None otherwise
+    """
+    # Check cache first - with expiration validation
+    if token in _token_cache:
+        cached = _token_cache[token]
+        exp = cached.get("exp")
+        if exp and int(exp) > time.time():
+            return cached
+        else:
+            # Token expired, remove from cache
+            del _token_cache[token]
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                GOOGLE_TOKEN_INFO_URL,
+                params={"id_token": token}
+            )
+            if resp.status_code == 200:
+                token_info = resp.json()
+
+                # Evict oldest entries if cache is full (simple FIFO)
+                if len(_token_cache) >= _TOKEN_CACHE_MAX_SIZE:
+                    # Remove first 10% of entries
+                    keys_to_remove = list(_token_cache.keys())[:_TOKEN_CACHE_MAX_SIZE // 10]
+                    for key in keys_to_remove:
+                        del _token_cache[key]
+
+                _token_cache[token] = token_info
+                return token_info
+
+    except httpx.TimeoutException:
+        logger.warning("Timeout verifying Google ID token")
+    except Exception as e:
+        logger.warning(f"Error verifying Google ID token: {e}")
+
+    return None
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Validate internal API key for authenticated endpoints."""
+    """Validate internal API key and Bearer tokens for authenticated endpoints."""
 
     # Paths that don't require authentication
     PUBLIC_PATHS = {"/", "/ok", "/health", "/healthz", "/docs", "/openapi.json", "/redoc"}
@@ -223,12 +284,19 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     content={"detail": "Invalid API key"}
                 )
 
-        # Check for Bearer token (Cloud Run IAM)
-        # In production, Cloud Run validates the IAM token before reaching this service
-        # If we get here with a Bearer token, it means Cloud Run already validated it
+        # Check for Bearer token (Google ID token)
+        # Verify the token against Google's tokeninfo endpoint
         if auth_header.startswith("Bearer "):
-            # Cloud Run IAM already validated the token
-            return await call_next(request)
+            token = auth_header[7:]
+            token_info = await verify_google_id_token(token)
+            if token_info:
+                return await call_next(request)
+            else:
+                logger.warning(f"Invalid Bearer token from {request.client.host if request.client else 'unknown'}")
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Invalid token"}
+                )
 
         # No valid auth provided
         logger.warning(f"Missing auth from {request.client.host if request.client else 'unknown'}")
@@ -366,9 +434,11 @@ async def invoke_graph(
 
         return {"result": _serialize_result(result)}
 
-    except Exception as e:
-        logger.error(f"[INVOKE ERROR] graph={graph_name} error={e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(f"[INVOKE ERROR] graph={graph_name}")
+        raise HTTPException(status_code=500, detail="Internal server error during graph invocation")
 
 
 @app.post("/graphs/{graph_name}/stream")
@@ -431,9 +501,9 @@ async def stream_graph(
 
             yield "data: [DONE]\n\n"
 
-        except Exception as e:
-            logger.error(f"[STREAM ERROR] graph={graph_name} error={e}")
-            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        except Exception:
+            logger.exception(f"[STREAM ERROR] graph={graph_name}")
+            yield f"data: {json.dumps({'error': 'Internal server error during graph streaming'})}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -470,9 +540,9 @@ async def get_thread_state(
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"[GET STATE ERROR] thread={thread_id} error={e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception(f"[GET STATE ERROR] thread={thread_id}")
+        raise HTTPException(status_code=500, detail="Internal server error retrieving thread state")
 
 
 @app.get("/threads/{thread_id}/history")
@@ -494,9 +564,9 @@ async def get_thread_history(
 
         return {"thread_id": thread_id, "history": history}
 
-    except Exception as e:
-        logger.error(f"[GET HISTORY ERROR] thread={thread_id} error={e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception(f"[GET HISTORY ERROR] thread={thread_id}")
+        raise HTTPException(status_code=500, detail="Internal server error retrieving thread history")
 
 
 # =============================================================================
@@ -540,10 +610,10 @@ def _serialize_result(obj: Any) -> Any:
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
-    logger.error(f"Unhandled exception: {exc}")
+    logger.exception(f"Unhandled exception on {request.url.path}")
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc), "type": type(exc).__name__}
+        content={"detail": "Internal server error"}
     )
 
 
