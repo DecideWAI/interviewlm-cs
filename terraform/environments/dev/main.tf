@@ -281,11 +281,12 @@ module "cloud_run" {
 
   # Environment variables
   app_env_vars = {
-    NODE_ENV              = "development"
-    NEXTAUTH_URL          = "" # Will be set after deployment
-    GCS_BUCKET_SESSIONS   = module.cloud_storage.sessions_bucket_name
-    GCS_BUCKET_ARTIFACTS  = module.cloud_storage.artifacts_bucket_name
-    ENABLE_CODE_STREAMING = "true"
+    NODE_ENV                 = "development"
+    NEXTAUTH_URL             = "" # Will be set after deployment
+    GCS_BUCKET_SESSIONS      = module.cloud_storage.sessions_bucket_name
+    GCS_BUCKET_ARTIFACTS     = module.cloud_storage.artifacts_bucket_name
+    ENABLE_CODE_STREAMING    = "true"
+    MODAL_UNIVERSAL_IMAGE_ID = var.modal_universal_image_id
   }
 
   # Secret references

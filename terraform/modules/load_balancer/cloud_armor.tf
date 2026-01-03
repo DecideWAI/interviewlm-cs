@@ -121,8 +121,8 @@ resource "google_compute_security_policy" "cloudflare_only" {
       versioned_expr = "SRC_IPS_V1"
       config {
         src_ip_ranges = [
-          "35.191.0.0/16",    # Google health checkers
-          "130.211.0.0/22",   # Google health checkers
+          "35.191.0.0/16",  # Google health checkers
+          "130.211.0.0/22", # Google health checkers
         ]
       }
     }

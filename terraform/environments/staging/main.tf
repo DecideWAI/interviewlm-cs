@@ -292,11 +292,12 @@ module "cloud_run" {
   custom_domain       = var.custom_domain
 
   app_env_vars = {
-    NODE_ENV              = "staging"
-    NEXTAUTH_URL          = var.app_url
-    GCS_BUCKET_SESSIONS   = module.cloud_storage.sessions_bucket_name
-    GCS_BUCKET_ARTIFACTS  = module.cloud_storage.artifacts_bucket_name
-    ENABLE_CODE_STREAMING = "true"
+    NODE_ENV                 = "staging"
+    NEXTAUTH_URL             = var.app_url
+    GCS_BUCKET_SESSIONS      = module.cloud_storage.sessions_bucket_name
+    GCS_BUCKET_ARTIFACTS     = module.cloud_storage.artifacts_bucket_name
+    ENABLE_CODE_STREAMING    = "true"
+    MODAL_UNIVERSAL_IMAGE_ID = var.modal_universal_image_id
   }
 
   app_secret_env_vars = {

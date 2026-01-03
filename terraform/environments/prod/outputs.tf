@@ -259,7 +259,7 @@ output "estimated_monthly_cost" {
 
     Total: ~$255-315/month
     EOT
-  ) : (
+    ) : (
     <<-EOT
     Budget Configuration (~$225-285/month with LangGraph):
 

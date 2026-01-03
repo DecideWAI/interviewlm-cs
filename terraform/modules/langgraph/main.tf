@@ -147,6 +147,11 @@ resource "google_cloud_run_v2_service" "langgraph" {
         value = var.modal_execute_command_url
       }
 
+      env {
+        name  = "MODAL_UNIVERSAL_IMAGE_ID"
+        value = var.modal_universal_image_id
+      }
+
       # Next.js Internal URL (for SSE callbacks)
       env {
         name  = "NEXTJS_INTERNAL_URL"
