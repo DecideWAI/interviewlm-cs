@@ -21,8 +21,12 @@ resource "google_secret_manager_secret" "database_url" {
 
 resource "google_secret_manager_secret_version" "database_url" {
   secret = google_secret_manager_secret.database_url.id
-  # Aegra uses asyncpg driver - format: postgresql+asyncpg://user:pass@host:port/db
-  secret_data = "postgresql+asyncpg://${google_sql_user.langgraph.name}:${random_password.db_password.result}@${google_sql_database_instance.langgraph.private_ip_address}:5432/${google_sql_database.langgraph.name}?ssl=require"
+  # Aegra uses SQLAlchemy async with asyncpg driver
+  # LangGraph checkpoint uses psycopg3
+  # Password must be URL-encoded to handle special characters
+  # Note: No SSL params in URL - asyncpg uses 'ssl', psycopg uses 'sslmode' (incompatible)
+  # Cloud SQL private IP within VPC doesn't require SSL
+  secret_data = "postgresql+asyncpg://${google_sql_user.langgraph.name}:${urlencode(random_password.db_password.result)}@${google_sql_database_instance.langgraph.private_ip_address}:5432/${google_sql_database.langgraph.name}"
 }
 
 # -----------------------------------------------------------------------------

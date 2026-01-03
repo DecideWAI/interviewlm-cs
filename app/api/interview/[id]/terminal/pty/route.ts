@@ -9,6 +9,7 @@ import {
   releaseShellSessionReader,
   getShellHistory,
   appendToShellHistory,
+  resizeShell,
 } from "@/lib/services/modal";
 
 /**
@@ -319,7 +320,40 @@ export async function POST(
     }
 
     const body = await request.json();
-    const { data } = body;
+    const { data, syncHistory, resize } = body;
+
+    // Handle terminal resize
+    if (resize && typeof resize.cols === "number" && typeof resize.rows === "number") {
+      console.log(`[PTY] Resize request for ${id}: ${resize.cols}x${resize.rows}`);
+      const shellSession = getShellSession(id);
+      if (shellSession) {
+        try {
+          // Send SIGWINCH to notify the PTY of the new size
+          // Modal's PTY should handle this via the process
+          await resizeShell(id, resize.cols, resize.rows);
+          return NextResponse.json({ success: true, resized: true });
+        } catch (error) {
+          console.error(`[PTY] Resize failed for ${id}:`, error);
+          // Non-fatal - continue even if resize fails
+          return NextResponse.json({ success: true, resized: false });
+        }
+      }
+      return NextResponse.json({ success: true, resized: false });
+    }
+
+    // Handle history sync from client (when server lost history but client has it cached)
+    if (typeof syncHistory === "string" && syncHistory.length > 0) {
+      console.log(`[PTY] Receiving ${syncHistory.length} chars of history sync from client for ${id}`);
+      // Only restore if we don't already have history
+      const existingHistory = getShellHistory(id);
+      if (!existingHistory || existingHistory.length === 0) {
+        // Restore history from client cache (limit to 50KB for safety)
+        const historyToRestore = syncHistory.slice(-50000);
+        appendToShellHistory(id, historyToRestore);
+        console.log(`[PTY] Restored ${historyToRestore.length} chars of history from client for ${id}`);
+      }
+      return NextResponse.json({ success: true, historyRestored: true });
+    }
 
     if (typeof data !== "string") {
       return NextResponse.json(

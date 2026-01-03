@@ -304,15 +304,35 @@ export default function InterviewPage() {
       }
     }
 
-    // Load terminal collapsed state
+    // Load terminal collapsed state and sync with actual panel state
     const savedTerminalCollapsed = localStorage.getItem(`interview-terminal-collapsed-${candidateId}`);
-    if (savedTerminalCollapsed === "true") {
-      setIsTerminalCollapsed(true);
-      // Collapse the panel after a short delay to ensure ref is available
-      setTimeout(() => {
-        terminalPanelRef.current?.collapse();
-      }, 100);
-    }
+
+    // Sync state with actual panel after it mounts
+    const syncPanelState = () => {
+      const panel = terminalPanelRef.current;
+      if (!panel) {
+        // Retry if panel ref not ready yet
+        setTimeout(syncPanelState, 50);
+        return;
+      }
+
+      const isActuallyCollapsed = panel.isCollapsed();
+      const shouldBeCollapsed = savedTerminalCollapsed === "true";
+
+      // Sync the React state with what we want
+      setIsTerminalCollapsed(shouldBeCollapsed);
+
+      // Sync the actual panel with what we want
+      if (shouldBeCollapsed && !isActuallyCollapsed) {
+        panel.collapse();
+      } else if (!shouldBeCollapsed && isActuallyCollapsed) {
+        // Expand to a reasonable size (default 40%)
+        panel.resize(DEFAULT_PANEL_SIZES.vertical[1]);
+      }
+    };
+
+    // Small delay to ensure panel is mounted
+    setTimeout(syncPanelState, 100);
   }, [candidateId]);
 
   // Save sidebar tab preference
@@ -338,13 +358,19 @@ export default function InterviewPage() {
   }, [candidateId, panelSizes]);
 
   // Handle vertical panel layout changes
+  // Don't save collapsed sizes (< 5%) - restore to default when expanding
   const handleVerticalLayout = useCallback((sizes: number[]) => {
-    const newSizes: PanelSizes = {
-      ...panelSizes,
-      vertical: sizes as [number, number],
-    };
-    setPanelSizes(newSizes);
-    localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+    const terminalSize = sizes[1];
+
+    // Only save if terminal has a meaningful size (not collapsed)
+    if (terminalSize >= 5) {
+      const newSizes: PanelSizes = {
+        ...panelSizes,
+        vertical: sizes as [number, number],
+      };
+      setPanelSizes(newSizes);
+      localStorage.setItem(`interview-panel-sizes-${candidateId}-v2`, JSON.stringify(newSizes));
+    }
   }, [candidateId, panelSizes]);
 
   // Handle terminal collapse toggle using imperative Panel API
@@ -352,9 +378,14 @@ export default function InterviewPage() {
     const panel = terminalPanelRef.current;
     if (!panel) return;
 
-    if (isTerminalCollapsed) {
-      // Expand the panel
-      panel.expand();
+    // Check actual panel state to handle out-of-sync scenarios
+    const isActuallyCollapsed = panel.isCollapsed();
+
+    if (isActuallyCollapsed) {
+      // Expand the panel - resize to saved size or default (40%)
+      const savedSize = panelSizes.vertical[1];
+      const targetSize = savedSize >= 10 ? savedSize : DEFAULT_PANEL_SIZES.vertical[1];
+      panel.resize(targetSize);
       setIsTerminalCollapsed(false);
       localStorage.setItem(`interview-terminal-collapsed-${candidateId}`, "false");
     } else {
@@ -363,7 +394,7 @@ export default function InterviewPage() {
       setIsTerminalCollapsed(true);
       localStorage.setItem(`interview-terminal-collapsed-${candidateId}`, "true");
     }
-  }, [candidateId, isTerminalCollapsed]);
+  }, [candidateId, panelSizes.vertical]);
 
   // Prefetch all file contents for instant navigation
   const prefetchAllFiles = useCallback(async () => {

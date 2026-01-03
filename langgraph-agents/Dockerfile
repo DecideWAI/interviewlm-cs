@@ -73,8 +73,15 @@ COPY agents/ ./agents/
 COPY tools/ ./tools/
 COPY middleware/ ./middleware/
 
+# Copy startup script
+COPY start.sh ./start.sh
+RUN chmod +x start.sh
+
 # Set PYTHONPATH to include our code
 ENV PYTHONPATH=/app:/app/agents:/app/tools:/app/middleware
+
+# Change ownership to app user before switching
+RUN chown -R app:app /app
 
 EXPOSE 8000
 
@@ -85,6 +92,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Run as non-root
 USER app
 
-# Run migrations then start server
-# Cloud Run sets PORT env var, Aegra reads it
-CMD ["sh", "-c", "alembic upgrade head && uvicorn src.agent_server.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Start server with migrations
+CMD ["./start.sh"]

@@ -267,10 +267,10 @@ resource "google_cloud_run_v2_service" "langgraph" {
           path = "/health"
           port = 8000
         }
-        initial_delay_seconds = 15 # Allow time for migrations
-        timeout_seconds       = 10
-        period_seconds        = 10
-        failure_threshold     = 12 # Allow up to 120s for startup + migrations
+        initial_delay_seconds = 10 # Allow time for cold start
+        timeout_seconds       = 10 # Must be < period_seconds
+        period_seconds        = 15
+        failure_threshold     = 30 # Allow up to 460s total (10 + 30*15) for startup + db connection
       }
 
       liveness_probe {

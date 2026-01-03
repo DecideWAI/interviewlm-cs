@@ -376,6 +376,8 @@ module "cloud_run" {
     NEXT_PUBLIC_SENTRY_DSN = var.sentry_dsn
     # LangGraph AI Agents
     LANGGRAPH_API_URL = module.langgraph.service_url
+    # Modal sandbox image
+    MODAL_UNIVERSAL_IMAGE_ID = var.modal_universal_image_id
   }
 
   app_secret_env_vars = {
@@ -551,6 +553,7 @@ module "langgraph" {
   modal_read_file_url       = var.modal_read_file_url
   modal_list_files_url      = var.modal_list_files_url
   modal_execute_command_url = var.modal_execute_command_url
+  modal_universal_image_id  = var.modal_universal_image_id
 
   # Next.js callback URL (for SSE notifications)
   # Using custom domain to avoid circular dependency with cloud_run module

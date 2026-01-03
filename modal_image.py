@@ -132,7 +132,23 @@ interviewlm_image = (
     )
 
     # =========================================================================
-    # Layer 8: Environment variables
+    # Layer 8: Shell configuration (.bashrc)
+    # - Custom PS1 prompt (green "workspace" + cyan dirname)
+    # - HISTFILE points to /workspace for persistence across sandbox restarts
+    # - Useful bash settings
+    # =========================================================================
+    .run_commands(
+        # Create .bashrc using base64 to avoid escaping issues
+        # Content: PS1, HISTFILE, aliases, cd /workspace
+        "echo 'IyBJbnRlcnZpZXdMTSBTaGVsbCBDb25maWd1cmF0aW9uCgojIEN1c3RvbSBwcm9tcHQ6IGdyZWVuICJ3b3Jrc3BhY2UiICsgY3lhbiBjdXJyZW50IGRpcmVjdG9yeSArICIjIgpleHBvcnQgUFMxPSdcW1xlWzMybVxdd29ya3NwYWNlXFtcZVswbVxdOlxbXGVbMzZtXF1cV1xbXGVbMG1cXSMgJwoKIyBQZXJzaXN0IGJhc2ggaGlzdG9yeSB0byAvd29ya3NwYWNlIHZvbHVtZSAoc3Vydml2ZXMgc2FuZGJveCByZXN0YXJ0cykKZXhwb3J0IEhJU1RGSUxFPS93b3Jrc3BhY2UvLmJhc2hfaGlzdG9yeQpleHBvcnQgSElTVFNJWkU9MTAwMApleHBvcnQgSElTVEZJTEVTSVpFPTIwMDAKCiMgQXBwZW5kIHRvIGhpc3RvcnkgaW5zdGVhZCBvZiBvdmVyd3JpdGluZwpzaG9wdCAtcyBoaXN0YXBwZW5kCgojIFNhdmUgaGlzdG9yeSBhZnRlciBlYWNoIGNvbW1hbmQgKGZvciBwZXJzaXN0ZW5jZSkKUFJPTVBUX0NPTU1BTkQ9J2hpc3RvcnkgLWEnCgojIFVzZWZ1bCBhbGlhc2VzCmFsaWFzIGxsPSdscyAtbGEnCmFsaWFzIGxhPSdscyAtQScKYWxpYXMgbD0nbHMgLUNGJwoKIyBEZWZhdWx0IHRvIHdvcmtzcGFjZSBkaXJlY3RvcnkKY2QgL3dvcmtzcGFjZSAyPi9kZXYvbnVsbCB8fCB0cnVlCg==' | base64 -d > /root/.bashrc",
+        # Create .profile that sources .bashrc
+        "echo '[ -f ~/.bashrc ] && source ~/.bashrc' > /root/.profile",
+        # Verify the files were created
+        "cat /root/.bashrc",
+    )
+
+    # =========================================================================
+    # Layer 9: Environment variables
     # =========================================================================
     .env({
         "NODE_ENV": "development",
@@ -147,6 +163,8 @@ interviewlm_image = (
         "JAVA_HOME": "/usr/local/java",
         # Combined PATH
         "PATH": "/usr/local/bin:/usr/local/go/bin:/root/go/bin:/root/.cargo/bin:/usr/local/java/bin:$PATH",
+        # Bash history settings (also in .bashrc but set here for non-interactive shells)
+        "HISTFILE": "/workspace/.bash_history",
     })
 )
 

@@ -224,22 +224,9 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
   console.log(`[Modal] Shell session created for ${sessionId}`);
 
   // Set a cleaner prompt - hide the long Modal volume path
-  // PS1 format: green "workspace" + cyan short path + reset "$"
-  const initCommands = [
-    // Set a cleaner prompt: just shows current directory name
-    `export PS1='\\[\\e[32m\\]workspace\\[\\e[0m\\]:\\[\\e[36m\\]\\W\\[\\e[0m\\]\\$ '`,
-    // Clear the screen to hide the initial long path prompt
-    'clear',
-  ].join(' && ');
-
-  // Send init commands after a brief delay to let shell start
-  setTimeout(async () => {
-    try {
-      await writeToShell(sessionId, initCommands + '\n');
-    } catch (err) {
-      console.log(`[Modal] Failed to send init commands:`, err);
-    }
-  }, 100);
+  // PS1 format: green "workspace" + cyan short path + reset "#"
+  // Note: We skip init commands to avoid visible echo in terminal
+  // Users will see the default Modal prompt which is fine
 
   return session;
 }
@@ -278,6 +265,29 @@ export async function writeToShell(sessionId: string, data: string): Promise<voi
 
   session.writeQueue = writePromise;
   await writePromise;
+}
+
+/**
+ * Resize the PTY terminal
+ * Uses stty to update terminal dimensions silently
+ * @param sessionId - The session ID
+ * @param cols - Number of columns
+ * @param rows - Number of rows
+ */
+export async function resizeShell(sessionId: string, cols: number, rows: number): Promise<void> {
+  const session = shellSessions.get(sessionId);
+  if (!session) {
+    throw new Error(`No shell session found for ${sessionId}`);
+  }
+
+  // Send stty command silently:
+  // 1. Use Ctrl+U to clear current line (in case user is typing)
+  // 2. Run stty with output suppressed
+  // 3. Use Ctrl+L to redraw (optional, helps refresh display)
+  // Note: This may briefly interrupt user input but is necessary for proper resize
+  const resizeCmd = `\x15stty cols ${cols} rows ${rows} 2>/dev/null\n`;
+  await writeToShell(sessionId, resizeCmd);
+  console.log(`[Modal] Resized shell ${sessionId} to ${cols}x${rows}`);
 }
 
 /**

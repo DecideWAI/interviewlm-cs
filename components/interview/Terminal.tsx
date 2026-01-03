@@ -44,12 +44,17 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const lastDataTimeRef = useRef<number>(Date.now());
     const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const silentReconnectRef = useRef<boolean>(false);
+    const isReconnectingRef = useRef<boolean>(false);
+    const consecutiveStreamEndedRef = useRef<number>(0);
+    const lastReconnectTimeRef = useRef<number>(0);
     // Batching state lifted to refs to prevent stale closures on reconnection
     const inputBufferRef = useRef<string>("");
     const batchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const lastSendTimeRef = useRef<number>(0);
     const MAX_TUNNEL_RECONNECT_ATTEMPTS = 3;
     const MAX_SSE_RECONNECT_ATTEMPTS = 5;
+    const MAX_CONSECUTIVE_STREAM_ENDED = 3; // Limit rapid reconnects due to stream_ended
+    const MIN_RECONNECT_INTERVAL_MS = 2000; // Minimum time between reconnects
     const HEARTBEAT_TIMEOUT_MS = 30000; // Consider connection dead if no data for 30s
 
     // Keep onCommand ref up to date without triggering effect re-runs
@@ -106,6 +111,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
               setConnectionMode("pty");
               reconnectAttemptsRef.current = 0;
 
+              // Note: We don't send resize to server PTY because:
+              // 1. stty commands show up in terminal output
+              // 2. The display corruption is mainly from xterm.js reflow, not PTY size
+              // The PTY uses initial size and xterm.js handles display scaling
+
               // Only show connection message if not a silent reconnect
               if (!silentReconnectRef.current) {
                 terminal.writeln("\x1b[32m✓ Connected via PTY bridge\x1b[0m");
@@ -123,14 +133,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
                 if (timeSinceLastData > HEARTBEAT_TIMEOUT_MS && connectionStatusRef.current === "connected") {
                   console.log(`[PTY] No data received for ${timeSinceLastData}ms, reconnecting silently...`);
                   silentReconnectRef.current = true;
-                  reconnectPTY();
+                  reconnectPTY("heartbeat_timeout");
                 }
               }, 5000); // Check every 5 seconds
             }
 
             // Handle history replay on reconnect (server sends previous output)
             if (data.history) {
-              console.log(`[PTY] Replaying ${data.history.length} chars of history`);
+              console.log(`[PTY] Replaying ${data.history.length} chars of history from server`);
               terminal.write(data.history);
             }
 
@@ -142,7 +152,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             if (data.reconnect) {
               console.log(`[PTY] Server requested reconnect: ${data.reason}`);
               silentReconnectRef.current = true;
-              reconnectPTY();
+              reconnectPTY(data.reason);
               return;
             }
 
@@ -194,14 +204,41 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         // to prevent stale closures on reconnection
         const CONTINUATION_BATCH_MS = 8; // Batch rapid typing within 8ms
 
-        // Track if we're currently reconnecting to avoid multiple reconnect attempts
-        let isReconnecting = false;
-
         // Reconnect function - closes current connection and reconnects
         // Supports silent reconnection to avoid disrupting user experience
-        const reconnectPTY = () => {
-          if (isReconnecting) return;
-          isReconnecting = true;
+        // Uses refs to prevent duplicate reconnects across closures
+        const reconnectPTY = (reason?: string) => {
+          if (isReconnectingRef.current) {
+            console.log("[PTY] Already reconnecting, skipping duplicate request");
+            return;
+          }
+
+          const now = Date.now();
+          const timeSinceLastReconnect = now - lastReconnectTimeRef.current;
+
+          // Throttle reconnections - don't reconnect more than once per MIN_RECONNECT_INTERVAL_MS
+          if (timeSinceLastReconnect < MIN_RECONNECT_INTERVAL_MS) {
+            console.log(`[PTY] Throttling reconnect - only ${timeSinceLastReconnect}ms since last reconnect`);
+            return;
+          }
+
+          // Track consecutive stream_ended reconnects to prevent infinite loop
+          if (reason === "stream_ended") {
+            consecutiveStreamEndedRef.current++;
+            if (consecutiveStreamEndedRef.current > MAX_CONSECUTIVE_STREAM_ENDED) {
+              console.log(`[PTY] Too many consecutive stream_ended reconnects (${consecutiveStreamEndedRef.current}), stopping`);
+              terminal.writeln("\r\n\x1b[33m[Connection unstable. Type any key to reconnect.]\x1b[0m");
+              updateConnectionStatus("disconnected");
+              consecutiveStreamEndedRef.current = 0;
+              return;
+            }
+          } else {
+            // Reset counter for other reconnect reasons
+            consecutiveStreamEndedRef.current = 0;
+          }
+
+          isReconnectingRef.current = true;
+          lastReconnectTimeRef.current = now;
 
           // Only show reconnection message if not a silent reconnect
           if (!silentReconnectRef.current) {
@@ -217,10 +254,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             eventSourceRef.current = null;
           }
 
-          // Wait a moment then reconnect (shorter delay for silent reconnects)
-          const delay = silentReconnectRef.current ? 200 : 500;
+          // Wait a moment then reconnect (longer delay for stream_ended to allow server to stabilize)
+          const delay = reason === "stream_ended" ? 1000 : (silentReconnectRef.current ? 200 : 500);
           setTimeout(() => {
-            isReconnecting = false;
+            isReconnectingRef.current = false;
             connectPTY(terminal);
           }, delay);
         };
@@ -237,7 +274,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
                 // Session lost - need to reconnect silently
                 console.log("[PTY] Session lost (410), reconnecting silently...");
                 silentReconnectRef.current = true;
-                reconnectPTY();
+                reconnectPTY("session_lost");
                 return;
               }
               if (res.ok) {
@@ -246,8 +283,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
                 if (json.sessionRecreated) {
                   console.log("[PTY] Session recreated on server, reconnecting SSE silently...");
                   silentReconnectRef.current = true;
-                  reconnectPTY();
+                  reconnectPTY("session_recreated");
                 }
+                // Reset consecutive stream_ended counter on successful input
+                consecutiveStreamEndedRef.current = 0;
               } else if (retries > 0) {
                 setTimeout(() => sendInput(data, retries - 1), 50);
               }
@@ -272,6 +311,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
         // Store the disposable to prevent duplicate handlers on reconnection
         onDataDisposableRef.current = terminal.onData((data) => {
+          // If disconnected, allow user to reconnect by typing any key
+          if (connectionStatusRef.current === "disconnected" && !isReconnectingRef.current) {
+            console.log("[PTY] User input while disconnected, attempting reconnect...");
+            consecutiveStreamEndedRef.current = 0; // Reset counter
+            silentReconnectRef.current = false; // Show reconnect message
+            reconnectPTY("user_triggered");
+            return;
+          }
+
           if (connectionStatusRef.current !== "connected") return;
 
           // NOTE: No local echo needed - PTY already echoes characters back
@@ -561,9 +609,52 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       };
       window.addEventListener("resize", handleResize);
 
+      // Handle container resize (for panel resizing) using ResizeObserver
+      let resizeObserver: ResizeObserver | null = null;
+      let resizeDebounceTimer: NodeJS.Timeout | null = null;
+      if (terminalRef.current) {
+        resizeObserver = new ResizeObserver((entries) => {
+          // Clear any pending resize
+          if (resizeDebounceTimer) {
+            clearTimeout(resizeDebounceTimer);
+          }
+
+          // Get the new size
+          const entry = entries[0];
+          const { width, height } = entry.contentRect;
+
+          // Skip if container is too small (collapsed or hidden)
+          if (width < 100 || height < 50) {
+            return;
+          }
+
+          // Debounce with a longer delay to let layout stabilize after expand
+          resizeDebounceTimer = setTimeout(() => {
+            if (fitAddonRef.current && terminalRef.current) {
+              // Double-check dimensions are still valid
+              const rect = terminalRef.current.getBoundingClientRect();
+              if (rect.width >= 100 && rect.height >= 50) {
+                try {
+                  fitAddonRef.current.fit();
+                } catch (e) {
+                  console.debug("Terminal fit skipped (resize observer):", e);
+                }
+              }
+            }
+          }, 100); // 100ms debounce for layout to stabilize
+        });
+        resizeObserver.observe(terminalRef.current);
+      }
+
       // Cleanup
       return () => {
         window.removeEventListener("resize", handleResize);
+        if (resizeDebounceTimer) {
+          clearTimeout(resizeDebounceTimer);
+        }
+        if (resizeObserver) {
+          resizeObserver.disconnect();
+        }
         if (onDataDisposableRef.current) {
           onDataDisposableRef.current.dispose();
           onDataDisposableRef.current = null;
@@ -580,6 +671,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
         if (heartbeatIntervalRef.current) {
           clearInterval(heartbeatIntervalRef.current);
         }
+        if (batchTimeoutRef.current) {
+          clearTimeout(batchTimeoutRef.current);
+        }
+        // Reset refs to prevent stale state on remount
+        isReconnectingRef.current = false;
+        consecutiveStreamEndedRef.current = 0;
+        lastReconnectTimeRef.current = 0;
         terminal.dispose();
       };
     }, [sessionId, connectPTY, updateConnectionStatus]);
