@@ -6,6 +6,7 @@
  */
 
 import * as Sentry from "@sentry/nextjs";
+import { nodeProfilingIntegration } from "@sentry/profiling-node";
 
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
@@ -15,6 +16,9 @@ Sentry.init({
 
   // Performance monitoring - sample more in production for APM
   tracesSampleRate: process.env.NODE_ENV === "production" ? 1.0 : 1.0,
+
+  // Profiling - 10% of transactions for performance insights
+  profilesSampleRate: 0.1,
 
   // Enable in all environments (set to false to disable)
   enabled: true,
@@ -59,5 +63,7 @@ Sentry.init({
     Sentry.httpIntegration(),
     // Capture unhandled promise rejections
     Sentry.onUnhandledRejectionIntegration(),
+    // Node.js profiling for performance insights
+    nodeProfilingIntegration(),
   ],
 });

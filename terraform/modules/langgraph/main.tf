@@ -105,6 +105,23 @@ resource "google_cloud_run_v2_service" "langgraph" {
         value = "false"
       }
 
+      # Sentry (Error monitoring and distributed tracing)
+      dynamic "env" {
+        for_each = var.sentry_dsn != "" ? [1] : []
+        content {
+          name  = "SENTRY_DSN"
+          value = var.sentry_dsn
+        }
+      }
+
+      dynamic "env" {
+        for_each = var.sentry_dsn != "" ? [1] : []
+        content {
+          name  = "NODE_ENV"
+          value = var.environment == "prod" ? "production" : var.environment
+        }
+      }
+
       # LangSmith/Observability
       env {
         name  = "LANGCHAIN_TRACING_V2"

@@ -114,34 +114,71 @@ class Logger {
         break;
     }
 
-    // In production, send to monitoring service (Sentry, Datadog, etc.)
-    if (isProd && level >= LogLevel.ERROR) {
+    // In production, send to monitoring service (Sentry)
+    // Send INFO+ logs to Sentry for correlation with errors
+    if (isProd && level >= LogLevel.INFO) {
       this.sendToMonitoring(entry);
     }
   }
 
+  private mapLogLevelToSentry(
+    level: LogLevel
+  ): "debug" | "info" | "warning" | "error" | "fatal" {
+    const map: Record<
+      LogLevel,
+      "debug" | "info" | "warning" | "error" | "fatal"
+    > = {
+      [LogLevel.DEBUG]: "debug",
+      [LogLevel.INFO]: "info",
+      [LogLevel.WARN]: "warning",
+      [LogLevel.ERROR]: "error",
+      [LogLevel.FATAL]: "fatal",
+    };
+    return map[level] || "info";
+  }
+
   private sendToMonitoring(entry: LogEntry): void {
-    // Send errors to Sentry
-    if (entry.error) {
-      Sentry.captureException(entry.error, {
-        level: entry.level === LogLevel.FATAL ? "fatal" : "error",
-        extra: {
-          message: entry.message,
-          ...entry.context,
-        },
-        tags: {
-          logLevel: LogLevel[entry.level],
-        },
-      });
-    } else {
-      // For errors without an Error object, send as a message
+    // Add breadcrumb for all logs (correlates with errors in Sentry)
+    Sentry.addBreadcrumb({
+      category: "log",
+      message: entry.message,
+      level: this.mapLogLevelToSentry(entry.level),
+      data: entry.context,
+    });
+
+    // Send INFO/WARN as messages for searchability in Sentry Logs
+    if (entry.level === LogLevel.INFO || entry.level === LogLevel.WARN) {
       Sentry.captureMessage(entry.message, {
-        level: entry.level === LogLevel.FATAL ? "fatal" : "error",
+        level: this.mapLogLevelToSentry(entry.level),
         extra: entry.context,
         tags: {
           logLevel: LogLevel[entry.level],
         },
       });
+    }
+
+    // Send ERROR/FATAL with full error context
+    if (entry.level >= LogLevel.ERROR) {
+      if (entry.error) {
+        Sentry.captureException(entry.error, {
+          level: entry.level === LogLevel.FATAL ? "fatal" : "error",
+          extra: {
+            message: entry.message,
+            ...entry.context,
+          },
+          tags: {
+            logLevel: LogLevel[entry.level],
+          },
+        });
+      } else {
+        Sentry.captureMessage(entry.message, {
+          level: entry.level === LogLevel.FATAL ? "fatal" : "error",
+          extra: entry.context,
+          tags: {
+            logLevel: LogLevel[entry.level],
+          },
+        });
+      }
     }
   }
 

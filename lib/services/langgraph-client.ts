@@ -15,6 +15,7 @@
  */
 
 import { Client } from '@langchain/langgraph-sdk';
+import * as Sentry from '@sentry/nextjs';
 import type { HelpfulnessLevel } from '../types/agent';
 import type { FastEvaluationResult, FastEvaluationInput } from '../types/fast-evaluation';
 import type { ComprehensiveEvaluationResult, ComprehensiveEvaluationInput } from '../types/comprehensive-evaluation';
@@ -84,6 +85,18 @@ async function getAuthHeaders(
 
   if (userId) headers['X-User-Id'] = userId;
   if (sessionId) headers['X-Session-Id'] = sessionId;
+
+  // Add Sentry distributed tracing headers for trace correlation
+  const activeSpan = Sentry.getActiveSpan();
+  if (activeSpan) {
+    const traceData = Sentry.spanToTraceHeader(activeSpan);
+    const baggage = Sentry.spanToBaggageHeader(activeSpan);
+
+    headers['sentry-trace'] = traceData;
+    if (baggage) {
+      headers['baggage'] = baggage;
+    }
+  }
 
   if (IS_PRODUCTION) {
     // Production: Use Google ID token for Cloud Run IAM authentication
