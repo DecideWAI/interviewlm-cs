@@ -117,7 +117,7 @@ resource "google_cloud_run_v2_service" "langgraph" {
       dynamic "env" {
         for_each = var.sentry_dsn != "" ? [1] : []
         content {
-          name  = "NODE_ENV"
+          name  = "SENTRY_ENVIRONMENT"
           value = var.environment == "prod" ? "production" : var.environment
         }
       }

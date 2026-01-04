@@ -139,23 +139,13 @@ class Logger {
 
   private sendToMonitoring(entry: LogEntry): void {
     // Add breadcrumb for all logs (correlates with errors in Sentry)
+    // Breadcrumbs are automatically attached to error events for context
     Sentry.addBreadcrumb({
       category: "log",
       message: entry.message,
       level: this.mapLogLevelToSentry(entry.level),
       data: entry.context,
     });
-
-    // Send INFO/WARN as messages for searchability in Sentry Logs
-    if (entry.level === LogLevel.INFO || entry.level === LogLevel.WARN) {
-      Sentry.captureMessage(entry.message, {
-        level: this.mapLogLevelToSentry(entry.level),
-        extra: entry.context,
-        tags: {
-          logLevel: LogLevel[entry.level],
-        },
-      });
-    }
 
     // Send ERROR/FATAL with full error context
     if (entry.level >= LogLevel.ERROR) {

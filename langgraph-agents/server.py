@@ -53,7 +53,7 @@ REDIS_URI = os.getenv("REDIS_URI", "")
 # Sentry Initialization
 # =============================================================================
 SENTRY_DSN = os.getenv("SENTRY_DSN", "")
-SENTRY_ENVIRONMENT = os.getenv("NODE_ENV", "development")
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", os.getenv("NODE_ENV", "development"))
 
 if SENTRY_DSN:
     sentry_sdk.init(
@@ -81,7 +81,7 @@ if SENTRY_DSN:
         ],
 
         # Filter out health check noise from traces
-        traces_sampler=lambda ctx: 0.0 if ctx.get("transaction_context", {}).get("name") in ["/ok", "/health", "/healthz"] else 1.0,
+        traces_sampler=lambda ctx: 0.0 if ctx.get("name") in ["/ok", "/health", "/healthz"] else 1.0,
 
         # Release tracking
         release=f"langgraph-agents@{os.getenv('VERSION', '1.0.0')}",
@@ -314,28 +314,32 @@ class SentryTraceMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Get trace context from incoming headers
         x_request_id = request.headers.get("X-Request-Id")
+        session_id = request.headers.get("X-Session-Id")
+        user_id = request.headers.get("X-User-Id")
         sentry_trace = request.headers.get("sentry-trace")
         baggage = request.headers.get("baggage")
 
-        # Set Sentry context for this request
-        with sentry_sdk.configure_scope() as scope:
+        # Helper to set request context within the appropriate scope
+        def set_request_context():
             if x_request_id:
-                scope.set_tag("request_id", x_request_id)
-                scope.set_extra("x_request_id", x_request_id)
-
-            if request.headers.get("X-Session-Id"):
-                scope.set_tag("session_id", request.headers.get("X-Session-Id"))
-
-            if request.headers.get("X-User-Id"):
-                scope.set_user({"id": request.headers.get("X-User-Id")})
+                sentry_sdk.set_tag("request_id", x_request_id)
+                sentry_sdk.set_extra("x_request_id", x_request_id)
+            if session_id:
+                sentry_sdk.set_tag("session_id", session_id)
+            if user_id:
+                sentry_sdk.set_user({"id": user_id})
 
         # Continue with trace context propagation (if sentry-trace header is present)
         if sentry_trace:
             with sentry_sdk.continue_trace(
                 {"sentry-trace": sentry_trace, "baggage": baggage or ""}
             ):
+                # Set context inside the trace for proper association
+                set_request_context()
                 return await call_next(request)
 
+        # No incoming sentry-trace header; still set per-request context
+        set_request_context()
         return await call_next(request)
 
 

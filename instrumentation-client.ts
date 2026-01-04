@@ -78,9 +78,9 @@ Sentry.init({
       maskAllText: true,
       // Block all media for privacy
       blockAllMedia: true,
-      // Capture network requests for API debugging
+      // Capture network requests for API debugging (without bodies to avoid sensitive data)
       networkDetailAllowUrls: ["/api/", "/monitoring-tunnel"],
-      networkCaptureBodies: true,
+      networkCaptureBodies: false,
       networkRequestHeaders: ["X-Request-Id", "X-Session-Id"],
       networkResponseHeaders: ["X-Request-Id"],
     }),

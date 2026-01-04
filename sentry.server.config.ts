@@ -17,7 +17,7 @@ Sentry.init({
   // Performance monitoring - sample more in production for APM
   tracesSampleRate: process.env.NODE_ENV === "production" ? 1.0 : 1.0,
 
-  // Profiling - 10% of transactions for performance insights
+  // Profiling - profiles 10% of *sampled* transactions (effective = tracesSampleRate * profilesSampleRate)
   profilesSampleRate: 0.1,
 
   // Enable in all environments (set to false to disable)
