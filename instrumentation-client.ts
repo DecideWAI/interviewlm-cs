@@ -25,8 +25,8 @@ Sentry.init({
   // Performance monitoring
   tracesSampleRate: process.env.NODE_ENV === "production" ? 0.1 : 1.0,
 
-  // Session replay for error debugging
-  replaysSessionSampleRate: 0.1,
+  // Session replay for error debugging (25% sessions, 100% on errors)
+  replaysSessionSampleRate: 0.25,
   replaysOnErrorSampleRate: 1.0,
 
   // Enable in all environments (set to false to disable)
@@ -78,6 +78,27 @@ Sentry.init({
       maskAllText: true,
       // Block all media for privacy
       blockAllMedia: true,
+      // Capture network requests for API debugging (without bodies to avoid sensitive data)
+      networkDetailAllowUrls: ["/api/", "/monitoring-tunnel"],
+      networkCaptureBodies: false,
+      networkRequestHeaders: ["X-Request-Id", "X-Session-Id"],
+      networkResponseHeaders: ["X-Request-Id"],
+    }),
+    // User feedback widget for error reporting
+    Sentry.feedbackIntegration({
+      colorScheme: "dark",
+      buttonLabel: "Report Issue",
+      submitButtonLabel: "Send Feedback",
+      formTitle: "Report an Issue",
+      messagePlaceholder: "Describe what happened...",
+      autoInject: true,
+      showBranding: false,
+      themeDark: {
+        background: "#000000",
+        foreground: "#FFFFFF",
+        accentBackground: "#5E6AD2",
+        accentForeground: "#FFFFFF",
+      },
     }),
   ],
 });

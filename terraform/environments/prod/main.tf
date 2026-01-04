@@ -576,6 +576,9 @@ module "langgraph" {
   modal_token_id_secret_id     = module.secrets.modal_token_id_secret_id
   modal_token_secret_secret_id = module.secrets.modal_token_secret_secret_id
 
+  # Sentry (same DSN as main app for unified observability)
+  sentry_dsn = var.sentry_dsn
+
   labels = local.labels
 
   depends_on = [

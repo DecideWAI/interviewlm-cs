@@ -222,6 +222,16 @@ variable "langsmith_project" {
 }
 
 # -----------------------------------------------------------------------------
+# Sentry Configuration
+# -----------------------------------------------------------------------------
+
+variable "sentry_dsn" {
+  description = "Sentry DSN for error monitoring and distributed tracing"
+  type        = string
+  default     = ""
+}
+
+# -----------------------------------------------------------------------------
 # Next.js Internal URL (for callbacks)
 # -----------------------------------------------------------------------------
 

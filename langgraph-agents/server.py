@@ -23,6 +23,11 @@ from typing import Any, Optional
 from contextlib import asynccontextmanager
 
 import httpx
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.integrations.httpx import HttpxIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -43,6 +48,56 @@ DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
 DATABASE_URI = os.getenv("DATABASE_URI", "")
 REDIS_URI = os.getenv("REDIS_URI", "")
+
+# =============================================================================
+# Sentry Initialization
+# =============================================================================
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+SENTRY_ENVIRONMENT = os.getenv("SENTRY_ENVIRONMENT", os.getenv("NODE_ENV", "development"))
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=SENTRY_ENVIRONMENT,
+
+        # Performance monitoring - 100% sampling for full visibility
+        traces_sample_rate=1.0,
+
+        # Profiling - 10% of transactions
+        profiles_sample_rate=0.1,
+
+        # Enable distributed tracing for trace correlation with Next.js
+        propagate_traces=True,
+
+        # Integrations
+        integrations=[
+            FastApiIntegration(transaction_style="endpoint"),
+            StarletteIntegration(transaction_style="endpoint"),
+            HttpxIntegration(),
+            LoggingIntegration(
+                level=logging.INFO,  # Capture INFO+ as breadcrumbs
+                event_level=logging.ERROR,  # Create events for ERROR+
+            ),
+        ],
+
+        # Filter out health check noise from traces
+        traces_sampler=lambda ctx: 0.0 if ctx.get("name") in ["/ok", "/health", "/healthz"] else 1.0,
+
+        # Release tracking
+        release=f"langgraph-agents@{os.getenv('VERSION', '1.0.0')}",
+
+        # Server name for Cloud Run
+        server_name=os.getenv("K_SERVICE", "langgraph-server"),
+
+        # Enrich events with service tag
+        before_send=lambda event, hint: {
+            **event,
+            "tags": {**event.get("tags", {}), "service": "langgraph-agents"},
+        },
+    )
+    logger.info(f"Sentry initialized for LangGraph server (environment: {SENTRY_ENVIRONMENT})")
+else:
+    logger.warning("SENTRY_DSN not set, Sentry monitoring disabled")
 
 # Load langgraph.json configuration
 LANGGRAPH_CONFIG_PATH = Path(__file__).parent / "langgraph.json"
@@ -253,6 +308,41 @@ async def verify_google_id_token(token: str) -> Optional[dict]:
     return None
 
 
+class SentryTraceMiddleware(BaseHTTPMiddleware):
+    """Propagate trace context from Next.js to Sentry for distributed tracing."""
+
+    async def dispatch(self, request: Request, call_next):
+        # Get trace context from incoming headers
+        x_request_id = request.headers.get("X-Request-Id")
+        session_id = request.headers.get("X-Session-Id")
+        user_id = request.headers.get("X-User-Id")
+        sentry_trace = request.headers.get("sentry-trace")
+        baggage = request.headers.get("baggage")
+
+        # Helper to set request context within the appropriate scope
+        def set_request_context():
+            if x_request_id:
+                sentry_sdk.set_tag("request_id", x_request_id)
+                sentry_sdk.set_extra("x_request_id", x_request_id)
+            if session_id:
+                sentry_sdk.set_tag("session_id", session_id)
+            if user_id:
+                sentry_sdk.set_user({"id": user_id})
+
+        # Continue with trace context propagation (if sentry-trace header is present)
+        if sentry_trace:
+            with sentry_sdk.continue_trace(
+                {"sentry-trace": sentry_trace, "baggage": baggage or ""}
+            ):
+                # Set context inside the trace for proper association
+                set_request_context()
+                return await call_next(request)
+
+        # No incoming sentry-trace header; still set per-request context
+        set_request_context()
+        return await call_next(request)
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
     """Validate internal API key and Bearer tokens for authenticated endpoints."""
 
@@ -306,7 +396,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
 
 
-# Add middlewares
+# Add middlewares (executed in reverse order: last added runs first)
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -315,6 +405,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Sentry trace middleware runs first to set up trace context
+app.add_middleware(SentryTraceMiddleware)
 
 
 # =============================================================================

@@ -20,6 +20,9 @@ const nextConfig: NextConfig = {
     },
   },
 
+  // External packages for server components (required for Sentry profiling)
+  serverExternalPackages: ['@sentry/profiling-node'],
+
   // Webpack configuration for Prisma Edge compatibility
   webpack: (config, { isServer }) => {
     if (isServer) {
