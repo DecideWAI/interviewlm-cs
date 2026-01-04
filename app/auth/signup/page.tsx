@@ -43,6 +43,7 @@ export default function SignUpPage() {
 
       if (!response.ok) {
         toast.error(data.error || "Registration failed");
+        turnstileRef.current?.reset(); // Reset token for retry
         setIsLoading(false);
         return;
       }
