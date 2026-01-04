@@ -56,12 +56,13 @@ export default function SignOutPage() {
                 <LogOut className="h-4 w-4 mr-2" />
                 Sign Out Now
               </Button>
-              <Button asChild variant="outline" className="w-full">
-                <Link href="/dashboard">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Cancel
-                </Link>
-              </Button>
+              <Link
+                href="/dashboard"
+                className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-all border border-border text-text-primary hover:bg-background-hover hover:border-border-hover h-9 px-4 w-full"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Cancel
+              </Link>
             </div>
           </CardContent>
         </Card>

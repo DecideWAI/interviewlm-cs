@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Logo } from "@/components/Logo";
 import { AlertCircle, ArrowLeft, RefreshCw } from "lucide-react";
@@ -108,18 +107,20 @@ function ErrorContent() {
             )}
 
             <div className="flex flex-col gap-3">
-              <Button asChild variant="primary" className="w-full">
-                <Link href="/auth/signin">
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Try Again
-                </Link>
-              </Button>
-              <Button asChild variant="outline" className="w-full">
-                <Link href="/">
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Go Home
-                </Link>
-              </Button>
+              <Link
+                href="/auth/signin"
+                className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-all bg-primary text-white hover:bg-primary-hover active:bg-primary-active shadow-sm h-9 px-4 w-full"
+              >
+                <RefreshCw className="h-4 w-4" />
+                Try Again
+              </Link>
+              <Link
+                href="/"
+                className="inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-all border border-border text-text-primary hover:bg-background-hover hover:border-border-hover h-9 px-4 w-full"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Go Home
+              </Link>
             </div>
           </CardContent>
         </Card>
