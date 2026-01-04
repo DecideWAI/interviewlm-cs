@@ -5,6 +5,8 @@ from .coding_tools import (
     edit_file,
     glob_files,
     grep_files,
+    is_command_allowed,
+    is_path_allowed,
     list_files,
     read_file,
     run_bash,
@@ -35,6 +37,8 @@ __all__ = [
     "list_files",
     "run_bash",
     "run_tests",
+    "is_command_allowed",
+    "is_path_allowed",
     "CODING_TOOLS",
     # Question tools
     "ask_question",
