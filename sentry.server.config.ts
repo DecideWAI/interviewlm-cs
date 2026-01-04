@@ -14,7 +14,7 @@ Sentry.init({
   environment: process.env.NODE_ENV,
 
   // Performance monitoring - sample more in production for APM
-  tracesSampleRate: process.env.NODE_ENV === "production" ? 0.2 : 1.0,
+  tracesSampleRate: process.env.NODE_ENV === "production" ? 1.0 : 1.0,
 
   // Enable in all environments (set to false to disable)
   enabled: true,
