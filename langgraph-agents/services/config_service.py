@@ -8,28 +8,28 @@ Resolution order:
 3. Hardcoded fallback (for migration period)
 """
 
-from typing import Any, Optional, Dict, List
-from datetime import datetime, timedelta
-import logging
 import asyncio
+import logging
+from datetime import datetime, timedelta
 from functools import lru_cache
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
 from config.settings import settings
 from models.db_models import (
-    SecurityConfig,
-    ModelConfig,
-    SandboxConfig,
-    RoleConfig,
-    SeniorityConfig,
     ComplexityProfile,
-    Technology,
     ConfigCategory,
     ConfigItem,
     ConfigOverride,
+    ModelConfig,
+    RoleConfig,
+    SandboxConfig,
+    SecurityConfig,
+    SeniorityConfig,
+    Technology,
 )
 
 logger = logging.getLogger(__name__)

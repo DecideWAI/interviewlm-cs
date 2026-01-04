@@ -14,8 +14,8 @@ User context is passed via custom headers for audit trails:
 - X-Request-Id: Correlation ID for distributed tracing
 """
 
-import os
 import logging
+import os
 import time
 from typing import Optional
 

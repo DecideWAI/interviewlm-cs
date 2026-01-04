@@ -10,26 +10,27 @@ Each candidate gets their own isolated container where they can:
 SandboxManager has been extracted to services/modal_manager.py for better modularity.
 """
 
-import re
-import os
+import asyncio
 import base64
 import logging
-import asyncio
+import os
+import re
 import threading
-import httpx
-from typing import Any, List
 from pathlib import Path
-from langchain_core.tools import tool
+from typing import Any, List
+
+import httpx
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
 
 # Import SandboxManager and helpers from services
 from services import (
-    SandboxManager,
-    run_in_sandbox,
-    run_with_timeout,
-    run_with_retry,
-    get_or_recreate_sandbox,
     MODAL_AVAILABLE,
+    SandboxManager,
+    get_or_recreate_sandbox,
+    run_in_sandbox,
+    run_with_retry,
+    run_with_timeout,
 )
 
 # Import question tools for ask_question capability
@@ -230,7 +231,7 @@ def is_command_allowed(command: str) -> tuple[bool, str]:
         # Try regex match first (DB stores regex patterns)
         try:
             if re.search(pattern, command_lower, re.IGNORECASE):
-                return False, f"Command blocked by security policy"
+                return False, "Command blocked by security policy"
         except re.error:
             # If not valid regex, try simple string match
             if pattern.lower() in command_lower:
@@ -537,7 +538,7 @@ def edit_file(
         # Check uniqueness
         occurrences = content.count(old_string)
         if occurrences == 0:
-            return {"success": False, "error": f"String not found in file"}
+            return {"success": False, "error": "String not found in file"}
         if occurrences > 1:
             return {"success": False, "error": f"String appears {occurrences} times. Add more context."}
 

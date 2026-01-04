@@ -5,9 +5,10 @@ Uses pydantic-settings for environment variable management.
 
 import os
 from typing import Literal
-from pydantic_settings import BaseSettings
-from pydantic import Field
+
 from dotenv import load_dotenv
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 # Load .env file BEFORE pydantic-settings initializes
 # This ensures Modal SDK can read MODAL_TOKEN_ID and MODAL_TOKEN_SECRET

@@ -8,23 +8,22 @@ Uses langchain.agents.create_agent with native middleware support for
 Anthropic prompt caching.
 """
 
-from typing import Annotated, Literal
 from datetime import datetime
+from typing import Annotated, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from config import settings, generate_supervisor_thread_uuid
+from config import generate_supervisor_thread_uuid, settings
 from middleware import SummarizationMiddleware, system_prompt_middleware
 from services.model_factory import create_model_from_context, is_anthropic_model
-
 
 # =============================================================================
 # State Schema (LangGraph v1 style)

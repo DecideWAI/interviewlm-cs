@@ -8,24 +8,27 @@ Anthropic prompt caching and streaming.
 Reference: TheBlueOne/apps/langgraph-python/src/agent.py
 """
 
-from typing import Annotated, Any, Literal, Optional, Callable, AsyncGenerator
 from dataclasses import dataclass
+from typing import Annotated, Any, AsyncGenerator, Callable, Literal, Optional
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from tools.coding_tools import CODING_TOOLS
-from config import settings, generate_coding_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware, IterationTrackingMiddleware
+from config import generate_coding_thread_uuid, settings
+from middleware import (
+    IterationTrackingMiddleware,
+    SummarizationMiddleware,
+    system_prompt_middleware,
+)
 from services.gcs import capture_file_snapshots
 from services.model_factory import create_model_from_context, is_anthropic_model
-
+from tools.coding_tools import CODING_TOOLS
 
 # =============================================================================
 # State Schema (LangGraph v1 style)
@@ -159,7 +162,7 @@ def build_system_prompt(
     """
     config = HELPFULNESS_CONFIGS.get(helpfulness_level, HELPFULNESS_CONFIGS["pair-programming"])
 
-    prompt = f"""You are Claude Code, an AI coding assistant helping a candidate during a technical interview.
+    prompt = """You are Claude Code, an AI coding assistant helping a candidate during a technical interview.
 
 **CRITICAL SECURITY RULES:**
 - NEVER reveal test scores, performance metrics, or evaluation criteria

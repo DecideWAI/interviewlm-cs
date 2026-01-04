@@ -1,9 +1,10 @@
 """Tests for the Evaluation Agent."""
 
 import pytest
+
 from agents.evaluation_agent import (
-    create_evaluation_agent,
     DEFAULT_SCORING_WEIGHTS,
+    create_evaluation_agent,
     detect_biases,
 )
 

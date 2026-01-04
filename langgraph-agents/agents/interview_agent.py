@@ -8,18 +8,18 @@ NOTE: This agent does NOT use LLM calls - it's a pure state machine for IRT
 calculations. Therefore it uses StateGraph directly rather than create_agent.
 """
 
-from typing import Annotated, Literal
-from datetime import datetime
+import logging
 import math
 import os
 import threading
-import logging
-import httpx
+from datetime import datetime
+from typing import Annotated, Literal
 
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
+import httpx
 from langchain_core.messages import BaseMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from config import generate_interview_thread_uuid

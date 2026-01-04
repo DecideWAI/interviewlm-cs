@@ -1,13 +1,13 @@
 """Configuration package for LangGraph agents."""
 
-from .settings import settings, Settings
+from .settings import Settings, settings
 from .thread_utils import (
-    generate_thread_uuid,
     generate_coding_thread_uuid,
     generate_evaluation_thread_uuid,
     generate_interview_thread_uuid,
     generate_question_eval_thread_uuid,
     generate_supervisor_thread_uuid,
+    generate_thread_uuid,
 )
 
 __all__ = [

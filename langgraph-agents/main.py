@@ -10,8 +10,8 @@ from typing import Optional
 
 from agents import (
     create_coding_agent,
-    create_interview_agent,
     create_evaluation_agent,
+    create_interview_agent,
     create_supervisor,
 )
 from config import settings
@@ -139,7 +139,7 @@ def reverse_linked_list(head):
         claude_interactions=claude_interactions,
     )
 
-    print(f"\nEvaluation Results:")
+    print("\nEvaluation Results:")
     print(f"  Overall Score: {result['overall_score']}/100")
     print(f"  Code Quality: {result['code_quality']['score']}/100")
     print(f"  Problem Solving: {result['problem_solving']['score']}/100")
@@ -162,7 +162,7 @@ async def demo_supervisor():
         candidate_id="demo-candidate-001",
     )
 
-    print(f"\nWorkflow Results:")
+    print("\nWorkflow Results:")
     print(f"  Coding result: {result.get('coding_result')}")
     print(f"  Interview result: {result.get('interview_result')}")
     print(f"  Evaluation result: {result.get('evaluation_result')}")

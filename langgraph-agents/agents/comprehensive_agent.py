@@ -17,49 +17,47 @@ Uses Sonnet model for quality over speed (~3-5 minutes).
 4. Communication (15%) - Code documentation, prompt clarity
 """
 
-from typing import Annotated, Literal
 from datetime import datetime
+from typing import Annotated, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
+from config import generate_evaluation_thread_uuid, settings
+from middleware import SummarizationMiddleware, system_prompt_middleware
 from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
 
 # Workspace exploration tools
-from tools.coding_tools import list_files, read_file, grep_files, glob_files
+from tools.coding_tools import glob_files, grep_files, list_files, read_file
 
 # Evaluation tools
 from tools.evaluation_tools import (
-    # DB query
-    get_session_metadata,
-    get_claude_interactions,
-    get_test_results,
-    get_code_snapshots,
+    # Tool lists
+    ALL_COMPREHENSIVE_EVALUATION_TOOLS,
+    analyze_ai_collaboration,
     # Analysis
     analyze_code_quality,
-    analyze_problem_solving,
-    analyze_ai_collaboration,
     analyze_communication,
+    analyze_problem_solving,
+    detect_evaluation_bias,
     # Comprehensive-specific
     generate_actionable_report,
     generate_hiring_recommendation,
-    detect_evaluation_bias,
-    submit_comprehensive_evaluation,
+    get_claude_interactions,
+    get_code_snapshots,
+    # DB query
+    get_session_metadata,
+    get_test_results,
     # Progress
     send_evaluation_progress,
-    # Tool lists
-    ALL_COMPREHENSIVE_EVALUATION_TOOLS,
+    submit_comprehensive_evaluation,
 )
-
-from config import settings, generate_evaluation_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware
-
 
 # =============================================================================
 # State Schema

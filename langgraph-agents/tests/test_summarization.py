@@ -9,20 +9,19 @@ Tests cover:
 - RemoveMessage is correctly used
 """
 
-import pytest
 import uuid
-from unittest.mock import Mock, patch, MagicMock
 from typing import Any
+from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
-    ToolMessage,
     RemoveMessage,
+    ToolMessage,
 )
 from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
-
 
 # =============================================================================
 # Test Fixtures

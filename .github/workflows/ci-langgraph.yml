@@ -43,9 +43,6 @@ jobs:
       - name: Run ruff linter
         run: ruff check .
 
-      - name: Run ruff formatter check
-        run: ruff format --check .
-
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest

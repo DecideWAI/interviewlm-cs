@@ -8,6 +8,7 @@ This allows Python agents to read/write to the same database as the Next.js app.
 import json
 from datetime import datetime
 from typing import Any
+
 import asyncpg
 
 from config import settings
@@ -41,7 +42,7 @@ class DatabaseService:
                 max_size=10,
                 command_timeout=30,
             )
-            print(f"[Database] Connected to PostgreSQL")
+            print("[Database] Connected to PostgreSQL")
 
     async def disconnect(self) -> None:
         """Close connection pool."""

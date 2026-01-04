@@ -6,9 +6,11 @@ import sys
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from agents.coding_agent import create_coding_agent
-from tools.coding_tools import sandbox_mgr, is_path_allowed
 from langchain_core.runnables import RunnableConfig
+
+from agents.coding_agent import create_coding_agent
+from tools.coding_tools import is_path_allowed, sandbox_mgr
+
 
 async def test_agent_tool_injection():
     print("Starting Agent Tool Injection Test...")

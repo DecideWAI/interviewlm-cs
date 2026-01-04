@@ -16,14 +16,15 @@ Each session gets an isolated container with:
 - Pre-installed: Python 3.11, Node 20, Go 1.21, Rust
 """
 
+import asyncio
+import logging
 import os
 import re
-import asyncio
 import time
-import logging
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime
-from typing import Any, Optional, Dict
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from typing import Any, Dict, Optional
 
 from config import settings
 

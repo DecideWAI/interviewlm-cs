@@ -8,17 +8,17 @@ Also includes database query tools for fetching session data.
 """
 
 import re
-from typing import Any, Annotated
 from datetime import datetime
+from typing import Annotated, Any
+
 import asyncpg
-from langchain_core.tools import tool
-from langchain_core.tools.base import InjectedToolCallId
 from langchain_core.messages import ToolMessage
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
+from langchain_core.tools.base import InjectedToolCallId
 from langgraph.types import Command
 
 from config import settings
-
 
 # =============================================================================
 # Database Connection Pool
@@ -911,6 +911,7 @@ async def store_evaluation_result(
         Dict with success status, evaluation_id, and any errors
     """
     import json
+
     import httpx
 
     pool = await get_db_pool()

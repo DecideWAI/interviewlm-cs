@@ -7,8 +7,8 @@ This module provides services for generating unique coding questions using:
 - Smart reuse strategies for scaling
 """
 
-from .irt_engine import IRTDifficultyEngine
 from .complexity_profiles import get_complexity_profile
+from .irt_engine import IRTDifficultyEngine
 from .prompts import build_dynamic_generation_prompt, build_incremental_generation_prompt
 
 __all__ = [

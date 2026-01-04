@@ -10,8 +10,8 @@ Ported from: lib/services/dynamic-question-generator.ts and incremental-question
 """
 
 from typing import Literal
-from .irt_engine import DifficultyTargeting, CandidateAbilityEstimate
 
+from .irt_engine import CandidateAbilityEstimate, DifficultyTargeting
 
 # =============================================================================
 # Helper Functions
@@ -101,7 +101,7 @@ def build_dynamic_generation_prompt(
 
     # Assessment type specific instructions
     if assessment_type == "SYSTEM_DESIGN":
-        type_instructions = f"""This is a SYSTEM DESIGN assessment. The candidate should:
+        type_instructions = """This is a SYSTEM DESIGN assessment. The candidate should:
 - Create a DESIGN.md documenting their architecture decisions
 - Define API contracts, data models, and component interactions
 - Analyze trade-offs explicitly (consistency vs availability, simplicity vs scalability, etc.)

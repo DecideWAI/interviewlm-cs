@@ -7,15 +7,23 @@ Python agents to read configuration data from the shared PostgreSQL database.
 """
 
 from datetime import datetime
-from typing import Optional, List, Any
 from enum import Enum
+from typing import Any, List, Optional
 
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime,
-    Text, ForeignKey, Index, UniqueConstraint
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 

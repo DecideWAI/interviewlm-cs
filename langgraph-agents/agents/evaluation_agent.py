@@ -11,52 +11,52 @@ Uses langchain.agents.create_agent with native middleware support for
 Anthropic prompt caching.
 """
 
-from typing import Annotated, Optional, Callable, AsyncGenerator, Any
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated, Any, AsyncGenerator, Callable, Optional
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
+from config import generate_evaluation_thread_uuid, settings
+from middleware import SummarizationMiddleware, system_prompt_middleware
 from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
 
 # Workspace exploration tools (from coding agent)
 # These connect to the Modal sandbox via volume_id stored in database
 from tools.coding_tools import (
+    glob_files,
+    grep_files,
     list_files,
     read_file,
-    grep_files,
-    glob_files,
 )
+
 # Evaluation tools (DB query + analysis + storage)
 from tools.evaluation_tools import (
-    # DB query tools
-    get_session_metadata,
-    get_claude_interactions,
-    get_test_results,
-    get_code_snapshots,
+    ANALYSIS_TOOLS,
+    DB_QUERY_TOOLS,
+    EVALUATION_TOOLS,
+    STORAGE_TOOLS,
+    analyze_ai_collaboration,
     # Analysis tools
     analyze_code_quality,
-    analyze_problem_solving,
-    analyze_ai_collaboration,
     analyze_communication,
+    analyze_problem_solving,
+    get_claude_interactions,
+    get_code_snapshots,
+    # DB query tools
+    get_session_metadata,
+    get_test_results,
+    send_evaluation_progress,
     # Storage tools
     store_evaluation_result,
-    send_evaluation_progress,
-    EVALUATION_TOOLS,
-    DB_QUERY_TOOLS,
-    ANALYSIS_TOOLS,
-    STORAGE_TOOLS,
 )
-from config import settings, generate_evaluation_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware
-
 
 # =============================================================================
 # Combined Tools for Agentic Evaluation

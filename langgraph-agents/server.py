@@ -12,27 +12,27 @@ Features:
 - SSE streaming support
 """
 
-import os
-import json
 import asyncio
 import hmac
+import json
 import logging
+import os
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
-from contextlib import asynccontextmanager
 
 import httpx
 import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.starlette import StarletteIntegration
-from sentry_sdk.integrations.httpx import HttpxIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
-from fastapi import FastAPI, HTTPException, Request, Header
+import uvicorn
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.httpx import HttpxIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 from starlette.middleware.base import BaseHTTPMiddleware
-import uvicorn
 
 # Configure logging
 logging.basicConfig(

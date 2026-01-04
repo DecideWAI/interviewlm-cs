@@ -1,13 +1,14 @@
 """Tests for the Supervisor Agent."""
 
 import pytest
+
 from agents.supervisor import (
-    create_supervisor,
-    clear_agent_cache,
-    get_coding_agent,
-    get_interview_agent,
-    get_evaluation_agent,
     SUPERVISOR_TOOLS,
+    clear_agent_cache,
+    create_supervisor,
+    get_coding_agent,
+    get_evaluation_agent,
+    get_interview_agent,
 )
 
 

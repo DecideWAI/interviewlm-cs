@@ -1,13 +1,12 @@
 """Tests for the Coding Tools."""
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from tools.coding_tools import (
     is_command_allowed,
     is_path_allowed,
-    BLOCKED_COMMANDS,
-    BLOCKED_PATHS,
 )
 
 

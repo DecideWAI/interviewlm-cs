@@ -11,12 +11,13 @@ Architecture:
 - Non-blocking: Python doesn't wait for GCS upload to complete
 """
 
-import os
 import logging
-import httpx
+import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 from dataclasses import dataclass
+from typing import Optional
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ def _send_capture_request(
     except httpx.TimeoutException:
         # Timeout is actually OK - the endpoint returns 202 immediately
         # and processes in background. If we timeout, it's likely still working.
-        logger.debug(f"[Snapshot] Request timed out (may still be processing)")
+        logger.debug("[Snapshot] Request timed out (may still be processing)")
         return CaptureResult(
             success=True,  # Assume success on timeout
             session_id=session_id,
@@ -135,7 +136,7 @@ def capture_file_snapshots(
         return
 
     if not SNAPSHOT_ENABLED:
-        logger.debug(f"[Snapshot] Capture disabled (GCS_ENABLED=false)")
+        logger.debug("[Snapshot] Capture disabled (GCS_ENABLED=false)")
         return
 
     if not INTERNAL_API_KEY:

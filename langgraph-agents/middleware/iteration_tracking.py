@@ -10,15 +10,15 @@ Uses AgentMiddleware.before_model to persist state updates.
 """
 
 import logging
+import uuid
 from collections import Counter
 from typing import Any
-import uuid
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
 )
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 logger = logging.getLogger(__name__)

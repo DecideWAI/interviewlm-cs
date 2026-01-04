@@ -16,33 +16,31 @@ Anthropic prompt caching.
 """
 
 import json
-from typing import Annotated, Optional, Literal
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated, Literal, Optional
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
+from config import generate_question_eval_thread_uuid, settings
+from middleware import SummarizationMiddleware, system_prompt_middleware
 from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
-
 from tools.coding_tools import (
-    read_file,
-    list_files,
-    run_tests,
-    grep_files,
-    glob_files,
     get_environment_info,
+    glob_files,
+    grep_files,
+    list_files,
+    read_file,
+    run_tests,
 )
 from tools.evaluation_tools import submit_question_evaluation
-from config import settings, generate_question_eval_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware
-
 
 # =============================================================================
 # State Schema (LangGraph v1 style)

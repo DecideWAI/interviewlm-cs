@@ -1,11 +1,12 @@
 """Tests for the Interview Agent."""
 
 import pytest
+
 from agents.interview_agent import (
-    create_interview_agent,
-    create_default_metrics,
-    update_irt_theta,
     calculate_recommended_difficulty,
+    create_default_metrics,
+    create_interview_agent,
+    update_irt_theta,
 )
 
 

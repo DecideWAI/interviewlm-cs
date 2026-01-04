@@ -37,7 +37,7 @@ async def test_coding_cache():
 
     print(f"\nResponse text length: {len(result1.get('text', ''))} chars")
     print(f"Tools used: {result1.get('tools_used', [])}")
-    print(f"\nMetadata:")
+    print("\nMetadata:")
     metadata1 = result1.get("metadata", {})
     for key, value in metadata1.items():
         print(f"  {key}: {value}")
@@ -63,7 +63,7 @@ async def test_coding_cache():
     result2 = await agent.send_message("What about edge cases for empty lists?")
 
     print(f"\nResponse text length: {len(result2.get('text', ''))} chars")
-    print(f"\nMetadata:")
+    print("\nMetadata:")
     metadata2 = result2.get("metadata", {})
     for key, value in metadata2.items():
         print(f"  {key}: {value}")

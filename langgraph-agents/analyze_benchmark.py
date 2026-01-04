@@ -11,11 +11,11 @@ Usage:
     python analyze_benchmark.py --all              # Analyze all results in directory
 """
 
+import argparse
 import json
 import sys
-import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 

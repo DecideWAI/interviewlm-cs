@@ -15,7 +15,7 @@ ToolMessages can become orphaned (no corresponding tool_use in previous message)
 
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain_core.messages import SystemMessage, ToolMessage, AIMessage
+from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 
 def _get_tool_use_ids_from_message(message) -> set[str]:

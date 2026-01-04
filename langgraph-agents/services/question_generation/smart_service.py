@@ -16,10 +16,10 @@ from typing import Literal
 from langchain_core.messages import HumanMessage
 
 from config import settings
-from services.model_factory import create_chat_model
 from services.database import get_question_generation_database
-from .prompts import build_variation_prompt
+from services.model_factory import create_chat_model
 
+from .prompts import build_variation_prompt
 
 # =============================================================================
 # Constants

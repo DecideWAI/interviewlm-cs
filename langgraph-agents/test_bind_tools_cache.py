@@ -8,8 +8,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
+
 from config import settings
 
 # Use Sonnet for testing (Haiku may have different caching behavior)

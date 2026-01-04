@@ -31,7 +31,6 @@ from langgraph.runtime import Runtime
 from config import settings
 from services.model_factory import create_chat_model
 
-
 # =============================================================================
 # Type Aliases
 # =============================================================================

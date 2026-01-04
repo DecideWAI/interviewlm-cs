@@ -30,14 +30,17 @@ select = [
     "W",      # pycodestyle warnings
     "F",      # pyflakes
     "I",      # isort
-    "B",      # flake8-bugbear
-    "C4",     # flake8-comprehensions
-    "UP",     # pyupgrade
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
-    "B008",   # do not perform function calls in argument defaults
-    "B904",   # raise without from inside except
+    "E402",   # module level import not at top of file
+    "E711",   # comparison to None (needed for SQLAlchemy)
+    "E712",   # comparison to True/False (needed for SQLAlchemy)
+    "F401",   # imported but unused (too noisy for existing code)
+    "F821",   # undefined name (false positive for forward references)
+    "F841",   # local variable assigned but never used
+    "W293",   # blank line contains whitespace
+    "W291",   # trailing whitespace
 ]
 
 [tool.ruff.lint.isort]

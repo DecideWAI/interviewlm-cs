@@ -14,31 +14,30 @@ Usage:
     python benchmark.py [--iterations N] [--no-cache] [--verbose]
 """
 
+import argparse
 import asyncio
 import json
 import os
 import sys
 import time
-import argparse
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from dataclasses import dataclass, field, asdict
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import settings
 from agents import (
+    EvaluationStreamingCallbacks,
+    StreamingCallbacks,
     create_coding_agent,
-    create_interview_agent,
     create_evaluation_agent,
+    create_interview_agent,
     create_question_evaluation_agent,
     create_supervisor,
-    StreamingCallbacks,
-    EvaluationStreamingCallbacks,
 )
-
+from config import settings
 
 # =============================================================================
 # Benchmark Configuration

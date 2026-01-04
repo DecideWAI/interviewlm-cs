@@ -2,8 +2,10 @@
 """Direct test of Anthropic caching with LangChain."""
 
 import asyncio
+
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from config import settings
 
 # Long system prompt to meet minimum token threshold (1024+ for Sonnet)

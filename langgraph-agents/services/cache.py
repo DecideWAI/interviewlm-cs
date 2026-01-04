@@ -9,6 +9,7 @@ Provides fast in-memory caching for:
 
 import json
 from typing import Any
+
 import redis.asyncio as redis
 
 from config import settings
@@ -52,7 +53,7 @@ class CacheService:
             )
             # Test connection
             await self._client.ping()
-            print(f"[Cache] Connected to Redis")
+            print("[Cache] Connected to Redis")
 
     async def disconnect(self) -> None:
         """Close Redis connection."""
