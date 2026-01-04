@@ -1,0 +1,151 @@
+name: Deploy LangGraph Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'langgraph-agents/**'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: interviewlm-480415
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev
+  REPOSITORY: interviewlm-prod-docker
+  IMAGE_NAME: langgraph
+  SERVICE_NAME: interviewlm-prod-langgraph
+
+concurrency:
+  group: deploy-langgraph
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and Push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker $REGISTRY --quiet
+
+      - name: Generate image metadata
+        id: meta
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+          IMAGE_TAG="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:${SHORT_SHA}"
+          echo "tags=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
+        working-directory: langgraph-agents
+        run: |
+          docker build \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest" \
+            -t "$IMAGE_TAG" \
+            -t "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest" \
+            .
+
+      - name: Push Docker image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker push "$IMAGE_TAG"
+          docker push "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest"
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        env:
+          IMAGE_TAG: ${{ needs.build.outputs.image_tag }}
+        run: |
+          gcloud run services update "$SERVICE_NAME" \
+            --image "$IMAGE_TAG" \
+            --region "$REGION" \
+            --quiet
+
+      - name: Verify deployment
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+            --region "$REGION" \
+            --format='value(status.url)')
+
+          # Wait for new revision to be ready
+          sleep 30
+
+          # Health check with retries
+          for i in {1..5}; do
+            if curl -sf "${SERVICE_URL}/health" > /dev/null; then
+              echo "Health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "Health check failed after 5 attempts"
+          exit 1
+
+  notify:
+    name: Notify
+    needs: [build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deployment Summary
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+        run: |
+          echo "## LangGraph Agent Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${BUILD_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | ${DEPLOY_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${COMMIT_SHA}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** interviewlm-prod-langgraph" >> $GITHUB_STEP_SUMMARY
