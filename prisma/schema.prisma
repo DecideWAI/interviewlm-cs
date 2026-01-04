@@ -78,6 +78,13 @@ model Organization {
   updatedAt   DateTime @updatedAt @map("updated_at")
   credits     Int      @default(0)
 
+  // B2B Domain fields
+  domain                      String?   @unique // e.g., "acme.com"
+  domainVerified              Boolean   @default(false) @map("domain_verified")
+  domainVerificationToken     String?   @unique @map("domain_verification_token")
+  domainVerificationExpiresAt DateTime? @map("domain_verification_expires_at")
+  autoJoinEnabled             Boolean   @default(false) @map("auto_join_enabled")
+
   // Subscription fields
   subscriptionStatus   String?   @map("subscription_status")
   paddleSubscriptionId String?   @unique @map("paddle_subscription_id")
@@ -109,6 +116,7 @@ model OrganizationMember {
   role           OrgRole      @default(MEMBER)
   invitedAt      DateTime     @default(now()) @map("invited_at")
   joinedAt       DateTime?    @map("joined_at")
+  joinMethod     String?      @map("join_method") // "founder", "domain-auto-join", "invite"
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 

@@ -8,9 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select } from "@/components/ui/select";
 import { Logo } from "@/components/Logo";
-import { Mail, Lock, User, Building, ArrowRight, Github, Loader2 } from "lucide-react";
+import { Mail, Lock, User, ArrowRight, Github, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Turnstile, type TurnstileRef } from "@/components/security/Turnstile";
 
@@ -20,8 +19,6 @@ export default function SignUpPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [company, setCompany] = useState("");
-  const [role, setRole] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -99,8 +96,11 @@ export default function SignUpPage() {
           <CardHeader className="space-y-1 text-center">
             <CardTitle className="text-2xl">Create an account</CardTitle>
             <CardDescription>
-              Start your free trial, no credit card required
+              Start your free trial with your company email
             </CardDescription>
+            <p className="text-xs text-text-tertiary mt-2">
+              Personal emails (Gmail, Outlook, etc.) are not accepted
+            </p>
           </CardHeader>
 
           <CardContent>
@@ -196,40 +196,9 @@ export default function SignUpPage() {
                     required
                   />
                 </div>
-              </div>
-
-              <div>
-                <Label htmlFor="company" required>Company Name</Label>
-                <div className="relative mt-1">
-                  <Building className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-muted" />
-                  <Input
-                    id="company"
-                    type="text"
-                    placeholder="Acme Inc."
-                    value={company}
-                    onChange={(e) => setCompany(e.target.value)}
-                    className="pl-10"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <Label htmlFor="role" required>Your Role</Label>
-                <Select
-                  id="role"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
-                  required
-                  className="mt-1"
-                >
-                  <option value="">Select your role</option>
-                  <option value="recruiter">Recruiter</option>
-                  <option value="hiring-manager">Hiring Manager</option>
-                  <option value="engineer">Engineering Manager</option>
-                  <option value="founder">Founder/CEO</option>
-                  <option value="other">Other</option>
-                </Select>
+                <p className="text-xs text-text-tertiary mt-1">
+                  Your organization will be created automatically from your email domain
+                </p>
               </div>
 
               <div>

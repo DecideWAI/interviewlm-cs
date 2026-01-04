@@ -1,5 +1,7 @@
 import { Resend } from "resend";
 import BRANDING from "@/lib/branding";
+import prisma from "@/lib/prisma";
+import { logger } from "@/lib/utils/logger";
 
 // Initialize Resend with API key from environment
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -767,11 +769,140 @@ ${BRANDING.emailFooterText}
   }
 }
 
+/**
+ * Send domain verification email for B2B organizations
+ */
+export async function sendDomainVerificationEmail(params: {
+  to: string;
+  organizationName: string;
+  domain: string;
+  founderEmail: string;
+  founderName: string | null;
+}) {
+  const { to, organizationName, domain, founderEmail, founderName } = params;
+
+  // Get the verification token from the organization using the shared prisma instance
+  const org = await prisma.organization.findUnique({
+    where: { domain },
+    select: { domainVerificationToken: true },
+  });
+
+  if (!org?.domainVerificationToken) {
+    throw new Error("Organization not found or missing verification token");
+  }
+
+  const verificationUrl = `${process.env.NEXTAUTH_URL || "http://localhost:3000"}/api/organization/verify-domain?token=${org.domainVerificationToken}`;
+
+  const emailHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verify Your Domain</title>
+  <style>
+    body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #000000; color: #ffffff; }
+    .container { max-width: 600px; margin: 0 auto; padding: 40px 20px; }
+    .header { text-align: center; margin-bottom: 40px; }
+    .logo { font-size: 24px; font-weight: bold; color: #5E6AD2; margin-bottom: 8px; }
+    .card { background: #0A0A0A; border: 1px solid #1A1A1A; border-radius: 8px; padding: 32px; }
+    .title { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: #ffffff; }
+    .message { font-size: 14px; line-height: 1.6; color: #9CA3AF; margin-bottom: 24px; }
+    .cta-button { display: inline-block; background: #5E6AD2; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-weight: 500; font-size: 16px; margin: 24px 0; }
+    .cta-button:hover { background: #6B77E1; }
+    .info-box { background: #1A1A1A; border: 1px solid #2A2A2A; border-radius: 6px; padding: 16px; margin-top: 24px; }
+    .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 1px solid #1A1A1A; color: #6B7280; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div class="logo">${BRANDING.emailLogoText}</div>
+      <p style="color: #6B7280; font-size: 14px;">${BRANDING.tagline}</p>
+    </div>
+    <div class="card">
+      <div class="title">Verify Domain Ownership</div>
+      <div class="message">Hi there,</div>
+      <div class="message">
+        <strong style="color: #ffffff;">${founderName || founderEmail}</strong> has registered
+        <strong style="color: #5E6AD2;">${organizationName}</strong> on ${BRANDING.name} using the domain
+        <strong style="color: #ffffff;">${domain}</strong>.
+      </div>
+      <div class="message">
+        To verify that your organization owns this domain and enable automatic team member joining,
+        please click the button below.
+      </div>
+      <div style="text-align: center;">
+        <a href="${verificationUrl}" class="cta-button">Verify Domain</a>
+      </div>
+      <div class="info-box">
+        <p style="font-size: 13px; color: #9CA3AF; margin: 0;">
+          <strong>What happens after verification:</strong><br>
+          Anyone who signs up with an <strong>@${domain}</strong> email address will automatically
+          join your organization.
+        </p>
+      </div>
+      <div class="message" style="font-size: 12px; margin-top: 16px;">
+        If you didn't expect this email or don't want to verify this domain, you can safely ignore it.
+        <br><br>
+        Or copy and paste this link into your browser:<br>${verificationUrl}
+      </div>
+    </div>
+    <div class="footer">
+      <p>Powered by <strong style="color: #5E6AD2;">${BRANDING.name}</strong><br>${BRANDING.emailFooterText}</p>
+    </div>
+  </div>
+</body>
+</html>
+  `.trim();
+
+  const emailText = `
+Verify Domain Ownership
+
+Hi there,
+
+${founderName || founderEmail} has registered ${organizationName} on ${BRANDING.name} using the domain ${domain}.
+
+To verify that your organization owns this domain and enable automatic team member joining, click the link below:
+
+${verificationUrl}
+
+What happens after verification:
+Anyone who signs up with an @${domain} email address will automatically join your organization.
+
+If you didn't expect this email or don't want to verify this domain, you can safely ignore it.
+
+---
+Powered by ${BRANDING.name}
+${BRANDING.emailFooterText}
+  `.trim();
+
+  try {
+    const result = await resend.emails.send({
+      from: process.env.RESEND_FROM_EMAIL || BRANDING.defaultEmailFrom,
+      to,
+      subject: `Verify ${domain} for ${organizationName} on ${BRANDING.name}`,
+      html: emailHtml,
+      text: emailText,
+    });
+
+    return { success: true, messageId: result.data?.id };
+  } catch (error) {
+    logger.error(
+      "[Email] Failed to send domain verification email",
+      error instanceof Error ? error : new Error(String(error)),
+      { domain }
+    );
+    throw new Error("Failed to send domain verification email");
+  }
+}
+
 export const emailService = {
   sendInvitationEmail,
   sendCompletionNotification,
   sendPasswordReset,
   sendEmailVerification,
   sendTeamInviteEmail,
+  sendDomainVerificationEmail,
   testEmailConnection,
 };
