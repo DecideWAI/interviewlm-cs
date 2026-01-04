@@ -20,6 +20,27 @@ const errorMessages: Record<string, { title: string; description: string }> = {
     title: "Verification Error",
     description: "The verification link may have expired or already been used.",
   },
+  // B2B-specific errors
+  PersonalEmailNotAllowed: {
+    title: "Personal Email Not Allowed",
+    description: "InterviewLM is for businesses only. Please sign in with your company email address (e.g., you@company.com). Personal email providers like Gmail, Outlook, and Yahoo are not supported.",
+  },
+  EmailRequired: {
+    title: "Email Required",
+    description: "We couldn't retrieve your email from the sign-in provider. Please try again or use a different sign-in method.",
+  },
+  InvalidOrExpiredToken: {
+    title: "Invalid or Expired Link",
+    description: "This domain verification link is invalid or has expired. Please request a new verification email from your organization settings.",
+  },
+  MissingVerificationToken: {
+    title: "Missing Verification Token",
+    description: "The verification link is incomplete. Please use the full link from your verification email.",
+  },
+  "Domain verification failed": {
+    title: "Verification Failed",
+    description: "We couldn't verify your domain. Please try again or contact support for assistance.",
+  },
   OAuthSignin: {
     title: "OAuth Sign In Error",
     description: "Could not start the sign in process. Please try again.",

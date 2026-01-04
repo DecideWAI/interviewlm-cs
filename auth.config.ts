@@ -62,6 +62,6 @@ export default {
     signOut: "/auth/signout",
     error: "/auth/error",
     verifyRequest: "/auth/verify-request",
-    newUser: "/dashboard", // Redirect new users to dashboard
+    newUser: "/onboarding", // Redirect new users to onboarding for better UX
   },
 } satisfies NextAuthConfig;
