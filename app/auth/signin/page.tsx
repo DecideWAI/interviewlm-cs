@@ -86,7 +86,7 @@ export default function SignInPage() {
           <CardHeader className="space-y-1 text-center">
             <CardTitle className="text-2xl">Welcome back</CardTitle>
             <CardDescription>
-              Sign in to your account to continue
+              Sign in with your company email to continue
             </CardDescription>
           </CardHeader>
 
@@ -160,7 +160,7 @@ export default function SignInPage() {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="you@example.com"
+                    placeholder="you@company.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className="pl-10"
