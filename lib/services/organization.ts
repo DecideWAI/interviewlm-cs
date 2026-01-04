@@ -41,6 +41,7 @@ export interface B2BSignupResult {
 /**
  * Generates a unique slug for an organization from a domain.
  * Handles collisions by appending numeric suffixes.
+ * @throws Error if unable to generate unique slug after max attempts
  */
 async function generateUniqueSlug(domain: string): Promise<string> {
   const baseSlug = domain
@@ -50,11 +51,23 @@ async function generateUniqueSlug(domain: string): Promise<string> {
 
   let slug = baseSlug;
   let slugSuffix = 1;
+  const maxAttempts = 100;
+  let attempts = 0;
 
-  // Keep trying until we find a unique slug
-  while (await prisma.organization.findUnique({ where: { slug } })) {
+  // Keep trying until we find a unique slug, but avoid infinite loops
+  while (
+    attempts < maxAttempts &&
+    (await prisma.organization.findUnique({ where: { slug } }))
+  ) {
     slug = `${baseSlug}-${slugSuffix}`;
     slugSuffix++;
+    attempts++;
+  }
+
+  if (attempts >= maxAttempts) {
+    throw new Error(
+      `Failed to generate unique organization slug after ${maxAttempts} attempts.`
+    );
   }
 
   return slug;
@@ -83,7 +96,9 @@ function generateVerificationToken(): string {
 export async function handleB2BSignup(
   params: HandleB2BSignupParams
 ): Promise<B2BSignupResult> {
-  const { userId, userName, userEmail } = params;
+  // Note: userName is available from params but currently not used in org creation
+  // Organization names are derived from domain instead
+  const { userId, userEmail } = params;
 
   // 1. Block personal emails
   if (isPersonalEmail(userEmail)) {
@@ -110,6 +125,14 @@ export async function handleB2BSignup(
       organizationId: existingMembership.organizationId,
     });
 
+    // Validate joinMethod - only accept known values, default to "founder" for legacy data
+    const validJoinMethods = ["founder", "domain-auto-join"] as const;
+    const joinMethod = validJoinMethods.includes(
+      existingMembership.joinMethod as typeof validJoinMethods[number]
+    )
+      ? (existingMembership.joinMethod as "founder" | "domain-auto-join")
+      : "founder";
+
     return {
       organization: {
         id: existingMembership.organization.id,
@@ -120,8 +143,8 @@ export async function handleB2BSignup(
         plan: existingMembership.organization.plan,
         credits: existingMembership.organization.credits,
       },
-      isFounder: existingMembership.joinMethod === "founder",
-      joinMethod: (existingMembership.joinMethod as "founder" | "domain-auto-join") || "founder",
+      isFounder: joinMethod === "founder",
+      joinMethod,
     };
   }
 
@@ -164,56 +187,138 @@ export async function handleB2BSignup(
   }
 
   // 4. Create new organization (user is founder)
-  const orgName = deriveOrgNameFromDomain(domain);
-  const slug = await generateUniqueSlug(domain);
-  const verificationToken = generateVerificationToken();
-  const verificationExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  // Use a transaction to prevent race conditions when two users from the same
+  // domain sign up simultaneously. The unique constraint on domain will cause
+  // the second transaction to fail, which we handle by retrying the join flow.
+  try {
+    const orgName = deriveOrgNameFromDomain(domain);
+    const slug = await generateUniqueSlug(domain);
+    const verificationToken = generateVerificationToken();
+    const verificationExpires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
-  const organization = await prisma.organization.create({
-    data: {
-      name: orgName,
-      slug,
-      domain,
-      domainVerified: false,
-      domainVerificationToken: verificationToken,
-      domainVerificationExpiresAt: verificationExpires,
-      autoJoinEnabled: false,
-      plan: "FREE",
-      credits: 3, // Free trial credits
-      members: {
-        create: {
-          userId,
-          role: "OWNER",
-          joinMethod: "founder",
-          joinedAt: new Date(),
+    const organization = await prisma.$transaction(async (tx) => {
+      // Double-check within transaction that org doesn't exist
+      const existingInTx = await tx.organization.findUnique({
+        where: { domain },
+      });
+
+      if (existingInTx) {
+        // Another user created the org - join as member instead
+        await tx.organizationMember.create({
+          data: {
+            organizationId: existingInTx.id,
+            userId,
+            role: "MEMBER",
+            joinMethod: "domain-auto-join",
+            joinedAt: new Date(),
+          },
+        });
+        return { ...existingInTx, wasCreated: false };
+      }
+
+      // Create the organization
+      const newOrg = await tx.organization.create({
+        data: {
+          name: orgName,
+          slug,
+          domain,
+          domainVerified: false,
+          domainVerificationToken: verificationToken,
+          domainVerificationExpiresAt: verificationExpires,
+          autoJoinEnabled: false,
+          plan: "FREE",
+          credits: 3, // Free trial credits
+          members: {
+            create: {
+              userId,
+              role: "OWNER",
+              joinMethod: "founder",
+              joinedAt: new Date(),
+            },
+          },
         },
+      });
+      return { ...newOrg, wasCreated: true };
+    });
+
+    const isFounder = organization.wasCreated;
+
+    if (isFounder) {
+      logger.info("[OrgService] Created organization for B2B founder", {
+        userId,
+        organizationId: organization.id,
+        domain,
+        orgName,
+      });
+    } else {
+      logger.info("[OrgService] User joined existing organization (race condition handled)", {
+        userId,
+        organizationId: organization.id,
+        domain,
+      });
+    }
+
+    // Note: Domain verification email should be sent by the caller
+    // (auth.ts or register route) using sendDomainVerificationEmail()
+
+    return {
+      organization: {
+        id: organization.id,
+        name: organization.name,
+        slug: organization.slug,
+        domain: organization.domain,
+        domainVerified: organization.domainVerified,
+        plan: organization.plan,
+        credits: organization.credits,
       },
-    },
-  });
+      isFounder,
+      joinMethod: isFounder ? "founder" : "domain-auto-join",
+    };
+  } catch (error) {
+    // Handle unique constraint violation (P2002) - another user created the org
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error as { code: string }).code === "P2002"
+    ) {
+      logger.info("[OrgService] Race condition detected, retrying join flow", {
+        userId,
+        domain,
+      });
 
-  logger.info("[OrgService] Created organization for B2B founder", {
-    userId,
-    organizationId: organization.id,
-    domain,
-    orgName,
-  });
+      // Retry: org was created by another user, join it
+      const createdOrg = await prisma.organization.findUnique({
+        where: { domain },
+      });
 
-  // Note: Domain verification email should be sent by the caller
-  // (auth.ts or register route) using sendDomainVerificationEmail()
+      if (createdOrg) {
+        await prisma.organizationMember.create({
+          data: {
+            organizationId: createdOrg.id,
+            userId,
+            role: "MEMBER",
+            joinMethod: "domain-auto-join",
+            joinedAt: new Date(),
+          },
+        });
 
-  return {
-    organization: {
-      id: organization.id,
-      name: organization.name,
-      slug: organization.slug,
-      domain: organization.domain,
-      domainVerified: organization.domainVerified,
-      plan: organization.plan,
-      credits: organization.credits,
-    },
-    isFounder: true,
-    joinMethod: "founder",
-  };
+        return {
+          organization: {
+            id: createdOrg.id,
+            name: createdOrg.name,
+            slug: createdOrg.slug,
+            domain: createdOrg.domain,
+            domainVerified: createdOrg.domainVerified,
+            plan: createdOrg.plan,
+            credits: createdOrg.credits,
+          },
+          isFounder: false,
+          joinMethod: "domain-auto-join",
+        };
+      }
+    }
+    throw error;
+  }
 }
 
 /**

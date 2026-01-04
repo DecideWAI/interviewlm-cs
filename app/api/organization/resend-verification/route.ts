@@ -6,6 +6,7 @@ import {
   getOrganizationVerificationInfo,
 } from "@/lib/services/organization";
 import { sendDomainVerificationEmail } from "@/lib/services/email";
+import { logger } from "@/lib/utils/logger";
 
 /**
  * Resend Domain Verification Email
@@ -69,20 +70,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Send new verification email
+    // Send verification email to the requesting user (founder/owner)
+    const recipientEmail = session.user.email || "";
     await sendDomainVerificationEmail({
-      to: `admin@${updatedOrg.domain}`,
+      to: recipientEmail,
       organizationName: updatedOrg.name,
       domain: updatedOrg.domain,
-      founderEmail: session.user.email || "",
+      founderEmail: recipientEmail,
       founderName: session.user.name || null,
     });
 
+    logger.info("[ResendVerification] Verification email sent", {
+      recipient: recipientEmail,
+      domain: updatedOrg.domain,
+      organizationId: org.id,
+    });
+
     return NextResponse.json({
-      message: `Verification email sent to admin@${updatedOrg.domain}`,
+      message: `Verification email sent to ${recipientEmail}`,
     });
   } catch (error) {
-    console.error("[ResendVerification] Failed:", error);
+    logger.error(
+      "[ResendVerification] Failed",
+      error instanceof Error ? error : new Error(String(error)),
+      { organizationId: org.id }
+    );
     return NextResponse.json(
       { error: "Failed to send verification email" },
       { status: 500 }

@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Logo } from "@/components/Logo";
 import { AlertCircle, ArrowLeft, RefreshCw } from "lucide-react";
+import BRANDING from "@/lib/branding";
 
 const errorMessages: Record<string, { title: string; description: string }> = {
   Configuration: {
@@ -23,7 +24,7 @@ const errorMessages: Record<string, { title: string; description: string }> = {
   // B2B-specific errors
   PersonalEmailNotAllowed: {
     title: "Personal Email Not Allowed",
-    description: "InterviewLM is for businesses only. Please sign in with your company email address (e.g., you@company.com). Personal email providers like Gmail, Outlook, and Yahoo are not supported.",
+    description: `${BRANDING.name} is for businesses only. Please sign in with your company email address (e.g., you@company.com). Personal email providers like Gmail, Outlook, and Yahoo are not supported.`,
   },
   EmailRequired: {
     title: "Email Required",
@@ -36,6 +37,10 @@ const errorMessages: Record<string, { title: string; description: string }> = {
   MissingVerificationToken: {
     title: "Missing Verification Token",
     description: "The verification link is incomplete. Please use the full link from your verification email.",
+  },
+  InvalidVerificationToken: {
+    title: "Invalid Verification Token",
+    description: "The verification token format is invalid. Please use the link from your verification email.",
   },
   "Domain verification failed": {
     title: "Verification Failed",

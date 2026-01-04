@@ -4,9 +4,10 @@ import type { Adapter } from "next-auth/adapters";
 import prisma from "@/lib/prisma";
 import authConfig from "./auth.config";
 import { handleB2BSignup } from "@/lib/services/organization";
-import { isPersonalEmail, extractDomain } from "@/lib/constants/blocked-domains";
+import { isPersonalEmail } from "@/lib/constants/blocked-domains";
 import { ValidationError } from "@/lib/utils/errors";
 import { sendDomainVerificationEmail } from "@/lib/services/email";
+import { logger } from "@/lib/utils/logger";
 
 export const {
   handlers: { GET, POST },
@@ -43,30 +44,32 @@ export const {
             userEmail: user.email,
           });
 
-          // If user is founder (created new org), send verification email
+          // If user is founder (created new org), send verification email to founder
           if (result.isFounder && result.organization.domain) {
             const domain = result.organization.domain;
             try {
               await sendDomainVerificationEmail({
-                to: `admin@${domain}`,
+                to: user.email, // Send to founder, not admin@domain
                 organizationName: result.organization.name,
                 domain,
                 founderEmail: user.email,
                 founderName: user.name || null,
               });
-              console.log(
-                `[Auth] Domain verification email sent to admin@${domain}`
-              );
+              logger.info("[Auth] Domain verification email sent", {
+                recipient: user.email,
+                domain,
+              });
             } catch (emailError) {
               // Don't block sign-in if email fails
-              console.error(
-                "[Auth] Failed to send domain verification email:",
-                emailError
+              logger.error(
+                "[Auth] Failed to send domain verification email",
+                emailError instanceof Error ? emailError : new Error(String(emailError)),
+                { domain }
               );
             }
           }
 
-          console.log("[Auth] B2B signup completed", {
+          logger.info("[Auth] B2B signup completed", {
             userId: user.id,
             organizationId: result.organization.id,
             isFounder: result.isFounder,
@@ -77,7 +80,10 @@ export const {
             // Personal email or invalid email - redirect to error page
             return `/auth/error?error=${encodeURIComponent(error.message)}`;
           }
-          console.error("[Auth] B2B signup failed:", error);
+          logger.error(
+            "[Auth] B2B signup failed",
+            error instanceof Error ? error : new Error(String(error))
+          );
           // Don't block sign-in for other errors
         }
       }

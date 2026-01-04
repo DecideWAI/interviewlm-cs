@@ -1,5 +1,7 @@
 import { Resend } from "resend";
 import BRANDING from "@/lib/branding";
+import prisma from "@/lib/prisma";
+import { logger } from "@/lib/utils/logger";
 
 // Initialize Resend with API key from environment
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -779,15 +781,11 @@ export async function sendDomainVerificationEmail(params: {
 }) {
   const { to, organizationName, domain, founderEmail, founderName } = params;
 
-  // Get the verification token from the organization
-  const { PrismaClient } = await import("@prisma/client");
-  const prisma = new PrismaClient();
-
+  // Get the verification token from the organization using the shared prisma instance
   const org = await prisma.organization.findUnique({
     where: { domain },
     select: { domainVerificationToken: true },
   });
-  await prisma.$disconnect();
 
   if (!org?.domainVerificationToken) {
     throw new Error("Organization not found or missing verification token");
@@ -890,7 +888,11 @@ ${BRANDING.emailFooterText}
 
     return { success: true, messageId: result.data?.id };
   } catch (error) {
-    console.error("Failed to send domain verification email:", error);
+    logger.error(
+      "[Email] Failed to send domain verification email",
+      error instanceof Error ? error : new Error(String(error)),
+      { domain }
+    );
     throw new Error("Failed to send domain verification email");
   }
 }

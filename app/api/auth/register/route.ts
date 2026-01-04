@@ -11,6 +11,7 @@ import { authTurnstileVerifier } from "@/lib/middleware/turnstile";
 import { isPersonalEmail } from "@/lib/constants/blocked-domains";
 import { handleB2BSignup } from "@/lib/services/organization";
 import { ValidationError } from "@/lib/utils/errors";
+import { logger } from "@/lib/utils/logger";
 
 export async function POST(req: NextRequest) {
   try {
@@ -85,38 +86,48 @@ export async function POST(req: NextRequest) {
         userEmail: email,
       });
 
-      // If user is founder (created new org), send domain verification email
+      // If user is founder (created new org), send domain verification email to founder
       if (b2bResult.isFounder && b2bResult.organization.domain) {
         const domain = b2bResult.organization.domain;
         try {
           await sendDomainVerificationEmail({
-            to: `admin@${domain}`,
+            to: email, // Send to founder, not admin@domain
             organizationName: b2bResult.organization.name,
             domain,
             founderEmail: email,
             founderName: name || null,
           });
-          console.log(
-            `[Register] Domain verification email sent to admin@${domain}`
-          );
+          logger.info("[Register] Domain verification email sent", {
+            recipient: email,
+            domain,
+          });
         } catch (emailError) {
           // Don't fail registration if domain verification email fails
-          console.error(
-            "[Register] Failed to send domain verification email:",
-            emailError
+          logger.error(
+            "[Register] Failed to send domain verification email",
+            emailError instanceof Error ? emailError : new Error(String(emailError)),
+            { domain }
           );
         }
       }
 
-      console.log("[Register] B2B signup completed", {
+      logger.info("[Register] B2B signup completed", {
         userId: user.id,
         organizationId: b2bResult.organization.id,
         isFounder: b2bResult.isFounder,
         joinMethod: b2bResult.joinMethod,
       });
     } catch (b2bError) {
-      // If B2B signup fails, delete the user we just created
-      await prisma.user.delete({ where: { id: user.id } });
+      // If B2B signup fails, attempt to delete the user we just created
+      try {
+        await prisma.user.delete({ where: { id: user.id } });
+      } catch (deleteError) {
+        logger.error(
+          "[Register] Failed to delete user after B2B signup failure",
+          deleteError instanceof Error ? deleteError : new Error(String(deleteError)),
+          { userId: user.id }
+        );
+      }
 
       if (b2bError instanceof ValidationError) {
         return NextResponse.json({ error: b2bError.message }, { status: 400 });
@@ -153,7 +164,10 @@ export async function POST(req: NextRequest) {
         expiresAt,
       });
     } catch (emailError) {
-      console.error("Failed to send verification email:", emailError);
+      logger.error(
+        "[Register] Failed to send verification email",
+        emailError instanceof Error ? emailError : new Error(String(emailError))
+      );
       // Don't fail registration if email fails to send
     }
 
@@ -169,7 +183,10 @@ export async function POST(req: NextRequest) {
       { status: 201 }
     );
   } catch (error) {
-    console.error("Registration error:", error);
+    logger.error(
+      "[Register] Registration error",
+      error instanceof Error ? error : new Error(String(error))
+    );
     return NextResponse.json(
       { error: "Something went wrong" },
       { status: 500 }
