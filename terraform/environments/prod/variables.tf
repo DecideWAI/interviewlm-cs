@@ -181,6 +181,12 @@ variable "google_client_id" {
   default     = ""
 }
 
+variable "github_client_id" {
+  description = "GitHub OAuth Client ID (not secret, safe to expose)"
+  type        = string
+  default     = ""
+}
+
 # -----------------------------------------------------------------------------
 # Payment Configuration (Paddle)
 # NOTE: Product IDs are now stored in the database (PricingPlan model)
