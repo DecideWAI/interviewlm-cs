@@ -371,6 +371,8 @@ module "cloud_run" {
     LANGSMITH_ENDPOINT = "https://api.smith.langchain.com"
     # Security (Cloudflare Turnstile)
     NEXT_PUBLIC_TURNSTILE_SITE_KEY = var.turnstile_site_key
+    # OAuth (Google)
+    GOOGLE_CLIENT_ID = var.google_client_id
     # Monitoring (Sentry)
     SENTRY_DSN             = var.sentry_dsn
     NEXT_PUBLIC_SENTRY_DSN = var.sentry_dsn
@@ -423,6 +425,10 @@ module "cloud_run" {
     }
     TURNSTILE_SECRET_KEY = {
       secret_id = module.secrets.turnstile_secret_key_secret_id
+      version   = "latest"
+    }
+    GOOGLE_CLIENT_SECRET = {
+      secret_id = module.secrets.google_client_secret_id
       version   = "latest"
     }
     LANGGRAPH_INTERNAL_API_KEY = {

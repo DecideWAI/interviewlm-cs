@@ -33,6 +33,14 @@ RUN npx prisma generate
 # Disable telemetry during build
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Build-time arguments for public environment variables (embedded in client bundle)
+ARG NEXT_PUBLIC_TURNSTILE_SITE_KEY
+ARG NEXT_PUBLIC_SENTRY_DSN
+
+# Set public env vars from build args (these get embedded in the JS bundle)
+ENV NEXT_PUBLIC_TURNSTILE_SITE_KEY=$NEXT_PUBLIC_TURNSTILE_SITE_KEY
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
+
 # Build-time environment variables (dummy values for Next.js validation)
 # Real values are injected at runtime by Cloud Run
 ENV DATABASE_URL="postgresql://user:pass@localhost:5432/db"

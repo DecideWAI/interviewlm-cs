@@ -64,9 +64,14 @@ jobs:
       - name: Build Docker image
         env:
           IMAGE_TAG: ${{ steps.meta.outputs.tags }}
+          # Public build args from GitHub repository variables (safe to embed in client bundle)
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ vars.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ vars.NEXT_PUBLIC_SENTRY_DSN }}
         run: |
           docker build \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --build-arg NEXT_PUBLIC_TURNSTILE_SITE_KEY="$NEXT_PUBLIC_TURNSTILE_SITE_KEY" \
+            --build-arg NEXT_PUBLIC_SENTRY_DSN="$NEXT_PUBLIC_SENTRY_DSN" \
             --cache-from "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest" \
             -t "$IMAGE_TAG" \
             -t "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest" \

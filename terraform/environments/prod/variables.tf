@@ -175,6 +175,12 @@ variable "enable_oauth" {
   default     = true
 }
 
+variable "google_client_id" {
+  description = "Google OAuth Client ID (not secret, safe to expose)"
+  type        = string
+  default     = ""
+}
+
 # -----------------------------------------------------------------------------
 # Payment Configuration (Paddle)
 # NOTE: Product IDs are now stored in the database (PricingPlan model)
