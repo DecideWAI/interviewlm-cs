@@ -7,20 +7,49 @@ import prisma from '@/lib/prisma'
 import { hash } from 'bcryptjs'
 import { NextRequest } from 'next/server'
 
-// Mock Prisma
+// Mock organization for B2B flow
+const mockOrganization = {
+  id: 'org-1',
+  name: 'Example',
+  slug: 'example',
+  domain: 'example.com',
+  domainVerified: false,
+  plan: 'FREE',
+  credits: 3,
+}
+
+// Mock Prisma with all methods needed for B2B signup flow
 jest.mock('@/lib/prisma', () => ({
   __esModule: true,
   default: {
     user: {
       findUnique: jest.fn(),
       create: jest.fn(),
+      delete: jest.fn(),
     },
     organization: {
-      findUnique: jest.fn().mockResolvedValue(null), // No existing org with same slug
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
+    organizationMember: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
     },
     verificationToken: {
       create: jest.fn().mockResolvedValue({ identifier: 'test@test.com', token: 'token', expires: new Date() }),
     },
+    $transaction: jest.fn((callback) => callback({
+      organization: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation((data) => Promise.resolve({
+          ...mockOrganization,
+          wasCreated: true,
+        })),
+      },
+      organizationMember: {
+        create: jest.fn().mockResolvedValue({ id: 'member-1' }),
+      },
+    })),
   },
 }))
 
@@ -53,6 +82,9 @@ describe('/api/auth/register', () => {
       ;(hash as jest.Mock).mockResolvedValue(mockHashedPassword)
       ;(prisma.user.findUnique as jest.Mock).mockResolvedValue(null)
       ;(prisma.user.create as jest.Mock).mockResolvedValue(mockUser)
+      // B2B flow mocks
+      ;(prisma.organizationMember.findFirst as jest.Mock).mockResolvedValue(null) // User has no org
+      ;(prisma.organization.findUnique as jest.Mock).mockResolvedValue(null) // No existing org for domain
 
       const request = new NextRequest('http://localhost:3000/api/auth/register', {
         method: 'POST',
@@ -201,6 +233,9 @@ describe('/api/auth/register', () => {
       ;(hash as jest.Mock).mockResolvedValue(mockHashedPassword)
       ;(prisma.user.findUnique as jest.Mock).mockResolvedValue(null)
       ;(prisma.user.create as jest.Mock).mockResolvedValue(mockUser)
+      // B2B flow mocks
+      ;(prisma.organizationMember.findFirst as jest.Mock).mockResolvedValue(null) // User has no org
+      ;(prisma.organization.findUnique as jest.Mock).mockResolvedValue(null) // No existing org for domain
 
       const request = new NextRequest('http://localhost:3000/api/auth/register', {
         method: 'POST',
