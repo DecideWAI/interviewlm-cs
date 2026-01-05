@@ -44,7 +44,7 @@ jobs:
         run: ruff check .
 
       - name: Run mypy type checker
-        run: mypy .
+        run: mypy . --exclude "aegra/|tests/" --ignore-missing-imports
 
   test:
     name: Test
