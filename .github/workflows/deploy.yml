@@ -207,20 +207,35 @@ jobs:
 
       - name: Verify deployment
         run: |
-          APP_URL=$(gcloud run services describe "$APP_SERVICE" \
-            --region "$REGION" \
-            --format='value(status.url)')
+          # App service has load-balancer-only ingress, verify via Cloud Run status
+          # and public load balancer URL (https://interviewlm.com)
 
-          # Wait for new revision to be ready
-          sleep 30
+          echo "Waiting for revision to be ready..."
+          for i in {1..12}; do
+            STATUS=$(gcloud run services describe "$APP_SERVICE" \
+              --region "$REGION" \
+              --format='value(status.conditions[0].status)')
 
-          # Health check with retries
+            if [ "$STATUS" = "True" ]; then
+              REVISION=$(gcloud run services describe "$APP_SERVICE" \
+                --region "$REGION" \
+                --format='value(status.latestReadyRevisionName)')
+              echo "Cloud Run revision ready: $REVISION"
+              break
+            fi
+
+            echo "Attempt $i: Service not ready yet (status: $STATUS), waiting 10s..."
+            sleep 10
+          done
+
+          # Health check via load balancer with retries
+          echo "Verifying via load balancer..."
           for i in {1..5}; do
-            if curl -sf "${APP_URL}/api/health" > /dev/null; then
+            if curl -sf "https://interviewlm.com/api/health" > /dev/null; then
               echo "Health check passed!"
               exit 0
             fi
-            echo "Attempt $i failed, retrying in 10s..."
+            echo "Health check attempt $i failed, retrying in 10s..."
             sleep 10
           done
 
