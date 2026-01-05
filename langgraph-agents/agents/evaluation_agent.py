@@ -26,7 +26,12 @@ from typing_extensions import TypedDict
 
 from config import generate_evaluation_thread_uuid, settings
 from middleware import SummarizationMiddleware, system_prompt_middleware
-from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model, Provider
+from services.model_factory import (
+    Provider,
+    create_chat_model,
+    create_model_from_context,
+    is_anthropic_model,
+)
 
 # Workspace exploration tools (from coding agent)
 # These connect to the Modal sandbox via volume_id stored in database

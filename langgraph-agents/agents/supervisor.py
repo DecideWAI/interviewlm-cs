@@ -13,8 +13,8 @@ from typing import TYPE_CHECKING, Annotated, Literal, cast
 
 if TYPE_CHECKING:
     from agents.coding_agent import CodingAgentGraph
-    from agents.interview_agent import InterviewAgentGraph
     from agents.evaluation_agent import EvaluationAgentGraph
+    from agents.interview_agent import InterviewAgentGraph
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
@@ -28,7 +28,7 @@ from typing_extensions import TypedDict
 
 from config import generate_supervisor_thread_uuid, settings
 from middleware import SummarizationMiddleware, system_prompt_middleware
-from services.model_factory import create_model_from_context, is_anthropic_model, Provider
+from services.model_factory import Provider, create_model_from_context, is_anthropic_model
 
 # =============================================================================
 # State Schema (LangGraph v1 style)

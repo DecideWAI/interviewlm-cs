@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage
 
 from config import settings
 from services.database import get_question_generation_database
-from services.model_factory import create_chat_model, Provider
+from services.model_factory import Provider, create_chat_model
 
 from .prompts import build_variation_prompt
 

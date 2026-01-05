@@ -29,7 +29,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
 
 from config import settings
-from services.model_factory import create_chat_model, Provider
+from services.model_factory import Provider, create_chat_model
 
 # =============================================================================
 # Type Aliases

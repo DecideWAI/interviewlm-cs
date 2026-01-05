@@ -40,7 +40,12 @@ from typing_extensions import TypedDict
 
 from config import generate_question_eval_thread_uuid, settings
 from middleware import SummarizationMiddleware, system_prompt_middleware
-from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model, Provider
+from services.model_factory import (
+    Provider,
+    create_chat_model,
+    create_model_from_context,
+    is_anthropic_model,
+)
 from tools.coding_tools import grep_files, list_files, read_file
 from tools.fast_evaluation_tools import (
     FAST_EVALUATION_SUBMISSION_TOOLS,

@@ -8,6 +8,8 @@ NOTE: This agent does NOT use LLM calls - it's a pure state machine for IRT
 calculations. Therefore it uses StateGraph directly rather than create_agent.
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import os

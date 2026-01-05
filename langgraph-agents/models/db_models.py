@@ -25,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, relationship
 
+
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models."""
     pass

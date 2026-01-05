@@ -15,7 +15,12 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, cast
 
 from sqlalchemy import and_, select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import selectinload
 
 from config.settings import settings
