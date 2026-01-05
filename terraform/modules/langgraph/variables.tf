@@ -50,6 +50,12 @@ variable "main_app_service_account_email" {
   type        = string
 }
 
+variable "cicd_service_account_email" {
+  description = "Service account email of the CI/CD pipeline (for deployment permissions)"
+  type        = string
+  default     = ""
+}
+
 # -----------------------------------------------------------------------------
 # Shared Secret IDs (from main app secrets module)
 # -----------------------------------------------------------------------------

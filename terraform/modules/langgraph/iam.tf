@@ -80,3 +80,15 @@ resource "google_cloud_run_v2_service_iam_member" "main_app_invoker" {
 #   role   = "roles/run.invoker"
 #   member = "serviceAccount:${var.langgraph_service_account_email}"
 # }
+
+# -----------------------------------------------------------------------------
+# Allow CI/CD to deploy LangGraph service (Service Account User)
+# -----------------------------------------------------------------------------
+
+resource "google_service_account_iam_member" "cicd_langgraph_user" {
+  count = var.cicd_service_account_email != "" ? 1 : 0
+
+  service_account_id = google_service_account.langgraph.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${var.cicd_service_account_email}"
+}

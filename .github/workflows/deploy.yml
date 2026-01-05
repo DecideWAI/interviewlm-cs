@@ -19,6 +19,8 @@ env:
   IMAGE_NAME: app
   APP_SERVICE: interviewlm-prod-app
   WORKER_SERVICE: interviewlm-prod-worker
+  LANGGRAPH_IMAGE_NAME: langgraph
+  LANGGRAPH_SERVICE: interviewlm-prod-langgraph
 
 concurrency:
   group: deploy-production
@@ -83,6 +85,63 @@ jobs:
         run: |
           docker push "$IMAGE_TAG"
           docker push "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}:latest"
+
+  build-langgraph:
+    name: Build LangGraph
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker
+        run: gcloud auth configure-docker $REGISTRY --quiet
+
+      - name: Generate image metadata
+        id: meta
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+          IMAGE_TAG="${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${LANGGRAPH_IMAGE_NAME}:${SHORT_SHA}"
+          echo "tags=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker build \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            --cache-from "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${LANGGRAPH_IMAGE_NAME}:latest" \
+            -t "$IMAGE_TAG" \
+            -t "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${LANGGRAPH_IMAGE_NAME}:latest" \
+            -f langgraph-agents/Dockerfile \
+            langgraph-agents
+
+      - name: Push Docker image
+        env:
+          IMAGE_TAG: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker push "$IMAGE_TAG"
+          docker push "${REGISTRY}/${PROJECT_ID}/${REPOSITORY}/${LANGGRAPH_IMAGE_NAME}:latest"
 
   migrate:
     name: Run Migrations
@@ -214,9 +273,58 @@ jobs:
             echo "Warning: Could not verify worker startup from logs"
           fi
 
+  deploy-langgraph:
+    name: Deploy LangGraph
+    needs: build-langgraph
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/967393583920/locations/global/workloadIdentityPools/interviewlm-prod-github-pool/providers/github-provider
+          service_account: interviewlm-prod-cicd@interviewlm-480415.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        env:
+          IMAGE_TAG: ${{ needs.build-langgraph.outputs.image_tag }}
+        run: |
+          gcloud run services update "$LANGGRAPH_SERVICE" \
+            --image "$IMAGE_TAG" \
+            --region "$REGION" \
+            --quiet
+
+      - name: Verify deployment
+        run: |
+          LANGGRAPH_URL=$(gcloud run services describe "$LANGGRAPH_SERVICE" \
+            --region "$REGION" \
+            --format='value(status.url)')
+
+          # Wait for new revision to be ready
+          sleep 30
+
+          # Health check with retries
+          for i in {1..5}; do
+            if curl -sf "${LANGGRAPH_URL}/health" > /dev/null; then
+              echo "LangGraph health check passed!"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying in 10s..."
+            sleep 10
+          done
+
+          echo "LangGraph health check failed after 5 attempts"
+          exit 1
+
   notify:
     name: Notify
-    needs: [build, deploy-app, deploy-workers]
+    needs: [build, deploy-app, deploy-workers, deploy-langgraph]
     if: always()
     runs-on: ubuntu-latest
 
@@ -226,6 +334,7 @@ jobs:
           COMMIT_SHA: ${{ github.sha }}
           APP_RESULT: ${{ needs.deploy-app.result }}
           WORKER_RESULT: ${{ needs.deploy-workers.result }}
+          LANGGRAPH_RESULT: ${{ needs.deploy-langgraph.result }}
         run: |
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -233,6 +342,7 @@ jobs:
           echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| App | ${APP_RESULT} |" >> $GITHUB_STEP_SUMMARY
           echo "| Workers | ${WORKER_RESULT} |" >> $GITHUB_STEP_SUMMARY
+          echo "| LangGraph | ${LANGGRAPH_RESULT} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Commit:** ${COMMIT_SHA}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

@@ -546,6 +546,9 @@ module "langgraph" {
   # Main app service account (for IAM permissions to invoke LangGraph)
   main_app_service_account_email = module.iam.cloud_run_service_account_email
 
+  # CI/CD service account (for deployment permissions)
+  cicd_service_account_email = module.iam.cicd_service_account_email
+
   # Cloud Run sizing (min=1 because LangGraph needs persistent connections)
   cpu           = var.langgraph_cpu
   memory        = var.langgraph_memory
