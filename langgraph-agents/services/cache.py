@@ -8,7 +8,7 @@ Provides fast in-memory caching for:
 """
 
 import json
-from typing import Any
+from typing import Any, cast
 
 import redis.asyncio as redis
 
@@ -79,7 +79,7 @@ class CacheService:
 
         data = await client.get(key)
         if data:
-            return json.loads(data)
+            return cast(InterviewMetrics, json.loads(data))
         return None
 
     async def set_metrics(
@@ -112,8 +112,8 @@ class CacheService:
         if not data:
             return None
 
-        metrics = json.loads(data)
-        metrics.update(updates)
+        metrics = cast(InterviewMetrics, json.loads(data))
+        metrics.update(updates)  # type: ignore[typeddict-item]
 
         # Save back
         await client.set(key, json.dumps(metrics), ex=self.TTL_METRICS)
@@ -124,20 +124,20 @@ class CacheService:
         client = await self._get_client()
         key = f"{self.PREFIX_METRICS}{session_id}"
         result = await client.delete(key)
-        return result > 0
+        return cast(bool, result > 0)
 
     # =========================================================================
     # Session State Caching
     # =========================================================================
 
-    async def get_session_state(self, session_id: str) -> dict | None:
+    async def get_session_state(self, session_id: str) -> dict[Any, Any] | None:
         """Get cached session state."""
         client = await self._get_client()
         key = f"{self.PREFIX_SESSION}{session_id}"
 
         data = await client.get(key)
         if data:
-            return json.loads(data)
+            return cast(dict[Any, Any], json.loads(data))
         return None
 
     async def set_session_state(
@@ -161,20 +161,20 @@ class CacheService:
         client = await self._get_client()
         key = f"{self.PREFIX_SESSION}{session_id}"
         result = await client.delete(key)
-        return result > 0
+        return cast(bool, result > 0)
 
     # =========================================================================
     # Agent State Caching (for checkpoints)
     # =========================================================================
 
-    async def get_agent_state(self, agent_type: str, session_id: str) -> dict | None:
+    async def get_agent_state(self, agent_type: str, session_id: str) -> dict[Any, Any] | None:
         """Get cached agent state/checkpoint."""
         client = await self._get_client()
         key = f"{self.PREFIX_AGENT}{agent_type}:{session_id}"
 
         data = await client.get(key)
         if data:
-            return json.loads(data)
+            return cast(dict[Any, Any], json.loads(data))
         return None
 
     async def set_agent_state(
@@ -199,7 +199,7 @@ class CacheService:
         client = await self._get_client()
         key = f"{self.PREFIX_AGENT}{agent_type}:{session_id}"
         result = await client.delete(key)
-        return result > 0
+        return cast(bool, result > 0)
 
     # =========================================================================
     # Distributed Locking
@@ -237,7 +237,7 @@ class CacheService:
         client = await self._get_client()
         key = f"{self.PREFIX_LOCK}{resource}"
         result = await client.delete(key)
-        return result > 0
+        return cast(bool, result > 0)
 
     async def extend_lock(self, resource: str, ttl: int | None = None) -> bool:
         """Extend lock TTL."""

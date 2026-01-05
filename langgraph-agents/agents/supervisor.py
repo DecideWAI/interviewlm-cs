@@ -9,7 +9,12 @@ Anthropic prompt caching.
 """
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, cast
+
+if TYPE_CHECKING:
+    from agents.coding_agent import CodingAgentGraph
+    from agents.interview_agent import InterviewAgentGraph
+    from agents.evaluation_agent import EvaluationAgentGraph
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
@@ -23,7 +28,7 @@ from typing_extensions import TypedDict
 
 from config import generate_supervisor_thread_uuid, settings
 from middleware import SummarizationMiddleware, system_prompt_middleware
-from services.model_factory import create_model_from_context, is_anthropic_model
+from services.model_factory import create_model_from_context, is_anthropic_model, Provider
 
 # =============================================================================
 # State Schema (LangGraph v1 style)
@@ -228,7 +233,7 @@ Use `complete_workflow` when all tasks are done."""
 # Middleware: Model Selection with Caching
 # =============================================================================
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Middleware that selects the appropriate model and converts tools.
 
@@ -238,7 +243,7 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
 
     model = create_model_from_context(
         context=_current_context,
-        default_provider=settings.coding_agent_provider,
+        default_provider=cast(Provider, settings.coding_agent_provider),
         default_model=settings.coding_agent_model,
         max_tokens=32000,
     )
@@ -250,37 +255,37 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
             for tool in request.tools:
                 try:
                     anthropic_tool = convert_to_anthropic_tool(tool)
-                    converted_tools.append(anthropic_tool)
+                    converted_tools.append(anthropic_tool)  # type: ignore[arg-type,unused-ignore]
                 except Exception:
-                    converted_tools.append(tool)
-            model = model.bind_tools(converted_tools)
+                    converted_tools.append(tool)  # type: ignore[arg-type]
+            model = model.bind_tools(converted_tools)  # type: ignore[arg-type,assignment]
         else:
             # LangChain handles format conversion for OpenAI/Gemini
-            model = model.bind_tools(request.tools)
+            model = model.bind_tools(request.tools)  # type: ignore[assignment]
 
     request.model = model
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Add cache_control to system prompt, tools, and messages.
 
     Only applies to Anthropic models - skips for OpenAI/Gemini.
     """
     if not settings.enable_prompt_caching:
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     # Only apply caching to Anthropic models
     if not is_anthropic_model(request.model):
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     cache_control = {"type": "ephemeral"}
 
     # Cache system prompt
     if request.system_prompt:
         if isinstance(request.system_prompt, str):
-            request.system_prompt = [
+            request.system_prompt = [  # type: ignore[assignment,misc]
                 {"type": "text", "text": request.system_prompt, "cache_control": cache_control}
             ]
         elif isinstance(request.system_prompt, list) and len(request.system_prompt) > 0:
@@ -313,7 +318,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                         "cache_control": cache_control,
                     }
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
 # =============================================================================
@@ -390,7 +395,7 @@ def create_supervisor_graph(use_checkpointing: bool = True):
     """Create the Supervisor Agent using LangGraph v1's create_agent."""
     model = create_model_from_context(
         context={},
-        default_provider=settings.coding_agent_provider,
+        default_provider=cast(Provider, settings.coding_agent_provider),
         default_model=settings.coding_agent_model,
         max_tokens=32000,
     )
@@ -414,7 +419,7 @@ def create_supervisor_graph(use_checkpointing: bool = True):
     if use_checkpointing:
         agent_kwargs["checkpointer"] = MemorySaver()
 
-    return create_agent(**agent_kwargs)
+    return create_agent(**agent_kwargs)  # type: ignore[arg-type]
 
 
 # =============================================================================

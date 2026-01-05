@@ -13,7 +13,7 @@ import math
 import os
 import threading
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, cast
 
 import httpx
 from langchain_core.messages import BaseMessage
@@ -34,7 +34,7 @@ NEXTJS_INTERNAL_URL = os.environ.get("NEXTJS_INTERNAL_URL", "http://localhost:30
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-internal-key")
 
 
-def emit_metrics_event(session_id: str, metrics: dict):
+def emit_metrics_event(session_id: str, metrics: dict[str, Any] | InterviewMetrics):
     """
     Emit session.metrics_updated event to persist IRT metrics (fire-and-forget).
 
@@ -297,6 +297,7 @@ async def process_event(state: InterviewAgentState) -> dict:
     event_data = state.get("current_event_data", {})
     metrics = state.get("metrics")
     session_id = state.get("session_id")
+    assert session_id is not None, "session_id is required in state"
 
     if not metrics:
         metrics = create_default_metrics(session_id)
@@ -421,7 +422,7 @@ class InterviewAgentGraph:
         config = {"configurable": {"thread_id": thread_uuid}}
 
         result = await self.graph.ainvoke(initial_state, config)
-        return result["metrics"]
+        return cast(InterviewMetrics, result["metrics"])
 
     async def get_metrics(self, session_id: str) -> InterviewMetrics | None:
         """Get current metrics for a session."""
@@ -430,7 +431,7 @@ class InterviewAgentGraph:
         config = {"configurable": {"thread_id": thread_uuid}}
         state = await self.graph.aget_state(config)
         if state and state.values:
-            return state.values.get("metrics")
+            return cast(InterviewMetrics | None, state.values.get("metrics"))
         return None
 
 

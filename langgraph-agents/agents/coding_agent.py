@@ -9,7 +9,7 @@ Reference: TheBlueOne/apps/langgraph-python/src/agent.py
 """
 
 from dataclasses import dataclass
-from typing import Annotated, Any, AsyncGenerator, Callable, Literal, Optional
+from typing import Annotated, Any, AsyncGenerator, Callable, Literal, Optional, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
@@ -407,7 +407,7 @@ def set_model_context(context: dict) -> None:
     _current_context = context or {}
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Middleware that selects the appropriate model and converts tools.
 
@@ -438,26 +438,26 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
             for tool in request.tools:
                 try:
                     anthropic_tool = convert_to_anthropic_tool(tool)
-                    converted_tools.append(anthropic_tool)
+                    converted_tools.append(anthropic_tool)  # type: ignore[arg-type,unused-ignore]
                 except Exception as e:
                     print(f"[ModelSelection] Warning: Failed to convert tool: {e}")
-                    converted_tools.append(tool)
-            model = model.bind_tools(converted_tools)
+                    converted_tools.append(tool)  # type: ignore[arg-type]
+            model = model.bind_tools(converted_tools)  # type: ignore[arg-type,assignment]
         else:
             # Other providers: LangChain handles tool format conversion
-            model = model.bind_tools(request.tools)
+            model = model.bind_tools(request.tools)  # type: ignore[assignment]
 
     # Replace model in request
     request.model = model
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
 # =============================================================================
 # Middleware: Anthropic Caching
 # =============================================================================
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Add cache_control to system prompt and messages.
 
@@ -467,7 +467,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
     - Breakpoint 2: Last message (caches entire conversation)
     """
     if not settings.enable_prompt_caching:
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     cache_control = {"type": "ephemeral"}
 
@@ -482,7 +482,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
     # 1. Add cache_control to system prompt's LAST block
     if request.system_prompt:
         if isinstance(request.system_prompt, str):
-            request.system_prompt = [
+            request.system_prompt = [  # type: ignore[assignment,misc]
                 {
                     "type": "text",
                     "text": request.system_prompt,
@@ -529,7 +529,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                         "cache_control": cache_control,
                     }
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
 # =============================================================================
@@ -593,7 +593,7 @@ def create_coding_agent_graph(
     if use_checkpointing:
         agent_kwargs["checkpointer"] = MemorySaver()
 
-    return create_agent(**agent_kwargs)
+    return create_agent(**agent_kwargs)  # type: ignore[arg-type]
 
 
 # =============================================================================

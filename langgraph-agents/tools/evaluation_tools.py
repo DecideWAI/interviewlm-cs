@@ -548,7 +548,7 @@ async def analyze_problem_solving(
     iteration_score = 30 + normalized_score * 70
 
     # Method 2: Analyze debugging approach from test results
-    debugging_score = 50  # Default neutral
+    debugging_score = 50.0  # Default neutral
 
     if test_results:
         evidence.append({
@@ -570,7 +570,7 @@ async def analyze_problem_solving(
             debugging_score = 50 + improvement_rate * 50
 
     # Method 3: Analyze terminal commands
-    terminal_score = 50  # Default
+    terminal_score = 50.0  # Default
 
     if terminal_commands:
         debugging_patterns = 0
@@ -667,7 +667,7 @@ async def analyze_ai_collaboration(
         # Clarity: look for clear structure (questions, bullet points)
         has_question = "?" in user_message
         has_structure = any(p in user_message for p in ["1.", "2.", "-", "*", "first", "then", "finally"])
-        clarity = 50
+        clarity = 50.0
         if has_question:
             clarity += 20
         if has_structure:
@@ -686,9 +686,9 @@ async def analyze_ai_collaboration(
         technical_depth_scores.append(min(100, depth))
 
     # Calculate averages
-    specificity = sum(specificity_scores) / len(specificity_scores) if specificity_scores else 50
-    clarity = sum(clarity_scores) / len(clarity_scores) if clarity_scores else 50
-    technical_depth = sum(technical_depth_scores) / len(technical_depth_scores) if technical_depth_scores else 50
+    specificity = sum(specificity_scores) / len(specificity_scores) if specificity_scores else 50.0
+    clarity = sum(clarity_scores) / len(clarity_scores) if clarity_scores else 50.0
+    technical_depth = sum(technical_depth_scores) / len(technical_depth_scores) if technical_depth_scores else 50.0
 
     prompt_quality_score = (specificity + clarity + technical_depth) / 3
 
@@ -1341,7 +1341,7 @@ async def generate_actionable_report(
     }
 
     # Find areas needing development
-    gaps = [(k, v["gap"]) for k, v in skills_matrix.items() if v["gap"] > 0]
+    gaps: list[tuple[str, int]] = [(k, v["gap"]) for k, v in skills_matrix.items() if v["gap"] > 0]  # type: ignore[misc,operator]
     gaps.sort(key=lambda x: x[1], reverse=True)
 
     # Generate development roadmap
@@ -1393,7 +1393,7 @@ async def generate_actionable_report(
             })
 
     # Interview insights
-    interview_insights = {
+    interview_insights: dict[str, list[str]] = {
         "follow_up_topics": [],
         "areas_to_probe": [],
         "positive_signals": [],
@@ -1589,8 +1589,8 @@ async def detect_evaluation_bias(
     Returns:
         Dict with bias_flags list and fairness_report
     """
-    bias_flags = []
-    fairness_report = {
+    bias_flags: list[str] = []
+    fairness_report: dict[str, Any] = {
         "consistency_check": "pass",
         "weighting_check": "pass",
         "evidence_check": "pass",

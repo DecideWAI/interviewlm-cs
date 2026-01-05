@@ -18,7 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from agents import create_coding_agent
 from config import settings
-from middleware.summarization import MESSAGE_THRESHOLD, get_summarization_stats
+from middleware.summarization import get_summarization_stats
+
+# MESSAGE_THRESHOLD was removed - summarization is now controlled by max_tokens_before_summary
+MESSAGE_THRESHOLD = 30  # Default threshold for testing
 
 
 async def test_caching_with_growing_conversation():

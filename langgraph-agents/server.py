@@ -103,11 +103,12 @@ else:
 LANGGRAPH_CONFIG_PATH = Path(__file__).parent / "langgraph.json"
 
 
-def load_config() -> dict:
+def load_config() -> dict[Any, Any]:
     """Load the langgraph.json configuration."""
     if LANGGRAPH_CONFIG_PATH.exists():
         with open(LANGGRAPH_CONFIG_PATH) as f:
-            return json.load(f)
+            config: dict[Any, Any] = json.load(f)
+            return config
     return {}
 
 
@@ -288,7 +289,7 @@ async def verify_google_id_token(token: str) -> Optional[dict]:
                 params={"id_token": token}
             )
             if resp.status_code == 200:
-                token_info = resp.json()
+                token_info: dict[Any, Any] = resp.json()
 
                 # Evict oldest entries if cache is full (simple FIFO)
                 if len(_token_cache) >= _TOKEN_CACHE_MAX_SIZE:

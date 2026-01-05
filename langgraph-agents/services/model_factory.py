@@ -15,6 +15,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.language_models import BaseChatModel
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from config.settings import settings
 
@@ -109,32 +110,32 @@ def create_chat_model(
 
         return ChatAnthropic(
             model_name=model,
-            max_tokens=max_tokens,
+            max_tokens=max_tokens,  # type: ignore[call-arg]
             temperature=temperature,
             streaming=streaming,
-            api_key=api_key,
+            api_key=SecretStr(api_key),
             betas=betas,
             default_headers=default_headers,
             **kwargs,
         )
 
     elif provider == "openai":
-        api_key = settings.openai_api_key
-        if not api_key:
+        openai_key = settings.openai_api_key
+        if not openai_key:
             raise ValueError("OPENAI_API_KEY is required for OpenAI provider")
 
         return ChatOpenAI(
             model=model,
-            max_tokens=max_tokens,
+            max_tokens=max_tokens,  # type: ignore[call-arg]
             temperature=temperature,
             streaming=streaming,
-            api_key=api_key,
+            api_key=SecretStr(openai_key),
             **kwargs,
         )
 
     elif provider == "gemini":
-        api_key = settings.google_api_key
-        if not api_key:
+        google_key = settings.google_api_key
+        if not google_key:
             raise ValueError("GOOGLE_API_KEY is required for Gemini provider")
 
         return ChatGoogleGenerativeAI(
@@ -142,7 +143,7 @@ def create_chat_model(
             max_output_tokens=max_tokens,
             temperature=temperature,
             streaming=streaming,
-            google_api_key=api_key,
+            google_api_key=google_key,
             **kwargs,
         )
 

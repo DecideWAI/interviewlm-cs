@@ -37,11 +37,14 @@ jobs:
           cache: 'pip'
           cache-dependency-path: langgraph-agents/requirements.txt
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Install linting tools
+        run: pip install ruff mypy
 
       - name: Run ruff linter
         run: ruff check .
+
+      - name: Run mypy type checker
+        run: mypy .
 
   test:
     name: Test

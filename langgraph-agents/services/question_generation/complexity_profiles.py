@@ -11,7 +11,7 @@ Complexity Dimensions:
 - ambiguity_level: clear | some_decisions | open_ended | strategic
 """
 
-from typing import Literal
+from typing import Literal, cast
 
 from typing_extensions import TypedDict
 
@@ -107,7 +107,7 @@ async def get_complexity_profile(
 
     if profile:
         logger.debug(f"Got complexity profile from DB: {role}/{seniority_lower}/{assessment_type}")
-        return profile
+        return cast(ComplexityProfile, profile)
 
     raise RuntimeError(
         f"Complexity profile not found for {role}/{seniority_lower}/{assessment_type}. "
@@ -134,4 +134,4 @@ async def get_domain_pool(
         List of domain strings from the complexity profile
     """
     profile = await get_complexity_profile(role, seniority, assessment_type, organization_id)
-    return profile.get("domainPool", [])
+    return cast(list[str], profile.get("domain_pool", []))

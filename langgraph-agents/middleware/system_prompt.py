@@ -13,6 +13,8 @@ Additionally, when summarization or other operations remove messages,
 ToolMessages can become orphaned (no corresponding tool_use in previous message).
 """
 
+from typing import Any, cast
+
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
@@ -20,7 +22,7 @@ from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 
 def _get_tool_use_ids_from_message(message) -> set[str]:
     """Extract tool_use IDs from an AIMessage."""
-    tool_ids = set()
+    tool_ids: set[str] = set()
 
     if not isinstance(message, AIMessage):
         return tool_ids
@@ -29,9 +31,13 @@ def _get_tool_use_ids_from_message(message) -> set[str]:
     if hasattr(message, 'tool_calls') and message.tool_calls:
         for tc in message.tool_calls:
             if isinstance(tc, dict) and 'id' in tc:
-                tool_ids.add(tc['id'])
+                tc_id = tc['id']
+                if tc_id is not None:
+                    tool_ids.add(tc_id)
             elif hasattr(tc, 'id'):
-                tool_ids.add(tc.id)
+                tc_id = tc.id
+                if tc_id is not None:
+                    tool_ids.add(tc_id)
 
     # Check content blocks (Anthropic format)
     content = message.content
@@ -39,7 +45,9 @@ def _get_tool_use_ids_from_message(message) -> set[str]:
         for block in content:
             if isinstance(block, dict):
                 if block.get('type') == 'tool_use' and 'id' in block:
-                    tool_ids.add(block['id'])
+                    block_id = block['id']
+                    if block_id is not None:
+                        tool_ids.add(block_id)
 
     return tool_ids
 
@@ -53,7 +61,7 @@ def _clean_orphaned_tool_results(messages: list) -> list:
     if not messages:
         return messages
 
-    cleaned = []
+    cleaned: list[Any] = []
     removed_count = 0
 
     for i, msg in enumerate(messages):
@@ -87,7 +95,7 @@ def _clean_orphaned_tool_results(messages: list) -> list:
     return cleaned
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def system_prompt_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Clean up messages to prevent Anthropic API errors.
 
@@ -119,4 +127,4 @@ async def system_prompt_middleware(request: ModelRequest, handler) -> ModelRespo
     if len(messages) != original_count:
         request.messages = messages
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))

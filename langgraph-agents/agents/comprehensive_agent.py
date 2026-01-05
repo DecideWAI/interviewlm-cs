@@ -18,7 +18,7 @@ Uses Sonnet model for quality over speed (~3-5 minutes).
 """
 
 from datetime import datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
@@ -31,7 +31,7 @@ from typing_extensions import TypedDict
 
 from config import generate_evaluation_thread_uuid, settings
 from middleware import SummarizationMiddleware, system_prompt_middleware
-from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
+from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model, Provider
 
 # Workspace exploration tools
 from tools.coding_tools import glob_files, grep_files, list_files, read_file
@@ -245,7 +245,7 @@ def set_model_context(context: dict) -> None:
     _current_context = context or {}
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Middleware that selects the appropriate model and converts tools.
 
@@ -255,7 +255,7 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
 
     model = create_model_from_context(
         context=_current_context,
-        default_provider=settings.comprehensive_evaluation_provider,
+        default_provider=cast(Provider, settings.comprehensive_evaluation_provider),
         default_model=settings.comprehensive_evaluation_model,
         temperature=0.3,
         max_tokens=32000,
@@ -267,18 +267,18 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
             for tool in request.tools:
                 try:
                     anthropic_tool = convert_to_anthropic_tool(tool)
-                    converted_tools.append(anthropic_tool)
+                    converted_tools.append(anthropic_tool)  # type: ignore[arg-type,unused-ignore]
                 except Exception:
-                    converted_tools.append(tool)
-            model = model.bind_tools(converted_tools)
+                    converted_tools.append(tool)  # type: ignore[arg-type]
+            model = model.bind_tools(converted_tools)  # type: ignore[arg-type,assignment]
         else:
-            model = model.bind_tools(request.tools)
+            model = model.bind_tools(request.tools)  # type: ignore[assignment]
 
     request.model = model
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Add cache_control to system prompt and messages.
 
@@ -288,7 +288,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
     - Breakpoint 2: Last message (caches entire conversation)
     """
     if not settings.enable_prompt_caching:
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     cache_control = {"type": "ephemeral"}
 
@@ -303,7 +303,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
     # 1. Add cache_control to system prompt's LAST block
     if request.system_prompt:
         if isinstance(request.system_prompt, str):
-            request.system_prompt = [
+            request.system_prompt = [  # type: ignore[assignment,misc]
                 {
                     "type": "text",
                     "text": request.system_prompt,
@@ -350,7 +350,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                         "cache_control": cache_control,
                     }
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
 # =============================================================================
@@ -375,7 +375,7 @@ def create_comprehensive_evaluation_agent_graph(use_checkpointing: bool = True):
     """
     # Create default model (will be replaced by middleware based on context)
     model = create_chat_model(
-        provider=settings.comprehensive_evaluation_provider,
+        provider=cast(Provider, settings.comprehensive_evaluation_provider),
         model=settings.comprehensive_evaluation_model,
         temperature=0.3,
         max_tokens=32000,
@@ -400,7 +400,7 @@ def create_comprehensive_evaluation_agent_graph(use_checkpointing: bool = True):
     if use_checkpointing:
         agent_kwargs["checkpointer"] = MemorySaver()
 
-    return create_agent(**agent_kwargs)
+    return create_agent(**agent_kwargs)  # type: ignore[arg-type]
 
 
 # =============================================================================
@@ -536,7 +536,7 @@ Begin your evaluation now."""
         if evaluation_result:
             # Add timing metadata
             evaluation_result["evaluationTimeMs"] = evaluation_time_ms
-            return evaluation_result
+            return cast(ComprehensiveEvaluationResult, evaluation_result)
 
         # Fallback result if agent didn't call submission tool
         return ComprehensiveEvaluationResult(

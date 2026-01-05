@@ -12,7 +12,7 @@ after all other middleware that might modify system_prompt or tools.
 """
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
@@ -50,7 +50,7 @@ def _is_anthropic_model(model: Any) -> bool:
     return False
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def anthropic_caching_middleware(
     request: ModelRequest, handler
 ) -> ModelResponse:
@@ -74,7 +74,7 @@ async def anthropic_caching_middleware(
             f"[AnthropicCaching] Skipping (is_anthropic={_is_anthropic_model(request.model)}, "
             f"enabled={settings.enable_prompt_caching})"
         )
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     logger.info("[AnthropicCaching] Applying cache_control to system prompt, tools, and messages")
 
@@ -86,7 +86,7 @@ async def anthropic_caching_middleware(
     if request.system_prompt:
         if isinstance(request.system_prompt, str):
             # Convert string to list with cache_control
-            request.system_prompt = [
+            request.system_prompt = [  # type: ignore[assignment, misc]
                 {
                     "type": "text",
                     "text": request.system_prompt,
@@ -118,7 +118,7 @@ async def anthropic_caching_middleware(
     # 2. Add cache_control to ALL tools (Anthropic caches tools together)
     # =========================================================================
     if request.tools and len(request.tools) > 0:
-        tools_with_cache = []
+        tools_with_cache: list[Any] = []
         for tool in request.tools:
             if isinstance(tool, dict):
                 # Tool is already in Anthropic format - add cache_control
@@ -170,4 +170,4 @@ async def anthropic_caching_middleware(
             )
 
     # Pass to handler
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
