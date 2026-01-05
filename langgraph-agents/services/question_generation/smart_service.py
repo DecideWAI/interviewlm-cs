@@ -11,15 +11,15 @@ Ported from: lib/services/smart-question-service.ts
 """
 
 import random
-from typing import Literal
+from typing import Any, Literal, cast
 
 from langchain_core.messages import HumanMessage
 
 from config import settings
-from services.model_factory import create_chat_model
 from services.database import get_question_generation_database
-from .prompts import build_variation_prompt
+from services.model_factory import Provider, create_chat_model
 
+from .prompts import build_variation_prompt
 
 # =============================================================================
 # Constants
@@ -149,7 +149,7 @@ class SmartQuestionService:
         total = sum(weights)
         weights = [w / total for w in weights]
 
-        selected = random.choices(questions, weights=weights, k=1)[0]
+        selected: dict[Any, Any] = random.choices(questions, weights=weights, k=1)[0]
 
         # Increment reuse count
         await db.increment_question_reuse_count(selected["id"])
@@ -195,7 +195,7 @@ class SmartQuestionService:
 
         # Call LLM (uses configured provider, defaults to Anthropic)
         model = create_chat_model(
-            provider=settings.question_generation_provider,
+            provider=cast(Provider, settings.question_generation_provider),
             model=settings.question_generation_model_fast,
             max_tokens=32000,
             temperature=0.8,  # Higher temperature for variation

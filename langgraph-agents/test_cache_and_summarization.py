@@ -17,8 +17,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from agents import create_coding_agent
-from middleware.summarization import get_summarization_stats, MESSAGE_THRESHOLD
 from config import settings
+from middleware.summarization import get_summarization_stats
+
+# MESSAGE_THRESHOLD was removed - summarization is now controlled by max_tokens_before_summary
+MESSAGE_THRESHOLD = 30  # Default threshold for testing
 
 
 async def test_caching_with_growing_conversation():
@@ -76,11 +79,11 @@ async def test_caching_with_growing_conversation():
         print(f"  Cache Rate:     {cache_rate:.1f}%")
 
         if cache_read > 0:
-            print(f"  ✓ Cache HIT")
+            print("  ✓ Cache HIT")
         elif cache_creation > 0:
-            print(f"  ✓ Cache CREATED")
+            print("  ✓ Cache CREATED")
         else:
-            print(f"  ✗ No cache activity")
+            print("  ✗ No cache activity")
 
         await asyncio.sleep(0.5)  # Small delay between requests
 
@@ -171,7 +174,7 @@ async def test_summarization():
             # After halfway point, we should start seeing summarization effects
             input_tokens = last_metadata.get("input_tokens", 0)
             if i == len(test_messages) - 1:
-                print(f"\n  Final message:")
+                print("\n  Final message:")
                 print(f"    Input tokens: {input_tokens:,}")
                 print(f"    Cache read: {cache_read:,}")
 
@@ -292,7 +295,7 @@ async def main():
     print("\n" + "=" * 70)
     print("ANTHROPIC CACHING & SUMMARIZATION TEST SUITE")
     print("=" * 70)
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  - Model: {settings.coding_agent_model}")
     print(f"  - Prompt Caching: {'ENABLED' if settings.enable_prompt_caching else 'DISABLED'}")
     print(f"  - Summarization Threshold: {MESSAGE_THRESHOLD} messages")

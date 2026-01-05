@@ -11,12 +11,12 @@ Usage:
     python analyze_benchmark.py --all              # Analyze all results in directory
 """
 
+import argparse
 import json
 import sys
-import argparse
-from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional, cast
 
 
 class BenchmarkAnalyzer:
@@ -25,10 +25,10 @@ class BenchmarkAnalyzer:
     def __init__(self, results_dir: str = "benchmark_results"):
         self.results_dir = Path(results_dir)
 
-    def load_results(self, filepath: Path) -> dict:
+    def load_results(self, filepath: Path) -> dict[Any, Any]:
         """Load results from a JSON file."""
         with open(filepath) as f:
-            return json.load(f)
+            return cast(dict[Any, Any], json.load(f))
 
     def get_latest_results(self) -> Optional[Path]:
         """Get the path to the latest benchmark results."""
@@ -190,7 +190,7 @@ class BenchmarkAnalyzer:
         }
 
         # Categorize errors
-        error_categories = {}
+        error_categories: dict[str, list[str]] = {}
         for error in errors:
             # Simple categorization based on error content
             if "timeout" in error.lower():
@@ -221,9 +221,9 @@ class BenchmarkAnalyzer:
 
         return analysis
 
-    def compare_runs(self, results1: dict, results2: dict) -> dict:
+    def compare_runs(self, results1: dict[Any, Any], results2: dict[Any, Any]) -> dict[Any, Any]:
         """Compare two benchmark runs."""
-        comparison = {
+        comparison: dict[Any, Any] = {
             "run1": {
                 "id": results1.get("run_id"),
                 "caching": results1.get("config", {}).get("enable_caching"),

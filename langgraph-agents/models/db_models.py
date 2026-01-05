@@ -7,17 +7,28 @@ Python agents to read configuration data from the shared PostgreSQL database.
 """
 
 from datetime import datetime
-from typing import Optional, List, Any
 from enum import Enum
+from typing import Any, List, Optional
 
 from sqlalchemy import (
-    Column, String, Integer, Float, Boolean, DateTime,
-    Text, ForeignKey, Index, UniqueConstraint
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, relationship
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""
+    pass
 
 
 # =============================================================================
@@ -152,7 +163,7 @@ class ModelConfig(Base):
     use_case = Column(Text)
 
     # Agent recommendations
-    recommended_for = Column(ARRAY(String), default=[])
+    recommended_for: List[str] = Column(ARRAY(String), default=[])  # type: ignore[assignment]
 
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -200,7 +211,7 @@ class RoleConfig(Base):
     description = Column(Text)
     icon = Column(String)
     default_duration = Column(Integer, default=60)
-    available_in_tiers = Column(ARRAY(String), default=[])
+    available_in_tiers: List[str] = Column(ARRAY(String), default=[])  # type: ignore[assignment]
     status = Column(String, default="active")
 
     # Multi-tenancy
@@ -319,12 +330,12 @@ class Technology(Base):
 
     # Detection patterns
     detection_patterns = Column(JSONB, default=[])
-    file_extensions = Column(ARRAY(String), default=[])
-    import_patterns = Column(ARRAY(String), default=[])
-    content_patterns = Column(ARRAY(String), default=[])
+    file_extensions: List[str] = Column(ARRAY(String), default=[])  # type: ignore[assignment]
+    import_patterns: List[str] = Column(ARRAY(String), default=[])  # type: ignore[assignment]
+    content_patterns: List[str] = Column(ARRAY(String), default=[])  # type: ignore[assignment]
 
     # Relationships
-    paired_with_ids = Column(ARRAY(String), default=[])
+    paired_with_ids: List[str] = Column(ARRAY(String), default=[])  # type: ignore[assignment]
 
     # Role-based relevance
     suggested_for_roles = Column(JSONB)

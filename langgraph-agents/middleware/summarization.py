@@ -13,7 +13,7 @@ temporal gradient approach and interview-specific optimizations.
 
 import uuid
 from collections.abc import Callable, Iterable
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langchain_core.messages import (
@@ -29,8 +29,7 @@ from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langgraph.runtime import Runtime
 
 from config import settings
-from services.model_factory import create_chat_model
-
+from services.model_factory import Provider, create_chat_model
 
 # =============================================================================
 # Type Aliases
@@ -236,7 +235,7 @@ class SummarizationMiddleware(AgentMiddleware):
         # max_tokens=4000 enforces the non-negotiable 4k token limit in prompt
         # Uses configured summarization provider (defaults to Anthropic)
         self.model = create_chat_model(
-            provider=settings.summarization_provider,
+            provider=cast(Provider, settings.summarization_provider),
             model=model_name,
             temperature=0.2,
             max_tokens=4000,
@@ -515,14 +514,17 @@ class SummarizationMiddleware(AgentMiddleware):
             return []
 
         try:
-            return trim_messages(
-                messages,
-                max_tokens=max_tokens,
-                token_counter=self.token_counter,
-                start_on="human",
-                strategy="last",
-                allow_partial=True,
-                include_system=True,
+            return cast(
+                list[AnyMessage],
+                trim_messages(
+                    messages,
+                    max_tokens=max_tokens,
+                    token_counter=self.token_counter,
+                    start_on="human",
+                    strategy="last",
+                    allow_partial=True,
+                    include_system=True,
+                ),
             )
         except Exception:  # noqa: BLE001
             return messages[-_DEFAULT_FALLBACK_MESSAGE_COUNT:]

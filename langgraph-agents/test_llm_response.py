@@ -8,7 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from config import settings
 
 
@@ -85,7 +86,7 @@ async def test_response():
     if hasattr(response1, 'response_metadata'):
         print(f"response_metadata keys: {list(response1.response_metadata.keys())}")
         usage = response1.response_metadata.get('usage', {})
-        print(f"\nUsage from response_metadata:")
+        print("\nUsage from response_metadata:")
         for key, value in usage.items():
             print(f"  {key}: {value}")
 
@@ -107,7 +108,7 @@ async def test_response():
 
     if hasattr(response2, 'response_metadata'):
         usage = response2.response_metadata.get('usage', {})
-        print(f"\nUsage from response_metadata:")
+        print("\nUsage from response_metadata:")
         for key, value in usage.items():
             print(f"  {key}: {value}")
 

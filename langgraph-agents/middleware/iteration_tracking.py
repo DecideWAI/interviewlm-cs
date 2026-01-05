@@ -10,15 +10,15 @@ Uses AgentMiddleware.before_model to persist state updates.
 """
 
 import logging
-from collections import Counter
-from typing import Any
 import uuid
+from collections import Counter
+from typing import Any, cast
 
 from langchain.agents.middleware.types import (
     AgentMiddleware,
     AgentState,
 )
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ def _get_step_count(state: AgentState) -> int:
 
 def _get_step_budget(state: AgentState, default: int = DEFAULT_STEP_BUDGET) -> int:
     """Get the step budget for this task."""
-    return state.get("step_budget", default)
+    return cast(int, state.get("step_budget", default))
 
 
 def _get_highest_crossed_threshold(used: int, total: int, last_threshold: float) -> tuple[float, str | None]:
@@ -200,12 +200,12 @@ class IterationTrackingMiddleware(AgentMiddleware):
             return None
 
         step_count = _get_step_count(state)
-        step_budget = state.get("step_budget", self.step_budget)
-        last_warning_threshold = state.get("last_warning_threshold", 0.0)
-        warnings_issued = state.get("warnings_issued", [])
+        step_budget = cast(int, state.get("step_budget", self.step_budget))
+        last_warning_threshold = cast(float, state.get("last_warning_threshold", 0.0))
+        warnings_issued = cast(list[str], state.get("warnings_issued", []))
 
-        injected_messages = []
-        state_updates = {}
+        injected_messages: list[HumanMessage] = []
+        state_updates: dict[str, Any] = {}
 
         # =====================================================================
         # 1. Progressive Warnings
@@ -293,7 +293,7 @@ class IterationTrackingMiddleware(AgentMiddleware):
         # 4. Return State Updates
         # =====================================================================
         if injected_messages or state_updates:
-            result = {**state_updates}
+            result: dict[str, Any] = {**state_updates}
             if injected_messages:
                 result["messages"] = injected_messages
             result["step_count"] = step_count  # Always persist current count

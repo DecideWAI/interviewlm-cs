@@ -6,8 +6,8 @@ Note: LangGraph state uses TypedDict (see state.py), not Pydantic models.
 """
 
 from typing import Literal
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field
 
 # =============================================================================
 # IRT (Item Response Theory) Models

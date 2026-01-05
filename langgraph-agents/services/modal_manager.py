@@ -16,14 +16,15 @@ Each session gets an isolated container with:
 - Pre-installed: Python 3.11, Node 20, Go 1.21, Rust
 """
 
+import asyncio
+import logging
 import os
 import re
-import asyncio
 import time
-import logging
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from datetime import datetime
-from typing import Any, Optional, Dict
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from typing import Any, Dict, Optional, cast
 
 from config import settings
 
@@ -134,7 +135,7 @@ def get_sandbox_config_sync(language: str) -> Dict[str, Any]:
         config = _run_async(config_service.get_sandbox_config(language))
         if config:
             logger.debug(f"Using DB sandbox config for {language}: {config}")
-            return config
+            return cast(dict[str, Any], config)
     except Exception as e:
         logger.warning(f"Failed to get sandbox config from DB: {e}")
 
@@ -174,7 +175,7 @@ def get_image_map_sync() -> Dict[str, str]:
                 image_map['golang'] = image_map['go']
 
             logger.debug(f"Using DB image map: {image_map}")
-            return image_map
+            return cast(dict[str, str], image_map)
     except Exception as e:
         logger.warning(f"Failed to get image map from DB: {e}")
 
@@ -192,7 +193,7 @@ try:
     MODAL_AVAILABLE = True
 except ImportError:
     MODAL_AVAILABLE = False
-    modal = None
+    modal = None  # type: ignore[assignment]
 
 # Database for sandbox persistence
 try:
@@ -200,7 +201,7 @@ try:
     ASYNCPG_AVAILABLE = True
 except ImportError:
     ASYNCPG_AVAILABLE = False
-    asyncpg = None
+    asyncpg = None  # type: ignore[assignment,unused-ignore]
 
 # Redis for distributed locking (sync - for backward compat)
 try:
@@ -208,7 +209,7 @@ try:
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
-    redis = None
+    redis = None  # type: ignore[assignment]
 
 # Async Redis for non-blocking operations in ASGI context
 try:
@@ -216,7 +217,7 @@ try:
     REDIS_ASYNC_AVAILABLE = True
 except ImportError:
     REDIS_ASYNC_AVAILABLE = False
-    redis_async = None
+    redis_async = None  # type: ignore[assignment]
 
 # =============================================================================
 # Thread Pool for Timeouts
@@ -277,6 +278,8 @@ def run_with_retry(func, *args, max_retries: int = 2, timeout: float = TOOL_TIME
                 time.sleep(1 * (attempt + 1))  # Exponential backoff
                 continue
             raise
+    # This should never happen as we always raise in the loop, but satisfy type checker
+    assert last_error is not None
     raise last_error
 
 
@@ -300,7 +303,7 @@ def _get_sandbox_lock(sandbox_id: str) -> threading.Lock:
         return _sandbox_locks[sandbox_id]
 
 
-def run_in_sandbox(sandbox, *args, sandbox_id: str = None, timeout: int = 60, **kwargs):
+def run_in_sandbox(sandbox, *args, sandbox_id: str | None = None, timeout: int = 60, **kwargs):
     """
     Run a command in a Modal Sandbox with serialized access.
 
@@ -860,7 +863,7 @@ class SandboxManager:
                     session_id
                 )
                 if row and row["volume_id"]:
-                    return row["volume_id"]
+                    return cast(str, row["volume_id"])
 
                 # Fallback to candidate ID
                 row = await conn.fetchrow(
@@ -978,7 +981,7 @@ class SandboxManager:
         Uses exponential backoff for retries to handle cold sandbox wake-up.
         Cold sandboxes can take 2-5+ seconds to wake up.
         """
-        last_error = None
+        last_error: TimeoutError | Exception | None = None
 
         for attempt in range(RECONNECT_MAX_RETRIES + 1):
             try:
@@ -1207,7 +1210,7 @@ class SandboxManager:
         """
         try:
             proc = run_in_sandbox(sandbox, "echo", "alive", sandbox_id=sandbox_id, timeout=10)
-            return proc.returncode == 0
+            return cast(bool, proc.returncode == 0)
         except Exception as e:
             error_msg = str(e).lower()
             if any(x in error_msg for x in ['finished', 'terminated', 'status=', 'permission_denied']):
@@ -1282,7 +1285,7 @@ class SandboxManager:
                 if session_id in cls._sandboxes:
                     existing_sandbox = cls._sandboxes[session_id]
                     existing_id = cls._sandbox_ids.get(session_id)
-                    if existing_id != sandbox_id and cls._is_sandbox_alive(existing_sandbox, existing_id):
+                    if existing_id is not None and existing_id != sandbox_id and cls._is_sandbox_alive(existing_sandbox, existing_id):
                         logger.info(f"[SandboxManager] Another process recreated sandbox {existing_id}")
                         return existing_sandbox
 

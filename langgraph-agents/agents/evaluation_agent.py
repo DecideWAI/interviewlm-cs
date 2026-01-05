@@ -11,52 +11,57 @@ Uses langchain.agents.create_agent with native middleware support for
 Anthropic prompt caching.
 """
 
-from typing import Annotated, Optional, Callable, AsyncGenerator, Any
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated, Any, AsyncGenerator, Callable, Optional, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
+from config import generate_evaluation_thread_uuid, settings
+from middleware import SummarizationMiddleware, system_prompt_middleware
+from services.model_factory import (
+    Provider,
+    create_chat_model,
+    create_model_from_context,
+    is_anthropic_model,
+)
 
 # Workspace exploration tools (from coding agent)
 # These connect to the Modal sandbox via volume_id stored in database
 from tools.coding_tools import (
+    glob_files,
+    grep_files,
     list_files,
     read_file,
-    grep_files,
-    glob_files,
 )
+
 # Evaluation tools (DB query + analysis + storage)
 from tools.evaluation_tools import (
-    # DB query tools
-    get_session_metadata,
-    get_claude_interactions,
-    get_test_results,
-    get_code_snapshots,
+    ANALYSIS_TOOLS,
+    DB_QUERY_TOOLS,
+    EVALUATION_TOOLS,
+    STORAGE_TOOLS,
+    analyze_ai_collaboration,
     # Analysis tools
     analyze_code_quality,
-    analyze_problem_solving,
-    analyze_ai_collaboration,
     analyze_communication,
+    analyze_problem_solving,
+    get_claude_interactions,
+    get_code_snapshots,
+    # DB query tools
+    get_session_metadata,
+    get_test_results,
+    send_evaluation_progress,
     # Storage tools
     store_evaluation_result,
-    send_evaluation_progress,
-    EVALUATION_TOOLS,
-    DB_QUERY_TOOLS,
-    ANALYSIS_TOOLS,
-    STORAGE_TOOLS,
 )
-from config import settings, generate_evaluation_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware
-
 
 # =============================================================================
 # Combined Tools for Agentic Evaluation
@@ -242,7 +247,7 @@ def set_model_context(context: dict) -> None:
     _current_context = context or {}
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Middleware that selects the appropriate model and converts tools.
 
@@ -252,7 +257,7 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
 
     model = create_model_from_context(
         context=_current_context,
-        default_provider=settings.evaluation_agent_provider,
+        default_provider=cast(Provider, settings.evaluation_agent_provider),
         default_model=settings.evaluation_agent_model,
         temperature=0.3,
         max_tokens=32000,
@@ -264,29 +269,29 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
             for tool in request.tools:
                 try:
                     anthropic_tool = convert_to_anthropic_tool(tool)
-                    converted_tools.append(anthropic_tool)
+                    converted_tools.append(anthropic_tool)  # type: ignore[arg-type,unused-ignore]
                 except Exception:
-                    converted_tools.append(tool)
-            model = model.bind_tools(converted_tools)
+                    converted_tools.append(tool)  # type: ignore[arg-type]
+            model = model.bind_tools(converted_tools)  # type: ignore[arg-type,assignment]
         else:
-            model = model.bind_tools(request.tools)
+            model = model.bind_tools(request.tools)  # type: ignore[assignment]
 
     request.model = model
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Add cache_control to system prompt, tools, and messages."""
     if not settings.enable_prompt_caching:
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     cache_control = {"type": "ephemeral"}
 
     # Cache system prompt
     if request.system_prompt:
         if isinstance(request.system_prompt, str):
-            request.system_prompt = [
+            request.system_prompt = [  # type: ignore[assignment,misc]
                 {"type": "text", "text": request.system_prompt, "cache_control": cache_control}
             ]
         elif isinstance(request.system_prompt, list) and len(request.system_prompt) > 0:
@@ -319,7 +324,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                         "cache_control": cache_control,
                     }
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
 # =============================================================================
@@ -362,7 +367,7 @@ def create_evaluation_agent_graph(use_checkpointing: bool = True):
     """
     # Create default model (will be replaced by middleware based on context)
     model = create_chat_model(
-        provider=settings.evaluation_agent_provider,
+        provider=cast(Provider, settings.evaluation_agent_provider),
         model=settings.evaluation_agent_model,
         temperature=0.3,
         max_tokens=32000,
@@ -387,7 +392,7 @@ def create_evaluation_agent_graph(use_checkpointing: bool = True):
     if use_checkpointing:
         agent_kwargs["checkpointer"] = MemorySaver()
 
-    return create_agent(**agent_kwargs)
+    return create_agent(**agent_kwargs)  # type: ignore[arg-type]
 
 
 # =============================================================================
@@ -617,7 +622,7 @@ Session ID: {session_id}
             )
 
             if callbacks and callbacks.on_complete:
-                callbacks.on_complete(evaluation_result)
+                callbacks.on_complete(cast(dict, evaluation_result))
 
             yield {"type": "complete", "result": evaluation_result}
 

@@ -14,10 +14,10 @@ User context is passed via custom headers for audit trails:
 - X-Request-Id: Correlation ID for distributed tracing
 """
 
-import os
 import logging
+import os
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from langgraph_sdk import Auth
@@ -61,7 +61,7 @@ async def verify_google_id_token(token: str) -> Optional[dict]:
                 params={"id_token": token}
             )
             if resp.status_code == 200:
-                token_info = resp.json()
+                token_info: dict[str, Any] = resp.json()
 
                 # Evict oldest entries if cache is full (FIFO eviction)
                 if len(_token_cache) >= _CACHE_MAX_SIZE:
@@ -149,7 +149,6 @@ async def authenticate(
             logger.info(f"[AUTH] Google IAM auth successful: {email}")
             return {
                 "identity": email,
-                "email": email,
                 "is_authenticated": True,
             }
         else:

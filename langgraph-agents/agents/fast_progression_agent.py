@@ -26,28 +26,32 @@ Or for System Design:
 - Communication (10 pts)
 """
 
-from typing import Annotated, Literal
 from datetime import datetime
+from typing import Annotated, Literal, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
-from tools.coding_tools import read_file, list_files, grep_files
+from config import generate_question_eval_thread_uuid, settings
+from middleware import SummarizationMiddleware, system_prompt_middleware
+from services.model_factory import (
+    Provider,
+    create_chat_model,
+    create_model_from_context,
+    is_anthropic_model,
+)
+from tools.coding_tools import grep_files, list_files, read_file
 from tools.fast_evaluation_tools import (
+    FAST_EVALUATION_SUBMISSION_TOOLS,
     submit_fast_evaluation,
     submit_system_design_evaluation,
-    FAST_EVALUATION_SUBMISSION_TOOLS,
 )
-from config import settings, generate_question_eval_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware
-
 
 # =============================================================================
 # State Schema
@@ -208,7 +212,7 @@ def set_model_context(context: dict) -> None:
     _current_context = context or {}
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Middleware that selects the appropriate model and converts tools.
 
@@ -218,7 +222,7 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
 
     model = create_model_from_context(
         context=_current_context,
-        default_provider=settings.fast_progression_provider,
+        default_provider=cast(Provider, settings.fast_progression_provider),
         default_model=settings.fast_progression_agent_model,
         temperature=0.2,  # Lower for consistency
         max_tokens=2048,  # Reduced for speed
@@ -230,18 +234,18 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
             for tool in request.tools:
                 try:
                     anthropic_tool = convert_to_anthropic_tool(tool)
-                    converted_tools.append(anthropic_tool)
+                    converted_tools.append(anthropic_tool)  # type: ignore[arg-type,unused-ignore]
                 except Exception:
-                    converted_tools.append(tool)
-            model = model.bind_tools(converted_tools)
+                    converted_tools.append(tool)  # type: ignore[arg-type]
+            model = model.bind_tools(converted_tools)  # type: ignore[arg-type,assignment]
         else:
-            model = model.bind_tools(request.tools)
+            model = model.bind_tools(request.tools)  # type: ignore[assignment]
 
     request.model = model
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Add cache_control to system prompt and messages.
 
@@ -251,7 +255,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
     - Breakpoint 2: Last message (caches entire conversation)
     """
     if not settings.enable_prompt_caching:
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     cache_control = {"type": "ephemeral"}
 
@@ -266,7 +270,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
     # 1. Add cache_control to system prompt's LAST block
     if request.system_prompt:
         if isinstance(request.system_prompt, str):
-            request.system_prompt = [
+            request.system_prompt = [  # type: ignore[assignment,misc]
                 {
                     "type": "text",
                     "text": request.system_prompt,
@@ -313,7 +317,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
                         "cache_control": cache_control,
                     }
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
 # =============================================================================
@@ -338,7 +342,7 @@ def create_fast_progression_agent_graph(use_checkpointing: bool = True):
     """
     # Create default model (will be replaced by middleware based on context)
     model = create_chat_model(
-        provider=settings.fast_progression_provider,
+        provider=cast(Provider, settings.fast_progression_provider),
         model=settings.fast_progression_agent_model,
         temperature=0.2,
         max_tokens=2048,
@@ -363,7 +367,7 @@ def create_fast_progression_agent_graph(use_checkpointing: bool = True):
     if use_checkpointing:
         agent_kwargs["checkpointer"] = MemorySaver()
 
-    return create_agent(**agent_kwargs)
+    return create_agent(**agent_kwargs)  # type: ignore[arg-type]
 
 
 # =============================================================================
@@ -562,7 +566,7 @@ Be quick and decisive. Score based on code quality and test results."""
             # Override assessmentType from state
             evaluation_result["assessmentType"] = assessment_type
 
-            return evaluation_result
+            return cast(FastEvaluationResult, evaluation_result)
 
         # Fallback result if agent didn't call submission tool
         test_pass_rate = (tests_passed / tests_total * 100) if tests_total > 0 else 0

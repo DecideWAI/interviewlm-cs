@@ -43,6 +43,11 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 pytest-cov>=4.0.0
 
+# Linting and type checking
+ruff>=0.8.0
+mypy>=1.13.0
+types-redis>=4.6.0
+
 # PostgreSQL checkpointing for state persistence
 langgraph-checkpoint-postgres>=2.0.0
 psycopg[binary,pool]>=3.1.0

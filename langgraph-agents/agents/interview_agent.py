@@ -8,18 +8,20 @@ NOTE: This agent does NOT use LLM calls - it's a pure state machine for IRT
 calculations. Therefore it uses StateGraph directly rather than create_agent.
 """
 
-from typing import Annotated, Literal
-from datetime import datetime
+from __future__ import annotations
+
+import logging
 import math
 import os
 import threading
-import logging
-import httpx
+from datetime import datetime
+from typing import Annotated, Any, Literal, cast
 
-from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
-from langgraph.checkpoint.memory import MemorySaver
+import httpx
 from langchain_core.messages import BaseMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from config import generate_interview_thread_uuid
@@ -34,7 +36,7 @@ NEXTJS_INTERNAL_URL = os.environ.get("NEXTJS_INTERNAL_URL", "http://localhost:30
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-internal-key")
 
 
-def emit_metrics_event(session_id: str, metrics: dict):
+def emit_metrics_event(session_id: str, metrics: dict[str, Any] | InterviewMetrics):
     """
     Emit session.metrics_updated event to persist IRT metrics (fire-and-forget).
 
@@ -297,6 +299,7 @@ async def process_event(state: InterviewAgentState) -> dict:
     event_data = state.get("current_event_data", {})
     metrics = state.get("metrics")
     session_id = state.get("session_id")
+    assert session_id is not None, "session_id is required in state"
 
     if not metrics:
         metrics = create_default_metrics(session_id)
@@ -421,7 +424,7 @@ class InterviewAgentGraph:
         config = {"configurable": {"thread_id": thread_uuid}}
 
         result = await self.graph.ainvoke(initial_state, config)
-        return result["metrics"]
+        return cast(InterviewMetrics, result["metrics"])
 
     async def get_metrics(self, session_id: str) -> InterviewMetrics | None:
         """Get current metrics for a session."""
@@ -430,7 +433,7 @@ class InterviewAgentGraph:
         config = {"configurable": {"thread_id": thread_uuid}}
         state = await self.graph.aget_state(config)
         if state and state.values:
-            return state.values.get("metrics")
+            return cast(InterviewMetrics | None, state.values.get("metrics"))
         return None
 
 

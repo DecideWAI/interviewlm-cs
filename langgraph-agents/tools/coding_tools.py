@@ -10,26 +10,27 @@ Each candidate gets their own isolated container where they can:
 SandboxManager has been extracted to services/modal_manager.py for better modularity.
 """
 
-import re
-import os
+import asyncio
 import base64
 import logging
-import asyncio
+import os
+import re
 import threading
-import httpx
-from typing import Any, List
 from pathlib import Path
-from langchain_core.tools import tool
+from typing import Any, List, cast
+
+import httpx
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
 
 # Import SandboxManager and helpers from services
 from services import (
-    SandboxManager,
-    run_in_sandbox,
-    run_with_timeout,
-    run_with_retry,
-    get_or_recreate_sandbox,
     MODAL_AVAILABLE,
+    SandboxManager,
+    get_or_recreate_sandbox,
+    run_in_sandbox,
+    run_with_retry,
+    run_with_timeout,
 )
 
 # Import question tools for ask_question capability
@@ -53,8 +54,8 @@ sandbox_mgr = SandboxManager
 # =============================================================================
 
 _config_service = None
-_cached_blocked_patterns: List[str] = None
-_cached_workspace_restrictions: List[str] = None
+_cached_blocked_patterns: List[str] | None = None
+_cached_workspace_restrictions: List[str] | None = None
 _initialized: bool = False
 
 
@@ -171,7 +172,7 @@ def get_blocked_patterns_sync() -> List[str]:
     try:
         config_service = _get_config_service()
         if config_service:
-            patterns = _run_async(config_service.get_blocked_patterns())
+            patterns = cast(List[str], _run_async(config_service.get_blocked_patterns()))
             if patterns:
                 _cached_blocked_patterns = patterns
                 logger.debug(f"Using DB blocked patterns: {len(patterns)} patterns")
@@ -207,7 +208,7 @@ def get_workspace_restrictions_sync() -> List[str]:
         if config_service:
             restrictions = _run_async(config_service.get_security_config("workspace_restrictions"))
             if restrictions and isinstance(restrictions, dict):
-                blocked_paths = restrictions.get("blockedPaths", [])
+                blocked_paths = cast(List[str], restrictions.get("blockedPaths", []))
                 if blocked_paths:
                     _cached_workspace_restrictions = blocked_paths
                     logger.debug(f"Using DB workspace restrictions: {len(blocked_paths)} paths")
@@ -230,7 +231,7 @@ def is_command_allowed(command: str) -> tuple[bool, str]:
         # Try regex match first (DB stores regex patterns)
         try:
             if re.search(pattern, command_lower, re.IGNORECASE):
-                return False, f"Command blocked by security policy"
+                return False, "Command blocked by security policy"
         except re.error:
             # If not valid regex, try simple string match
             if pattern.lower() in command_lower:
@@ -263,8 +264,8 @@ def emit_event_fire_and_forget(
     event_type: str,
     origin: str,
     data: dict,
-    question_index: int = None,
-    file_path: str = None,
+    question_index: int | None = None,
+    file_path: str | None = None,
     checkpoint: bool = False,
 ):
     """
@@ -324,10 +325,10 @@ def emit_event_fire_and_forget(
     thread.start()
 
 
-def get_session_id(config: dict) -> str:
+def get_session_id(config: RunnableConfig | dict) -> str:
     """Get the session ID from config for event emission."""
-    configurable = config.get("configurable", {})
-    return configurable.get("session_id")
+    configurable = config.get("configurable", {})  # type: ignore[union-attr,unused-ignore]
+    return cast(str, configurable.get("session_id"))
 
 
 def sanitize_output(text: str, max_size: int = 1000) -> str:
@@ -346,16 +347,16 @@ def sanitize_output(text: str, max_size: int = 1000) -> str:
     return text
 
 
-def get_sandbox_id(config: dict) -> str:
+def get_sandbox_id(config: RunnableConfig | dict) -> str:
     """
     Get the sandbox ID from config.
     Prefers candidate_id (used by TypeScript/Next.js) over session_id.
     This ensures the evaluation agent accesses the same sandbox as the interview.
     """
-    configurable = config.get("configurable", {})
+    configurable = config.get("configurable", {})  # type: ignore[union-attr,unused-ignore]
     # candidate_id is the primary key used by TypeScript for Modal sandboxes
     # session_id (SessionRecording.id) is used for DB queries
-    return configurable.get("candidate_id") or configurable.get("session_id", "default")
+    return cast(str, configurable.get("candidate_id") or configurable.get("session_id", "default"))
 
 
 # =============================================================================
@@ -537,7 +538,7 @@ def edit_file(
         # Check uniqueness
         occurrences = content.count(old_string)
         if occurrences == 0:
-            return {"success": False, "error": f"String not found in file"}
+            return {"success": False, "error": "String not found in file"}
         if occurrences > 1:
             return {"success": False, "error": f"String appears {occurrences} times. Add more context."}
 
@@ -682,13 +683,13 @@ def list_files(
     sandbox_id = get_sandbox_id(config)
     try:
         # Use timeout wrapper to prevent hanging (matches TypeScript implementation)
-        return run_with_timeout(
+        return cast(dict[str, Any], run_with_timeout(
             _list_files_internal,
             sandbox_id,
             path,
             limit,
             timeout=TOOL_TIMEOUT_SECONDS,
-        )
+        ))
     except TimeoutError as e:
         return {"success": False, "error": str(e), "files": []}
     except Exception as e:

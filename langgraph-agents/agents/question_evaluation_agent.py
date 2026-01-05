@@ -16,33 +16,36 @@ Anthropic prompt caching.
 """
 
 import json
-from typing import Annotated, Optional, Literal
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Annotated, Any, Literal, Optional, cast
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import wrap_model_call
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_anthropic import convert_to_anthropic_tool
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
-from langgraph.graph.message import add_messages
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from services.model_factory import create_chat_model, create_model_from_context, is_anthropic_model
-
+from config import generate_question_eval_thread_uuid, settings
+from middleware import SummarizationMiddleware, system_prompt_middleware
+from services.model_factory import (
+    Provider,
+    create_chat_model,
+    create_model_from_context,
+    is_anthropic_model,
+)
 from tools.coding_tools import (
-    read_file,
-    list_files,
-    run_tests,
-    grep_files,
-    glob_files,
     get_environment_info,
+    glob_files,
+    grep_files,
+    list_files,
+    read_file,
+    run_tests,
 )
 from tools.evaluation_tools import submit_question_evaluation
-from config import settings, generate_question_eval_thread_uuid
-from middleware import SummarizationMiddleware, system_prompt_middleware
-
 
 # =============================================================================
 # State Schema (LangGraph v1 style)
@@ -219,7 +222,7 @@ def set_model_context(context: dict) -> None:
     _current_context = context or {}
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def model_selection_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Middleware that selects the appropriate model and converts tools.
 
@@ -229,7 +232,7 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
 
     model = create_model_from_context(
         context=_current_context,
-        default_provider=settings.evaluation_agent_provider,
+        default_provider=cast(Provider, settings.evaluation_agent_provider),
         default_model=settings.evaluation_agent_model,
         temperature=0.3,
         max_tokens=32000,
@@ -241,29 +244,29 @@ async def model_selection_middleware(request: ModelRequest, handler) -> ModelRes
             for tool in request.tools:
                 try:
                     anthropic_tool = convert_to_anthropic_tool(tool)
-                    converted_tools.append(anthropic_tool)
+                    converted_tools.append(anthropic_tool)  # type: ignore[arg-type,unused-ignore]
                 except Exception:
-                    converted_tools.append(tool)
-            model = model.bind_tools(converted_tools)
+                    converted_tools.append(tool)  # type: ignore[arg-type]
+            model = model.bind_tools(converted_tools)  # type: ignore[arg-type,assignment]
         else:
-            model = model.bind_tools(request.tools)
+            model = model.bind_tools(request.tools)  # type: ignore[assignment]
 
     request.model = model
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
-@wrap_model_call
+@wrap_model_call  # type: ignore[arg-type]
 async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelResponse:
     """Add cache_control to system prompt, tools, and messages."""
     if not settings.enable_prompt_caching:
-        return await handler(request)
+        return cast(ModelResponse, await handler(request))
 
     cache_control = {"type": "ephemeral"}
 
     # Cache system prompt
     if request.system_prompt:
         if isinstance(request.system_prompt, str):
-            request.system_prompt = [
+            request.system_prompt = [  # type: ignore[assignment,misc]
                 {"type": "text", "text": request.system_prompt, "cache_control": cache_control}
             ]
         elif isinstance(request.system_prompt, list) and len(request.system_prompt) > 0:
@@ -277,7 +280,7 @@ async def anthropic_caching_middleware(request: ModelRequest, handler) -> ModelR
         if isinstance(last_tool, dict):
             last_tool["cache_control"] = cache_control
 
-    return await handler(request)
+    return cast(ModelResponse, await handler(request))
 
 
 # =============================================================================
@@ -307,7 +310,7 @@ def parse_evaluation_json(response_text: str) -> dict | None:
     if start_idx != -1 and end_idx > start_idx:
         json_text = json_text[start_idx:end_idx]
         try:
-            return json.loads(json_text)
+            return cast(dict[Any, Any] | None, json.loads(json_text))
         except json.JSONDecodeError:
             return None
     return None
@@ -396,7 +399,7 @@ def create_question_evaluation_agent_graph(
     """
     # Create default model (will be replaced by middleware based on context)
     model = create_chat_model(
-        provider=settings.evaluation_agent_provider,
+        provider=cast(Provider, settings.evaluation_agent_provider),
         model=settings.evaluation_agent_model,
         temperature=0.3,
         max_tokens=32000,
@@ -425,7 +428,7 @@ def create_question_evaluation_agent_graph(
     if use_checkpointing:
         agent_kwargs["checkpointer"] = MemorySaver()
 
-    return create_agent(**agent_kwargs)
+    return create_agent(**agent_kwargs)  # type: ignore[arg-type]
 
 
 # =============================================================================
@@ -626,7 +629,7 @@ The evaluation is NOT complete until you call this tool with all scores and feed
             if "passed" not in evaluation_result:
                 evaluation_result["passed"] = evaluation_result.get("overall_score", 0) >= passing_threshold
 
-            return evaluation_result
+            return cast(QuestionEvaluationResult, evaluation_result)
 
         # Fallback: Try to parse from messages (backwards compatibility)
         messages = result.get("messages", [])

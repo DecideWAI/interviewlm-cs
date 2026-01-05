@@ -8,28 +8,33 @@ Resolution order:
 3. Hardcoded fallback (for migration period)
 """
 
-from typing import Any, Optional, Dict, List
-from datetime import datetime, timedelta
-import logging
 import asyncio
+import logging
+from datetime import datetime, timedelta
 from functools import lru_cache
+from typing import Any, Dict, List, Optional, cast
 
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import selectinload
 
 from config.settings import settings
 from models.db_models import (
-    SecurityConfig,
-    ModelConfig,
-    SandboxConfig,
-    RoleConfig,
-    SeniorityConfig,
     ComplexityProfile,
-    Technology,
     ConfigCategory,
     ConfigItem,
     ConfigOverride,
+    ModelConfig,
+    RoleConfig,
+    SandboxConfig,
+    SecurityConfig,
+    SeniorityConfig,
+    Technology,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,8 +66,8 @@ class ConfigService:
             db_url = db_url.replace("postgres://", "postgresql+asyncpg://")
 
         self.database_url = db_url
-        self._engine = None
-        self._session_factory = None
+        self._engine: Optional[AsyncEngine] = None
+        self._session_factory: Optional[async_sessionmaker[AsyncSession]] = None
         self._initialized = False
 
     async def _ensure_initialized(self) -> None:
@@ -80,6 +85,11 @@ class ConfigService:
                 expire_on_commit=False,
             )
             self._initialized = True
+
+    def _get_session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """Get session factory (must call _ensure_initialized first)."""
+        assert self._session_factory is not None, "Database not initialized"
+        return self._session_factory
 
     @classmethod
     def get_instance(cls) -> "ConfigService":
@@ -130,7 +140,7 @@ class ConfigService:
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             result = await session.execute(
                 select(SecurityConfig).where(SecurityConfig.config_type == config_type)
             )
@@ -169,11 +179,11 @@ class ConfigService:
         cache_key = f"model:{model_id}"
         cached = self._get_cache(cache_key)
         if cached is not None:
-            return cached
+            return cast(Optional[Dict[str, Any]], cached)
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             result = await session.execute(
                 select(ModelConfig)
                 .where(ModelConfig.model_id == model_id)
@@ -204,11 +214,11 @@ class ConfigService:
         cache_key = "models:all"
         cached = self._get_cache(cache_key)
         if cached is not None:
-            return cached
+            return cast(List[Dict[str, Any]], cached)
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             result = await session.execute(
                 select(ModelConfig).where(ModelConfig.is_active == True)
             )
@@ -238,11 +248,11 @@ class ConfigService:
         cache_key = f"sandbox:{language}"
         cached = self._get_cache(cache_key)
         if cached is not None:
-            return cached
+            return cast(Optional[Dict[str, Any]], cached)
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             # Try specific language first
             result = await session.execute(
                 select(SandboxConfig)
@@ -279,17 +289,17 @@ class ConfigService:
         cache_key = "sandbox:image_map"
         cached = self._get_cache(cache_key)
         if cached is not None:
-            return cached
+            return cast(Dict[str, str], cached)
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             result = await session.execute(
                 select(SandboxConfig).where(SandboxConfig.is_active == True)
             )
             configs = result.scalars().all()
 
-            value = {c.language: c.docker_image for c in configs}
+            value: Dict[str, str] = {str(c.language): str(c.docker_image) for c in configs}
             self._set_cache(cache_key, value)
             return value
 
@@ -312,11 +322,11 @@ class ConfigService:
         cache_key = f"complexity:{role}:{seniority}:{assessment_type}:{organization_id or 'system'}"
         cached = self._get_cache(cache_key)
         if cached is not None:
-            return cached
+            return cast(Optional[Dict[str, Any]], cached)
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             # Try org-specific first if org_id provided
             profile = None
             if organization_id:
@@ -378,11 +388,11 @@ class ConfigService:
         cache_key = f"tech:{category or 'all'}:{organization_id or 'system'}"
         cached = self._get_cache(cache_key)
         if cached is not None:
-            return cached
+            return cast(List[Dict[str, Any]], cached)
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             query = select(Technology).where(Technology.is_active == True)
 
             if category:
@@ -429,11 +439,11 @@ class ConfigService:
         cache_key = f"seniority:{seniority_id}:{organization_id or 'system'}"
         cached = self._get_cache(cache_key)
         if cached is not None:
-            return cached
+            return cast(Optional[Dict[str, Any]], cached)
 
         await self._ensure_initialized()
 
-        async with self._session_factory() as session:
+        async with self._get_session_factory()() as session:
             # Try org-specific first
             config = None
             if organization_id:

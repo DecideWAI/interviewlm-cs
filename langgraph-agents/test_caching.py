@@ -12,9 +12,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage, HumanMessage
-from config import settings
+from langchain_core.messages import HumanMessage, SystemMessage
 
+from config import settings
 
 LONG_SYSTEM_PROMPT = """You are a senior software engineer helping candidates during technical interviews.
 
@@ -47,7 +47,7 @@ async def test_caching():
     extra_headers = {}
     if settings.enable_prompt_caching:
         extra_headers["anthropic-beta"] = "prompt-caching-2024-07-31"
-        print(f"Beta Header: anthropic-beta=prompt-caching-2024-07-31")
+        print("Beta Header: anthropic-beta=prompt-caching-2024-07-31")
 
     llm = ChatAnthropic(
         model=settings.coding_agent_model,
@@ -156,7 +156,7 @@ async def test_caching():
         print(f"  - Request 2: Cache hit ({cache_read_2} tokens)")
     elif cache_read_1 > 0 and cache_read_2 > 0:
         print("\n✓ CACHING IS WORKING (cache already existed)")
-        print(f"  - Both requests used cached tokens")
+        print("  - Both requests used cached tokens")
     elif not settings.enable_prompt_caching:
         print("\n! Caching is DISABLED in settings")
         print("  - Set enable_prompt_caching=True to enable")

@@ -7,7 +7,8 @@ This allows Python agents to read/write to the same database as the Next.js app.
 
 import json
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
+
 import asyncpg
 
 from config import settings
@@ -41,7 +42,7 @@ class DatabaseService:
                 max_size=10,
                 command_timeout=30,
             )
-            print(f"[Database] Connected to PostgreSQL")
+            print("[Database] Connected to PostgreSQL")
 
     async def disconnect(self) -> None:
         """Close connection pool."""
@@ -54,7 +55,8 @@ class DatabaseService:
         """Get or create connection pool."""
         if self._pool is None:
             await self.connect()
-        return self._pool  # type: ignore
+        assert self._pool is not None
+        return self._pool
 
     # =========================================================================
     # Session Recording Operations
@@ -171,7 +173,7 @@ class DatabaseService:
                 stop_reason,
                 prompt_quality,
             )
-            return row["id"]
+            return cast(str, row["id"])
 
     # =========================================================================
     # Test Result Operations
@@ -218,7 +220,7 @@ class DatabaseService:
                 error,
                 duration,
             )
-            return row["id"]
+            return cast(str, row["id"])
 
     # =========================================================================
     # Terminal Command Operations
@@ -313,7 +315,7 @@ class DatabaseService:
                     result.get("bias_flags", []),
                     result.get("model", "claude-sonnet-4-20250514"),
                 )
-                return existing["id"]
+                return cast(str, existing["id"])
             else:
                 # Insert new evaluation
                 row = await conn.fetchrow(
@@ -348,7 +350,7 @@ class DatabaseService:
                     result.get("bias_flags", []),
                     result.get("model", "claude-sonnet-4-20250514"),
                 )
-                return row["id"]
+                return cast(str, row["id"])
 
     # =========================================================================
     # Candidate Operations
@@ -444,7 +446,7 @@ class DatabaseService:
                 session_data = row["session_data"]
                 if isinstance(session_data, str):
                     session_data = json.loads(session_data)
-                return session_data.get("interview_metrics")
+                return cast(InterviewMetrics | None, session_data.get("interview_metrics"))
 
             return None
 
@@ -669,7 +671,7 @@ class QuestionGenerationDatabaseService(DatabaseService):
                 json.dumps(difficulty_assessment) if difficulty_assessment else None,
                 fingerprint,
             )
-            return row["id"]
+            return cast(str, row["id"])
 
     async def get_generated_questions(
         self,

@@ -4,15 +4,15 @@ These tools enable the agent to present structured questions to candidates,
 with responses persisted in the database for evaluation purposes.
 """
 
-import os
-import uuid
-import threading
 import logging
-from typing import Any, Annotated
+import os
+import threading
+import uuid
+from typing import Annotated, Any, cast
 
 import httpx
-from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
+from langchain_core.tools import tool
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +29,12 @@ INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dev-internal-key")
 # Helper Functions
 # =============================================================================
 
-def get_session_id(config: dict) -> str:
+def get_session_id(config: dict | RunnableConfig | None) -> str:
     """Extract session ID from RunnableConfig.configurable."""
     if config is None:
         return "unknown"
     configurable = config.get("configurable", {})
-    return configurable.get("session_id", "unknown")
+    return cast(str, configurable.get("session_id", "unknown"))
 
 
 def get_candidate_id(config: dict) -> str:
@@ -42,7 +42,7 @@ def get_candidate_id(config: dict) -> str:
     if config is None:
         return "unknown"
     configurable = config.get("configurable", {})
-    return configurable.get("candidate_id", "unknown")
+    return cast(str, configurable.get("candidate_id", "unknown"))
 
 
 def emit_event_fire_and_forget(
@@ -50,7 +50,7 @@ def emit_event_fire_and_forget(
     event_type: str,
     origin: str,
     data: dict,
-    question_index: int = None,
+    question_index: int | None = None,
     checkpoint: bool = False,
 ):
     """
@@ -101,7 +101,7 @@ def ask_question(
     options: list[str],
     allow_custom_answer: bool = True,
     context: str | None = None,
-    config: Annotated[RunnableConfig, "Injected by LangGraph"] = None,
+    config: Annotated[RunnableConfig | None, "Injected by LangGraph"] = None,
 ) -> dict[str, Any]:
     """
     Present a clarifying question to the candidate with multiple-choice options.

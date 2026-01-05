@@ -11,27 +11,26 @@ All LLM calls trace to LangSmith automatically via langchain_anthropic.
 
 import json
 import random
-from typing import Any
+from typing import Any, cast
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from config import settings
-from services.model_factory import create_chat_model
 from models.state import QuestionGenerationAgentState
-from services.question_generation.irt_engine import (
-    IRTDifficultyEngine,
-    PerformanceRecord,
-)
+from services.database import get_question_generation_database
+from services.model_factory import Provider, create_chat_model
 from services.question_generation.complexity_profiles import (
     get_complexity_profile,
     get_domain_pool,
+)
+from services.question_generation.irt_engine import (
+    IRTDifficultyEngine,
+    PerformanceRecord,
 )
 from services.question_generation.prompts import (
     build_dynamic_generation_prompt,
     build_incremental_generation_prompt,
 )
-from services.database import get_question_generation_database
-
 
 # =============================================================================
 # Model Creation with Multi-Provider Support
@@ -57,7 +56,7 @@ def _create_model(use_fast: bool = True):
     )
 
     return create_chat_model(
-        provider=settings.question_generation_provider,
+        provider=cast(Provider, settings.question_generation_provider),
         model=model_name,
         temperature=0.7,  # Some creativity for unique questions
         max_tokens=32000,
@@ -171,19 +170,15 @@ class QuestionGenerationAgent:
             seniority=seniority,
             assessment_type=assessment_type,
             organization_id=organization_id,
-            db=db,
         )
 
-        if not profile:
-            # Use hardcoded fallback
-            from services.question_generation.complexity_profiles import DEFAULT_PROFILES
-            profile = DEFAULT_PROFILES.get(
-                (role, seniority.lower(), assessment_type),
-                DEFAULT_PROFILES[("backend", "mid", "REAL_WORLD")]
-            )
-
         # 2. Randomize domain and skills
-        domain_pool = profile.get("domain_pool", []) or get_domain_pool(seniority)
+        domain_pool = profile.get("domain_pool", []) or await get_domain_pool(
+            role=role,
+            seniority=seniority,
+            assessment_type=assessment_type,
+            organization_id=organization_id,
+        )
         optional_skill_pool = profile.get("optional_skill_pool", [])
         required_skills = profile.get("required_skills", [])
         avoid_skills = profile.get("avoid_skills", [])
@@ -212,13 +207,13 @@ class QuestionGenerationAgent:
         prompt = build_dynamic_generation_prompt(
             role=role,
             seniority=seniority,
-            assessment_type=assessment_type,
+            assessment_type=assessment_type,  # type: ignore[arg-type]
             tech_stack=tech_stack,
             domain=domain,
             skills=all_skills,
             avoid_skills=avoid_skills,
             complexity=complexity,
-            constraints=constraints,
+            constraints=constraints,  # type: ignore[arg-type]
             time_minutes=time_minutes,
         )
 
@@ -547,8 +542,7 @@ async def get_question_generation_agent() -> QuestionGenerationAgent:
 # LangGraph StateGraph Wrapper
 # =============================================================================
 
-from langgraph.graph import StateGraph, START, END
-from models.state import QuestionGenerationAgentState
+from langgraph.graph import END, START, StateGraph
 
 
 async def generate_node(state: QuestionGenerationAgentState) -> dict:
@@ -568,11 +562,11 @@ async def generate_node(state: QuestionGenerationAgentState) -> dict:
             result = await agent.generate_incremental(
                 session_id=state.get("session_id", ""),
                 candidate_id=state.get("candidate_id", ""),
-                seed_id=state.get("seed_id", ""),
+                seed_id=cast(str, state.get("seed_id", "")),
                 seniority=state.get("seniority", "mid"),
-                previous_questions=state.get("previous_questions", []),
-                previous_performance=state.get("previous_performance", []),
-                time_remaining=state.get("time_remaining", 3600),
+                previous_questions=cast(list[dict[Any, Any]], state.get("previous_questions", [])),
+                previous_performance=cast(list[dict[Any, Any]], state.get("previous_performance", [])),
+                time_remaining=cast(int, state.get("time_remaining", 3600)),
                 assessment_type=state.get("assessment_type"),
                 current_code_snapshot=state.get("current_code_snapshot"),
             )
@@ -610,7 +604,7 @@ async def generate_node(state: QuestionGenerationAgentState) -> dict:
         }
 
 
-def create_question_generation_graph() -> StateGraph:
+def create_question_generation_graph():
     """
     Create a LangGraph StateGraph for question generation.
 
