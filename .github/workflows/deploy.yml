@@ -302,24 +302,29 @@ jobs:
 
       - name: Verify deployment
         run: |
-          LANGGRAPH_URL=$(gcloud run services describe "$LANGGRAPH_SERVICE" \
-            --region "$REGION" \
-            --format='value(status.url)')
+          # LangGraph service has internal-only ingress, so we verify via Cloud Run status
+          # instead of external HTTP health check (internal liveness probes handle health)
 
-          # Wait for new revision to be ready
-          sleep 30
+          echo "Waiting for revision to be ready..."
+          for i in {1..12}; do
+            STATUS=$(gcloud run services describe "$LANGGRAPH_SERVICE" \
+              --region "$REGION" \
+              --format='value(status.conditions[0].status)')
 
-          # Health check with retries
-          for i in {1..5}; do
-            if curl -sf "${LANGGRAPH_URL}/health" > /dev/null; then
-              echo "LangGraph health check passed!"
+            if [ "$STATUS" = "True" ]; then
+              REVISION=$(gcloud run services describe "$LANGGRAPH_SERVICE" \
+                --region "$REGION" \
+                --format='value(status.latestReadyRevisionName)')
+              echo "LangGraph deployment successful!"
+              echo "Latest ready revision: $REVISION"
               exit 0
             fi
-            echo "Attempt $i failed, retrying in 10s..."
+
+            echo "Attempt $i: Service not ready yet (status: $STATUS), waiting 10s..."
             sleep 10
           done
 
-          echo "LangGraph health check failed after 5 attempts"
+          echo "LangGraph deployment verification failed - service not ready after 2 minutes"
           exit 1
 
   notify:
