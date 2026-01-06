@@ -265,7 +265,8 @@ model Candidate {
   assessment          Assessment          @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
   createdBy           User                @relation(fields: [createdById], references: [id])
   organization        Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  generatedQuestions  GeneratedQuestion[]
+  generatedQuestions  GeneratedQuestion[] // DEPRECATED: Use candidateQuestions instead
+  candidateQuestions  CandidateQuestion[] // NEW: Candidate-specific question attempts
   sessionRecording    SessionRecording?
   evaluation          Evaluation?
 
@@ -376,6 +377,62 @@ model GeneratedQuestion {
   @@index([candidateId, order])
   @@index([questionSeedId, fingerprint])
   @@map("generated_questions")
+}
+
+// NEW: Shared question template - stores question definition once, reused across candidates
+model QuestionTemplate {
+  id                   String              @id @default(cuid())
+  questionSeedId       String?             @map("question_seed_id")
+  fingerprint          String              @unique // Hash for deduplication
+  title                String
+  description          String
+  difficulty           Difficulty
+  language             String              @default("typescript")
+  requirements         String[]            @default([])
+  estimatedTime        Int                 @map("estimated_time")
+  starterCode          Json                @map("starter_code")
+  testCases            Json                @map("test_cases")
+  difficultyAssessment Json?               @map("difficulty_assessment")
+  createdAt            DateTime            @default(now()) @map("created_at")
+
+  // For question iterations (variations of the same base question)
+  parentTemplateId String?           @map("parent_template_id")
+  iterationNumber  Int               @default(0) @map("iteration_number") // 0 = original, 1+ = iteration
+
+  // Usage tracking
+  usageCount Int @default(0) @map("usage_count")
+
+  // Relations
+  parentTemplate   QuestionTemplate?   @relation("TemplateIterations", fields: [parentTemplateId], references: [id], onDelete: SetNull)
+  iterations       QuestionTemplate[]  @relation("TemplateIterations")
+  candidateQuestions CandidateQuestion[]
+
+  @@index([questionSeedId])
+  @@index([difficulty])
+  @@map("question_templates")
+}
+
+// NEW: Candidate-specific question attempt - stores progress and results per candidate
+model CandidateQuestion {
+  id                 String         @id @default(cuid())
+  candidateId        String         @map("candidate_id")
+  questionTemplateId String         @map("question_template_id")
+  order              Int
+  status             QuestionStatus @default(PENDING)
+  startedAt          DateTime?      @map("started_at")
+  completedAt        DateTime?      @map("completed_at")
+  score              Float?
+  evaluationResult   Json?          @map("evaluation_result")
+  createdAt          DateTime       @default(now()) @map("created_at")
+
+  // Relations
+  candidate        Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  questionTemplate QuestionTemplate @relation(fields: [questionTemplateId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, questionTemplateId])
+  @@index([candidateId, order])
+  @@index([questionTemplateId])
+  @@map("candidate_questions")
 }
 
 model CreditTransaction {
