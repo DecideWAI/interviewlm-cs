@@ -1,6 +1,5 @@
 import NextAuth from "next-auth";
-import { PrismaAdapter } from "@auth/prisma-adapter";
-import type { Adapter } from "next-auth/adapters";
+import { createSecureAdapter } from "@/lib/auth/adapter";
 import prisma from "@/lib/prisma";
 import authConfig from "./auth.config";
 import { handleB2BSignup } from "@/lib/services/organization";
@@ -15,7 +14,7 @@ export const {
   signIn,
   signOut,
 } = NextAuth({
-  adapter: PrismaAdapter(prisma) as Adapter,
+  adapter: createSecureAdapter(prisma),
   session: { strategy: "jwt" },
   secret: process.env.NEXTAUTH_SECRET,
   ...authConfig,
