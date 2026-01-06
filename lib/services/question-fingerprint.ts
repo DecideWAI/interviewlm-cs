@@ -107,6 +107,46 @@ export function generateFingerprint(question: GeneratedQuestion): string {
 }
 
 /**
+ * Generate fingerprint from partial question data
+ * Useful when creating questions before full object exists
+ */
+export function generateQuestionFingerprint(data: {
+  title: string;
+  description: string;
+  difficulty: string;
+  testCases?: any;
+  requirements?: string[];
+}): string {
+  // Normalize and hash the title
+  const normalizedTitle = normalizeText(data.title);
+  const titleHash = createHash('sha256')
+    .update(normalizedTitle)
+    .digest('hex')
+    .substring(0, 16);
+
+  // Hash requirements (sorted for consistency)
+  const requirements = data.requirements || [];
+  const sortedRequirements = [...requirements].sort().map(normalizeText);
+  const requirementsHash = createHash('sha256')
+    .update(sortedRequirements.join('|'))
+    .digest('hex')
+    .substring(0, 16);
+
+  // Extract and hash concepts from description
+  const concepts = extractConcepts(data.description || '');
+  const conceptsHash = createHash('sha256')
+    .update(concepts.join('|'))
+    .digest('hex')
+    .substring(0, 16);
+
+  // Combine into final fingerprint
+  // Format: difficulty-titleHash-requirementsHash-conceptsHash
+  const fingerprint = `${data.difficulty}-${titleHash}-${requirementsHash}-${conceptsHash}`;
+
+  return fingerprint;
+}
+
+/**
  * Generate fingerprint components for detailed comparison
  */
 export function generateFingerprintComponents(question: GeneratedQuestion): FingerprintResult {

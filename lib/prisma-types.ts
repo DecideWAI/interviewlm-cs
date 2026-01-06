@@ -26,10 +26,47 @@ export interface GeneratedQuestion {
   estimatedTime: number;
   starterCode: any; // Json
   testCases: any; // Json
+  difficultyAssessment: any | null; // Json
   status: QuestionStatus;
   startedAt: Date | null;
   completedAt: Date | null;
   score: number | null;
+  evaluationResult: any | null; // Json
+  createdAt: Date;
+  fingerprint: string | null;
+  iterationNumber: number;
+  parentQuestionId: string | null;
+}
+
+export interface QuestionTemplate {
+  id: string;
+  questionSeedId: string | null;
+  fingerprint: string;
+  title: string;
+  description: string;
+  difficulty: Difficulty;
+  language: string;
+  requirements: string[];
+  estimatedTime: number;
+  starterCode: any; // Json
+  testCases: any; // Json
+  difficultyAssessment: any | null; // Json
+  createdAt: Date;
+  parentTemplateId: string | null;
+  iterationNumber: number;
+  usageCount: number;
+}
+
+export interface CandidateQuestion {
+  id: string;
+  candidateId: string;
+  questionTemplateId: string;
+  order: number;
+  status: QuestionStatus;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  score: number | null;
+  evaluationResult: any | null; // Json
   createdAt: Date;
 }
 

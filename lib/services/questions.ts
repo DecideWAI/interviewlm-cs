@@ -11,6 +11,8 @@ import { z } from "zod";
 import { getChatCompletion } from "./claude";
 import { getCachedQuestion, cacheQuestion } from "./question-cache";
 import type { Difficulty, QuestionStatus, GeneratedQuestion } from "@/lib/prisma-types";
+import * as questionRepository from "./question-repository";
+import type { QuestionData } from "./question-repository";
 
 // Configuration
 const DEFAULT_ESTIMATED_TIME = 30; // minutes
@@ -32,7 +34,7 @@ type GenerateQuestionParams = z.infer<typeof generateQuestionParamsSchema>;
  * Question generation result
  */
 export interface QuestionGenerationResult {
-  question: GeneratedQuestion;
+  question: QuestionData;
   generationTime: number; // milliseconds
   tokensUsed: number;
   adaptedDifficulty: Difficulty;
@@ -277,27 +279,18 @@ export async function generateQuestion(
       }
     }
 
-    // Get candidate's current question order
-    const existingQuestions = await prisma.generatedQuestion.count({
-      where: { candidateId: params.candidateId },
-    });
-
-    // Create question in database
-    const question = await prisma.generatedQuestion.create({
-      data: {
-        candidateId: params.candidateId,
-        questionSeedId: params.seed,
-        order: existingQuestions + 1,
-        title: questionData.title,
-        description: questionData.description,
-        difficulty: adaptedDifficulty,
-        language: params.language,
-        requirements: questionData.requirements,
-        estimatedTime: questionData.estimatedTime || DEFAULT_ESTIMATED_TIME,
-        starterCode: questionData.starterCode,
-        testCases: questionData.testCases,
-        status: "PENDING",
-      },
+    // Create question using repository (handles both old and new schema)
+    const question = await questionRepository.createQuestion({
+      candidateId: params.candidateId,
+      questionSeedId: params.seed,
+      title: questionData.title,
+      description: questionData.description,
+      difficulty: adaptedDifficulty,
+      language: params.language,
+      requirements: questionData.requirements,
+      estimatedTime: questionData.estimatedTime || DEFAULT_ESTIMATED_TIME,
+      starterCode: questionData.starterCode,
+      testCases: questionData.testCases,
     });
 
     const generationTime = Date.now() - startTime;
@@ -341,18 +334,10 @@ export async function generateQuestion(
 export async function getNextQuestion(
   candidateId: string,
   autoGenerate: boolean = true
-): Promise<GeneratedQuestion | null> {
+): Promise<QuestionData | null> {
   try {
-    // Find next pending question
-    const pendingQuestion = await prisma.generatedQuestion.findFirst({
-      where: {
-        candidateId,
-        status: "PENDING",
-      },
-      orderBy: {
-        order: "asc",
-      },
-    });
+    // Find next pending question using repository
+    const pendingQuestion = await questionRepository.getNextPendingQuestion(candidateId);
 
     if (pendingQuestion) {
       return pendingQuestion;
@@ -379,26 +364,19 @@ export async function getNextQuestion(
       throw new Error(`Candidate ${candidateId} not found`);
     }
 
-    // Calculate previous performance
-    const completedQuestions = await prisma.generatedQuestion.findMany({
-      where: {
-        candidateId,
-        status: "COMPLETED",
-      },
-    });
+    // Calculate previous performance using repository
+    const completedQuestions = await questionRepository.getCompletedQuestions(candidateId);
 
     let previousPerformance: number | undefined;
     if (completedQuestions.length > 0) {
       const avgScore =
-        completedQuestions.reduce((sum: number, q: any) => sum + (q.score || 0), 0) /
+        completedQuestions.reduce((sum: number, q) => sum + (q.score || 0), 0) /
         completedQuestions.length;
       previousPerformance = avgScore;
     }
 
     // Determine difficulty for next question
-    const totalGenerated = await prisma.generatedQuestion.count({
-      where: { candidateId },
-    });
+    const totalGenerated = await questionRepository.countCandidateQuestions(candidateId);
 
     let difficulty: Difficulty;
     if (totalGenerated === 0) {
@@ -441,15 +419,9 @@ export async function getNextQuestion(
  * @param questionId - Question identifier
  * @returns Updated question
  */
-export async function startQuestion(questionId: string): Promise<GeneratedQuestion> {
+export async function startQuestion(questionId: string): Promise<QuestionData> {
   try {
-    return await prisma.generatedQuestion.update({
-      where: { id: questionId },
-      data: {
-        status: "IN_PROGRESS",
-        startedAt: new Date(),
-      },
-    });
+    return await questionRepository.startQuestion(questionId);
   } catch (error) {
     console.error("Error starting question:", error);
     throw new Error(
@@ -468,21 +440,14 @@ export async function startQuestion(questionId: string): Promise<GeneratedQuesti
 export async function completeQuestion(
   questionId: string,
   score: number
-): Promise<GeneratedQuestion> {
+): Promise<QuestionData> {
   try {
     // Validate score
     if (score < 0 || score > 1) {
       throw new Error("Score must be between 0 and 1");
     }
 
-    return await prisma.generatedQuestion.update({
-      where: { id: questionId },
-      data: {
-        status: "COMPLETED",
-        completedAt: new Date(),
-        score,
-      },
-    });
+    return await questionRepository.completeQuestion(questionId, score);
   } catch (error) {
     console.error("Error completing question:", error);
     throw new Error(
@@ -497,15 +462,9 @@ export async function completeQuestion(
  * @param questionId - Question identifier
  * @returns Updated question
  */
-export async function skipQuestion(questionId: string): Promise<GeneratedQuestion> {
+export async function skipQuestion(questionId: string): Promise<QuestionData> {
   try {
-    return await prisma.generatedQuestion.update({
-      where: { id: questionId },
-      data: {
-        status: "SKIPPED",
-        completedAt: new Date(),
-      },
-    });
+    return await questionRepository.skipQuestion(questionId);
   } catch (error) {
     console.error("Error skipping question:", error);
     throw new Error(
@@ -522,12 +481,9 @@ export async function skipQuestion(questionId: string): Promise<GeneratedQuestio
  */
 export async function getCandidateQuestions(
   candidateId: string
-): Promise<GeneratedQuestion[]> {
+): Promise<QuestionData[]> {
   try {
-    return await prisma.generatedQuestion.findMany({
-      where: { candidateId },
-      orderBy: { order: "asc" },
-    });
+    return await questionRepository.getCandidateQuestions(candidateId);
   } catch (error) {
     console.error("Error fetching candidate questions:", error);
     throw new Error(
@@ -550,19 +506,17 @@ export async function calculatePerformance(candidateId: string): Promise<{
   progressPercentage: number;
 }> {
   try {
-    const questions = await prisma.generatedQuestion.findMany({
-      where: { candidateId },
-    });
+    const questions = await questionRepository.getCandidateQuestions(candidateId);
 
-    const completedQuestions = questions.filter((q: any) => q.status === "COMPLETED");
+    const completedQuestions = questions.filter((q) => q.status === "COMPLETED");
 
     const averageScore =
       completedQuestions.length > 0
-        ? completedQuestions.reduce((sum: number, q: any) => sum + (q.score || 0), 0) /
+        ? completedQuestions.reduce((sum: number, q) => sum + (q.score || 0), 0) /
           completedQuestions.length
         : 0;
 
-    const timeSpent = questions.reduce((total: number, q: any) => {
+    const timeSpent = questions.reduce((total: number, q) => {
       if (q.startedAt && q.completedAt) {
         const duration =
           (q.completedAt.getTime() - q.startedAt.getTime()) / (1000 * 60);
@@ -598,10 +552,8 @@ export async function regenerateQuestion(
   questionId: string
 ): Promise<QuestionGenerationResult> {
   try {
-    // Get original question
-    const originalQuestion = await prisma.generatedQuestion.findUnique({
-      where: { id: questionId },
-    });
+    // Get original question using repository
+    const originalQuestion = await questionRepository.getQuestionById(questionId);
 
     if (!originalQuestion) {
       throw new Error(`Question ${questionId} not found`);
@@ -615,10 +567,8 @@ export async function regenerateQuestion(
       language: originalQuestion.language,
     });
 
-    // Delete or archive old question
-    await prisma.generatedQuestion.delete({
-      where: { id: questionId },
-    });
+    // Delete old question using repository
+    await questionRepository.deleteQuestion(questionId);
 
     return result;
 
