@@ -85,6 +85,7 @@ Sentry.init({
       networkResponseHeaders: ["X-Request-Id"],
     }),
     // User feedback widget for error reporting
+    // Position adjusted via CSS in globals.css to avoid overlapping modal buttons
     Sentry.feedbackIntegration({
       colorScheme: "dark",
       buttonLabel: "Report Issue",

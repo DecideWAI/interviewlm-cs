@@ -142,3 +142,16 @@ body {
 .animate-progress-grow {
   animation: progress-grow 45s ease-out forwards;
 }
+
+/* Sentry Feedback Widget - move higher to avoid overlapping modal buttons */
+#sentry-feedback {
+  /* Position above modal footers which typically sit at the bottom */
+  bottom: 80px !important;
+}
+
+/* Ensure modals appear above Sentry feedback widget */
+[role="dialog"],
+[data-radix-dialog-content],
+.dialog-content {
+  z-index: 100 !important;
+}
