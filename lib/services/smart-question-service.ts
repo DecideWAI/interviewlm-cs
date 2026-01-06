@@ -11,8 +11,9 @@
 import prisma from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { incrementalQuestionGenerator, QuestionGenerationContext } from "./incremental-questions";
-import { generateFingerprint, checkUniqueness } from "./question-fingerprint";
+import { generateFingerprint, checkUniqueness, generateQuestionFingerprint } from "./question-fingerprint";
 import type { GeneratedQuestion, Difficulty } from "@/lib/prisma-types";
+import type { QuestionData } from "./question-repository";
 
 // Global threshold for switching to reuse mode
 const GLOBAL_QUESTION_THRESHOLD = 5000;
@@ -65,11 +66,11 @@ export class SmartQuestionService {
    */
   async getNextQuestion(
     context: QuestionGenerationContext
-  ): Promise<{ question: GeneratedQuestion; strategy: QuestionSelectionStrategy }> {
+  ): Promise<{ question: QuestionData; strategy: QuestionSelectionStrategy }> {
     // Determine selection strategy
     const strategy = await this.selectStrategy(context.seedId, context.candidateId);
 
-    let question: GeneratedQuestion;
+    let question: QuestionData;
 
     switch (strategy.type) {
       case 'reuse':
@@ -96,7 +97,12 @@ export class SmartQuestionService {
         question = await incrementalQuestionGenerator.generateNextQuestion(context);
 
         // Generate and store fingerprint for the new question
-        const fingerprint = generateFingerprint(question);
+        const fingerprint = generateQuestionFingerprint({
+          title: question.title,
+          description: question.description,
+          difficulty: question.difficulty,
+          testCases: question.testCases,
+        });
         await prisma.generatedQuestion.update({
           where: { id: question.id },
           data: { fingerprint },
@@ -173,7 +179,7 @@ export class SmartQuestionService {
     candidateId: string,
     order: number,
     sourceQuestionId: string
-  ): Promise<GeneratedQuestion> {
+  ): Promise<QuestionData> {
     // Get the source question
     const sourceQuestion = await prisma.generatedQuestion.findUnique({
       where: { id: sourceQuestionId },
@@ -216,7 +222,29 @@ export class SmartQuestionService {
       `Reused question "${sourceQuestion.title}" (Q${order}) for candidate ${candidateId}`
     );
 
-    return newQuestion;
+    // Convert Prisma result to QuestionData format
+    return {
+      id: newQuestion.id,
+      candidateId: newQuestion.candidateId,
+      questionSeedId: newQuestion.questionSeedId,
+      order: newQuestion.order,
+      title: newQuestion.title,
+      description: newQuestion.description,
+      difficulty: newQuestion.difficulty,
+      language: newQuestion.language,
+      requirements: newQuestion.requirements,
+      estimatedTime: newQuestion.estimatedTime,
+      starterCode: newQuestion.starterCode,
+      testCases: newQuestion.testCases,
+      difficultyAssessment: newQuestion.difficultyAssessment,
+      status: newQuestion.status,
+      startedAt: newQuestion.startedAt,
+      completedAt: newQuestion.completedAt,
+      score: newQuestion.score,
+      evaluationResult: newQuestion.evaluationResult,
+      createdAt: newQuestion.createdAt,
+      fingerprint: newQuestion.fingerprint,
+    };
   }
 
   /**
@@ -227,7 +255,7 @@ export class SmartQuestionService {
     candidateId: string,
     order: number,
     sourceQuestionId: string
-  ): Promise<GeneratedQuestion> {
+  ): Promise<QuestionData> {
     // Get the source question
     const sourceQuestion = await prisma.generatedQuestion.findUnique({
       where: { id: sourceQuestionId },
@@ -318,13 +346,35 @@ export class SmartQuestionService {
       `Generated iteration "${newQuestion.title}" (iter #${nextIterationNumber}) for candidate ${candidateId}`
     );
 
-    return newQuestion;
+    // Convert Prisma result to QuestionData format
+    return {
+      id: newQuestion.id,
+      candidateId: newQuestion.candidateId,
+      questionSeedId: newQuestion.questionSeedId,
+      order: newQuestion.order,
+      title: newQuestion.title,
+      description: newQuestion.description,
+      difficulty: newQuestion.difficulty,
+      language: newQuestion.language,
+      requirements: newQuestion.requirements,
+      estimatedTime: newQuestion.estimatedTime,
+      starterCode: newQuestion.starterCode,
+      testCases: newQuestion.testCases,
+      difficultyAssessment: newQuestion.difficultyAssessment,
+      status: newQuestion.status,
+      startedAt: newQuestion.startedAt,
+      completedAt: newQuestion.completedAt,
+      score: newQuestion.score,
+      evaluationResult: newQuestion.evaluationResult,
+      createdAt: newQuestion.createdAt,
+      fingerprint,  // Use the generated fingerprint
+    };
   }
 
   /**
    * Build prompt for generating question iteration
    */
-  private buildIterationPrompt(sourceQuestion: GeneratedQuestion, seed: any): string {
+  private buildIterationPrompt(sourceQuestion: any, seed: any): string {
     return `You are creating a VARIATION of an existing coding question. The variation should test the same concepts but with different specifics.
 
 **Original Question:**

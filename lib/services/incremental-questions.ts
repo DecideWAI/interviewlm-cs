@@ -9,6 +9,8 @@
 import prisma from "@/lib/prisma";
 import { getChatCompletion } from "./claude";
 import type { Difficulty, GeneratedQuestion } from "@/lib/prisma-types";
+import * as questionRepository from "./question-repository";
+import type { QuestionData } from "./question-repository";
 import type { AssessmentType } from "@/types/assessment";
 import type {
   RequiredTechStack,
@@ -55,7 +57,7 @@ export interface QuestionGenerationContext {
  * IRT-enhanced generation result
  */
 export interface IRTEnhancedQuestionResult {
-  question: GeneratedQuestion;
+  question: QuestionData;
   abilityEstimate: CandidateAbilityEstimate;
   difficultyTargeting: DifficultyTargeting;
   difficultyVisibility: {
@@ -150,7 +152,7 @@ export class IncrementalQuestionGenerator {
   async generateNextQuestion(
     context: QuestionGenerationContext,
     irtTargeting?: DifficultyTargeting
-  ): Promise<GeneratedQuestion> {
+  ): Promise<QuestionData> {
     // Get seed data
     const seed = await prisma.problemSeed.findUnique({
       where: { id: context.seedId },
@@ -239,28 +241,23 @@ export class IncrementalQuestionGenerator {
     // Validate tech stack in generated question
     this.validateTechStackInQuestion(questionData, requiredTech);
 
-    // Create question in database with difficulty assessment
-    const nextQuestionOrder = context.previousQuestions.length + 1;
-    const question = await prisma.generatedQuestion.create({
-      data: {
-        candidateId: context.candidateId,
-        questionSeedId: context.seedId,
-        order: nextQuestionOrder,
-        title: questionData.title,
-        description: questionData.description,
-        difficulty: this.determineDifficulty(progressAnalysis, nextQuestionOrder),
-        language: requiredTech.languages[0]?.name || 'typescript',
-        requirements: questionData.requirements || [],
-        estimatedTime: questionData.estimatedTime || 20,
-        starterCode: questionData.starterCode || { files: [] },
-        testCases: questionData.testCases || [],
-        status: "PENDING",
-        difficultyAssessment: questionData.difficultyAssessment || null,
-      },
+    // Create question in database with difficulty assessment using repository
+    const question = await questionRepository.createQuestion({
+      candidateId: context.candidateId,
+      questionSeedId: context.seedId,
+      title: questionData.title,
+      description: questionData.description,
+      difficulty: this.determineDifficulty(progressAnalysis, context.previousQuestions.length + 1),
+      language: requiredTech.languages[0]?.name || 'typescript',
+      requirements: questionData.requirements || [],
+      estimatedTime: questionData.estimatedTime || 20,
+      starterCode: questionData.starterCode || { files: [] },
+      testCases: questionData.testCases || [],
+      difficultyAssessment: questionData.difficultyAssessment || null,
     });
 
     console.log(
-      `Generated incremental question "${question.title}" (Q${nextQuestionOrder}) for candidate ${context.candidateId}`
+      `Generated incremental question "${question.title}" (Q${question.order}) for candidate ${context.candidateId}`
     );
 
     return question;
@@ -275,7 +272,7 @@ export class IncrementalQuestionGenerator {
     baseProblem: BaseProblem;
     requiredTech: RequiredTechStack;
     seniority: SeniorityLevel;
-  }): Promise<GeneratedQuestion> {
+  }): Promise<QuestionData> {
     const { candidateId, seedId, baseProblem, requiredTech, seniority } = params;
 
     // Generate baseline difficulty assessment
@@ -285,37 +282,33 @@ export class IncrementalQuestionGenerator {
       seniority
     );
 
-    // Create first question directly from base problem
-    const question = await prisma.generatedQuestion.create({
-      data: {
-        candidateId,
-        questionSeedId: seedId,
-        order: 1,
-        title: baseProblem.title,
-        description: baseProblem.description,
-        difficulty: this.getInitialDifficulty(seniority),
-        language: requiredTech.languages[0]?.name || 'typescript',
-        requirements: [
-          `Use ${requiredTech.languages.map(l => l.name).join(' or ')}`,
-          `Implement with ${requiredTech.frameworks.map(f => f.name).join(', ')}`,
-          ...requiredTech.databases.length > 0
-            ? [`Use ${requiredTech.databases.map(d => d.name).join(' and/or ')} for data storage`]
-            : [],
+    // Create first question directly from base problem using repository
+    const question = await questionRepository.createQuestion({
+      candidateId,
+      questionSeedId: seedId,
+      title: baseProblem.title,
+      description: baseProblem.description,
+      difficulty: this.getInitialDifficulty(seniority),
+      language: requiredTech.languages[0]?.name || 'typescript',
+      requirements: [
+        `Use ${requiredTech.languages.map(l => l.name).join(' or ')}`,
+        `Implement with ${requiredTech.frameworks.map(f => f.name).join(', ')}`,
+        ...requiredTech.databases.length > 0
+          ? [`Use ${requiredTech.databases.map(d => d.name).join(' and/or ')} for data storage`]
+          : [],
+      ],
+      estimatedTime: baseProblem.estimatedTime,
+      starterCode: {
+        files: [
+          {
+            fileName: this.getMainFileName(requiredTech.languages[0]?.name || 'typescript'),
+            content: baseProblem.starterCode,
+            language: requiredTech.languages[0]?.name || 'typescript',
+          },
         ],
-        estimatedTime: baseProblem.estimatedTime,
-        starterCode: {
-          files: [
-            {
-              fileName: this.getMainFileName(requiredTech.languages[0]?.name || 'typescript'),
-              content: baseProblem.starterCode,
-              language: requiredTech.languages[0]?.name || 'typescript',
-            },
-          ],
-        },
-        testCases: [], // Will be populated by Claude in first question
-        status: "PENDING",
-        difficultyAssessment: baselineDifficultyAssessment,
       },
+      testCases: [], // Will be populated by Claude in first question
+      difficultyAssessment: baselineDifficultyAssessment,
     });
 
     console.log(`Generated first question "${question.title}" for candidate ${candidateId}`);
