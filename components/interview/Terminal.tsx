@@ -44,6 +44,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const lastDataTimeRef = useRef<number>(Date.now());
     const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const silentReconnectRef = useRef<boolean>(false);
+    const hasConnectedOnceRef = useRef<boolean>(false); // Track if we've ever connected
     const isReconnectingRef = useRef<boolean>(false);
     const consecutiveStreamEndedRef = useRef<number>(0);
     const lastReconnectTimeRef = useRef<number>(0);
@@ -54,9 +55,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const MAX_TUNNEL_RECONNECT_ATTEMPTS = 3;
     const MAX_SSE_RECONNECT_ATTEMPTS = 5;
     const MAX_CONSECUTIVE_STREAM_ENDED = 10; // Higher threshold before showing error
-    const MIN_RECONNECT_INTERVAL_MS = 2000; // Minimum time between reconnects
+    const MIN_RECONNECT_INTERVAL_MS = 1000; // Minimum time between reconnects
     const HEARTBEAT_TIMEOUT_MS = 30000; // Consider connection dead if no data for 30s
-    const STREAM_ENDED_BACKOFF_MS = 3000; // Extra delay for stream_ended reconnects
+    const STREAM_ENDED_BACKOFF_MS = 1500; // Delay for stream_ended reconnects
 
     // Keep onCommand ref up to date without triggering effect re-runs
     useEffect(() => {
@@ -86,8 +87,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
       try {
         updateConnectionStatus("connecting");
-        // Only show connecting message if not a silent reconnect
-        if (!silentReconnectRef.current) {
+        // Only show connecting message on first connection (not reconnects)
+        if (!hasConnectedOnceRef.current) {
           terminal.writeln("\x1b[90mConnecting via PTY bridge...\x1b[0m");
         }
 
@@ -120,11 +121,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
               // 2. The display corruption is mainly from xterm.js reflow, not PTY size
               // The PTY uses initial size and xterm.js handles display scaling
 
-              // Only show connection message if not a silent reconnect
-              if (!silentReconnectRef.current) {
+              // Only show connection message on first connection (not reconnects)
+              if (!hasConnectedOnceRef.current) {
                 terminal.writeln("\x1b[32m✓ Connected via PTY bridge\x1b[0m");
                 terminal.writeln("\x1b[32m✓ Low-latency shell active\x1b[0m");
                 terminal.writeln("");
+                hasConnectedOnceRef.current = true;
               }
               silentReconnectRef.current = false;
 

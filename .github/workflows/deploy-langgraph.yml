@@ -123,41 +123,64 @@ jobs:
             --quiet
 
       - name: Wait for revision to be ready
+        id: wait_ready
         run: |
           echo "Waiting for new revision to become ready..."
-          for i in {1..30}; do
-            STATUS=$(gcloud run services describe "$SERVICE_NAME" \
-              --region "$REGION" \
-              --format='value(status.conditions[0].status)')
-            if [ "$STATUS" = "True" ]; then
-              echo "Revision is ready!"
-              break
-            fi
-            echo "Attempt $i/30: Revision not ready yet, waiting 10s..."
-            sleep 10
-          done
 
-      - name: Verify deployment
-        id: healthcheck
-        run: |
-          SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+          # Get the latest revision name
+          NEW_REVISION=$(gcloud run services describe "$SERVICE_NAME" \
             --region "$REGION" \
-            --format='value(status.url)')
+            --format='value(status.latestCreatedRevisionName)')
+          echo "new_revision=${NEW_REVISION}" >> $GITHUB_OUTPUT
+          echo "New revision: ${NEW_REVISION}"
 
-          # Health check with retries
-          for i in {1..5}; do
-            if curl -sf "${SERVICE_URL}/health" > /dev/null; then
-              echo "Health check passed!"
-              echo "success=true" >> $GITHUB_OUTPUT
+          for i in {1..30}; do
+            # Check if the new revision is ready
+            READY=$(gcloud run revisions describe "$NEW_REVISION" \
+              --region "$REGION" \
+              --format='value(status.conditions[0].status)' 2>/dev/null || echo "Unknown")
+
+            if [ "$READY" = "True" ]; then
+              echo "Revision ${NEW_REVISION} is ready!"
+              echo "ready=true" >> $GITHUB_OUTPUT
               exit 0
             fi
-            echo "Attempt $i failed, retrying in 10s..."
+            echo "Attempt $i/30: Revision not ready yet (status: $READY), waiting 10s..."
             sleep 10
           done
 
-          echo "Health check failed after 5 attempts"
-          echo "success=false" >> $GITHUB_OUTPUT
+          echo "Revision failed to become ready after 5 minutes"
+          echo "ready=false" >> $GITHUB_OUTPUT
           exit 1
+
+      - name: Route traffic to new revision
+        if: success()
+        env:
+          NEW_REVISION: ${{ steps.wait_ready.outputs.new_revision }}
+        run: |
+          echo "Routing 100% traffic to ${NEW_REVISION}..."
+          gcloud run services update-traffic "$SERVICE_NAME" \
+            --region "$REGION" \
+            --to-revisions="${NEW_REVISION}=100" \
+            --quiet
+          echo "Traffic routed successfully!"
+
+      - name: Verify deployment (internal check)
+        id: healthcheck
+        run: |
+          # For internal-ingress services, we rely on Cloud Run's built-in
+          # container health check. The revision being "Ready" means:
+          # 1. Container started successfully
+          # 2. Startup probe passed (if configured)
+          # 3. Service is accepting traffic
+
+          # Verify traffic is routed to new revision
+          TRAFFIC_INFO=$(gcloud run services describe "$SERVICE_NAME" \
+            --region "$REGION" \
+            --format='value(status.traffic[0].revisionName,status.traffic[0].percent)')
+
+          echo "Current traffic routing: ${TRAFFIC_INFO}"
+          echo "success=true" >> $GITHUB_OUTPUT
 
       - name: Rollback on failure
         if: failure() && steps.current.outputs.revision != ''

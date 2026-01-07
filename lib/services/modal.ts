@@ -141,26 +141,12 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
     // Check if stdout is locked (being read by another SSE connection)
     // We must create a new session because ReadableStream can only have one reader
     if (existing.stdoutLocked) {
-      console.log(`[Modal] Existing session stdout is locked for ${sessionId}`);
+      console.log(`[Modal] Existing session stdout is locked, must create new session for ${sessionId}`);
       // Abort the previous reader if it exists
       if (existing.abortController) {
         existing.abortController.abort();
       }
-
-      // Wait a bit for the previous reader to release
-      // This helps prevent rapid session recreation cycles
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Check again if the session was released during the wait
-      const checkAgain = shellSessions.get(sessionId);
-      if (checkAgain && !checkAgain.stdoutLocked) {
-        console.log(`[Modal] Session unlocked during wait, reusing for ${sessionId}`);
-        checkAgain.lastActivity = new Date();
-        return checkAgain;
-      }
-
-      // Still locked or session changed - create new session
-      console.log(`[Modal] Creating new shell session for ${sessionId}`);
+      // Clean up the existing session - we can't reuse it because the stream is consumed
       shellSessions.delete(sessionId);
       // Clear history to prevent duplicate prompts from accumulating
       clearShellHistory(sessionId);
