@@ -87,6 +87,8 @@ export async function GET(
           console.log(`[PTY] Aborted by new connection for ${id}`);
           isClosed = true;
           if (keepAliveInterval) clearInterval(keepAliveInterval);
+          // Release the reader lock so the session can be reused
+          releaseShellSessionReader(id);
           try {
             // Send reconnect signal so client knows to reconnect
             controller.enqueue(
