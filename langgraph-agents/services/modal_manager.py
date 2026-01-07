@@ -122,31 +122,33 @@ def get_sandbox_config_sync(language: str) -> Dict[str, Any]:
     Get sandbox config from DB with fallback defaults.
 
     Returns dict with: cpu, memoryMb, timeoutSeconds, dockerImage
+
+    NOTE: DB lookup is disabled to avoid event loop issues when called from
+    LangGraph async context. The sandbox_configs table doesn't exist in production
+    anyway. Use fallback config directly.
     """
-    # Fallback config when DB is unavailable
+    # Fallback config - always used since DB lookup causes event loop issues
+    # when ConfigService connections are bound to a different loop
     FALLBACK_CONFIG = {
         'cpu': DEFAULT_SANDBOX_CPU,
         'memoryMb': DEFAULT_SANDBOX_MEMORY_MB,
         'timeoutSeconds': DEFAULT_SANDBOX_TIMEOUT_S,
     }
 
-    try:
-        config_service = _get_config_service()
-        config = _run_async(config_service.get_sandbox_config(language))
-        if config:
-            logger.debug(f"Using DB sandbox config for {language}: {config}")
-            return cast(dict[str, Any], config)
-    except Exception as e:
-        logger.warning(f"Failed to get sandbox config from DB: {e}")
-
-    # Use fallback config
-    logger.info(f"Using fallback sandbox config for {language}")
+    # TODO: Re-enable DB lookup once sandbox_configs table exists and
+    # ConfigService is refactored to handle cross-loop calls properly
+    # For now, just use fallback to avoid "Future attached to different loop" errors
+    logger.debug(f"Using fallback sandbox config for {language}")
     return FALLBACK_CONFIG
 
 
 def get_image_map_sync() -> Dict[str, str]:
-    """Get image map from DB with fallback defaults."""
-    # Fallback image map when DB is unavailable
+    """Get image map from DB with fallback defaults.
+
+    NOTE: DB lookup is disabled to avoid event loop issues when called from
+    LangGraph async context. Use fallback config directly.
+    """
+    # Fallback image map - always used since DB lookup causes event loop issues
     FALLBACK_IMAGE_MAP = {
         'python': 'python:3.11-bookworm-slim',
         'py': 'python:3.11-bookworm-slim',
@@ -159,28 +161,9 @@ def get_image_map_sync() -> Dict[str, str]:
         'rust': 'rust:1.75-bookworm',
     }
 
-    try:
-        config_service = _get_config_service()
-        image_map = _run_async(config_service.get_image_map())
-
-        if image_map:
-            # Add aliases pointing to same images
-            if 'python' in image_map:
-                image_map['py'] = image_map['python']
-            if 'javascript' in image_map:
-                image_map['js'] = image_map['javascript']
-            if 'typescript' in image_map:
-                image_map['ts'] = image_map['typescript']
-            if 'go' in image_map:
-                image_map['golang'] = image_map['go']
-
-            logger.debug(f"Using DB image map: {image_map}")
-            return cast(dict[str, str], image_map)
-    except Exception as e:
-        logger.warning(f"Failed to get image map from DB: {e}")
-
-    # Use fallback image map
-    logger.info("Using fallback image map (DB unavailable)")
+    # TODO: Re-enable DB lookup once ConfigService is refactored to handle
+    # cross-loop calls properly
+    logger.debug("Using fallback image map")
     return FALLBACK_IMAGE_MAP
 
 # =============================================================================
@@ -1080,13 +1063,15 @@ class SandboxManager:
         cls._sandbox_created_at[session_id] = datetime.now()
         cls._sandbox_language[session_id] = language or "javascript"
 
-        # Persist to database
-        try:
-            asyncio.get_event_loop().run_until_complete(
-                cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript")
-            )
-        except RuntimeError:
-            asyncio.run(cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript"))
+        # Persist to database (optional - sandbox works without DB persistence)
+        # NOTE: Disabled due to event loop issues when called from LangGraph async context
+        # The DSN format also doesn't match what the async DB operations expect
+        # try:
+        #     asyncio.get_event_loop().run_until_complete(
+        #         cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript")
+        #     )
+        # except RuntimeError:
+        #     asyncio.run(cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript"))
 
         print(f"[SandboxManager] Created new sandbox {sandbox_id} for session {session_id} (language: {language or 'default'})")
         return sandbox
@@ -1348,13 +1333,14 @@ class SandboxManager:
                 cls._sandbox_language.pop(session_id, None)
                 cls._write_queues.pop(session_id, None)
 
-                # Clear from database
-                try:
-                    asyncio.get_event_loop().run_until_complete(
-                        cls._clear_sandbox_id_from_db(session_id)
-                    )
-                except RuntimeError:
-                    asyncio.run(cls._clear_sandbox_id_from_db(session_id))
+                # Clear from database (optional - may fail due to event loop issues)
+                # NOTE: Disabled due to event loop issues in LangGraph async context
+                # try:
+                #     asyncio.get_event_loop().run_until_complete(
+                #         cls._clear_sandbox_id_from_db(session_id)
+                #     )
+                # except RuntimeError:
+                #     asyncio.run(cls._clear_sandbox_id_from_db(session_id))
 
                 print(f"[SandboxManager] Terminated sandbox for session {session_id}")
                 return True
