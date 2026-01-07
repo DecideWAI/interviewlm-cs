@@ -78,91 +78,73 @@ def get_volume_name(session_id: str) -> str:
     return f"interview-volume-{session_id}"
 
 # =============================================================================
-# Config Service Integration (DB-backed configs - NO FALLBACKS)
+# Config Service Integration (DB-backed configs with sync access)
 # =============================================================================
 
-# Config service import (lazy to avoid circular imports)
-_config_service = None
+# Fallback configs used when DB lookup fails or tables don't exist
+FALLBACK_SANDBOX_CONFIG = {
+    'cpu': DEFAULT_SANDBOX_CPU,
+    'memoryMb': DEFAULT_SANDBOX_MEMORY_MB,
+    'timeoutSeconds': DEFAULT_SANDBOX_TIMEOUT_S,
+}
 
-def _get_config_service():
-    """Get config service instance (lazy initialization)."""
-    global _config_service
-    if _config_service is None:
-        try:
-            from services.config_service import get_config_service
-            _config_service = get_config_service()
-        except ImportError as e:
-            logger.error(f"Config service not available: {e}")
-            raise RuntimeError("Config service is required but not available") from e
-    return _config_service
-
-
-def _run_async(coro):
-    """Run async coroutine in sync context."""
-    try:
-        # Check if there's a running event loop
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop, we can use asyncio.run directly
-            return asyncio.run(coro)
-
-        # Loop is running, need to run in a separate thread
-        import concurrent.futures
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(asyncio.run, coro)
-            return future.result(timeout=5)
-    except Exception as e:
-        logger.error(f"Failed to run async config call: {e}")
-        raise
+FALLBACK_IMAGE_MAP = {
+    'python': 'python:3.11-bookworm-slim',
+    'py': 'python:3.11-bookworm-slim',
+    'javascript': 'node:20-bookworm-slim',
+    'js': 'node:20-bookworm-slim',
+    'typescript': 'node:20-bookworm-slim',
+    'ts': 'node:20-bookworm-slim',
+    'go': 'golang:1.21-bookworm',
+    'golang': 'golang:1.21-bookworm',
+    'rust': 'rust:1.75-bookworm',
+}
 
 
 def get_sandbox_config_sync(language: str) -> Dict[str, Any]:
     """
     Get sandbox config from DB with fallback defaults.
 
+    Uses SyncConfigService which uses synchronous SQLAlchemy to avoid
+    event loop issues when called from LangGraph tools.
+
     Returns dict with: cpu, memoryMb, timeoutSeconds, dockerImage
-
-    NOTE: DB lookup is disabled to avoid event loop issues when called from
-    LangGraph async context. The sandbox_configs table doesn't exist in production
-    anyway. Use fallback config directly.
     """
-    # Fallback config - always used since DB lookup causes event loop issues
-    # when ConfigService connections are bound to a different loop
-    FALLBACK_CONFIG = {
-        'cpu': DEFAULT_SANDBOX_CPU,
-        'memoryMb': DEFAULT_SANDBOX_MEMORY_MB,
-        'timeoutSeconds': DEFAULT_SANDBOX_TIMEOUT_S,
-    }
+    try:
+        from services.config_service import get_sandbox_config_sync as _get_sandbox_config
+        config = _get_sandbox_config(language)
+        if config:
+            logger.debug(f"Got sandbox config from DB for {language}: {config}")
+            return {
+                'cpu': config.get('cpu', DEFAULT_SANDBOX_CPU),
+                'memoryMb': config.get('memoryMb', DEFAULT_SANDBOX_MEMORY_MB),
+                'timeoutSeconds': config.get('timeoutSeconds', DEFAULT_SANDBOX_TIMEOUT_S),
+            }
+    except Exception as e:
+        # Log but don't fail - use fallback
+        logger.warning(f"Failed to get sandbox config from DB for {language}: {e}")
 
-    # TODO: Re-enable DB lookup once sandbox_configs table exists and
-    # ConfigService is refactored to handle cross-loop calls properly
-    # For now, just use fallback to avoid "Future attached to different loop" errors
     logger.debug(f"Using fallback sandbox config for {language}")
-    return FALLBACK_CONFIG
+    return FALLBACK_SANDBOX_CONFIG
 
 
 def get_image_map_sync() -> Dict[str, str]:
-    """Get image map from DB with fallback defaults.
-
-    NOTE: DB lookup is disabled to avoid event loop issues when called from
-    LangGraph async context. Use fallback config directly.
     """
-    # Fallback image map - always used since DB lookup causes event loop issues
-    FALLBACK_IMAGE_MAP = {
-        'python': 'python:3.11-bookworm-slim',
-        'py': 'python:3.11-bookworm-slim',
-        'javascript': 'node:20-bookworm-slim',
-        'js': 'node:20-bookworm-slim',
-        'typescript': 'node:20-bookworm-slim',
-        'ts': 'node:20-bookworm-slim',
-        'go': 'golang:1.21-bookworm',
-        'golang': 'golang:1.21-bookworm',
-        'rust': 'rust:1.75-bookworm',
-    }
+    Get image map from DB with fallback defaults.
 
-    # TODO: Re-enable DB lookup once ConfigService is refactored to handle
-    # cross-loop calls properly
+    Uses SyncConfigService which uses synchronous SQLAlchemy to avoid
+    event loop issues when called from LangGraph tools.
+    """
+    try:
+        from services.config_service import get_image_map_sync as _get_image_map
+        image_map = _get_image_map()
+        if image_map:
+            logger.debug(f"Got image map from DB: {image_map}")
+            return image_map
+    except Exception as e:
+        # Log but don't fail - use fallback
+        logger.warning(f"Failed to get image map from DB: {e}")
+
     logger.debug("Using fallback image map")
     return FALLBACK_IMAGE_MAP
 

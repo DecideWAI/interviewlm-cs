@@ -14,14 +14,14 @@ from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, cast
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, create_engine, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, Session, sessionmaker
 
 from config.settings import settings
 from models.db_models import (
@@ -512,11 +512,224 @@ class ConfigService:
 
 
 # =============================================================================
+# SYNC CONFIG SERVICE (for use in sync contexts like LangGraph tools)
+# =============================================================================
+
+
+class SyncConfigService:
+    """
+    Synchronous config service for use in sync contexts.
+
+    This class uses synchronous SQLAlchemy to avoid event loop issues
+    when called from LangGraph tools or other sync code running in
+    different threads/event loops.
+
+    Use this when:
+    - Calling from sync functions in LangGraph tools
+    - Calling from ThreadPoolExecutor workers
+    - Any context where async ConfigService causes event loop issues
+    """
+
+    _instance: Optional["SyncConfigService"] = None
+    _cache: Dict[str, tuple[Any, datetime]] = {}
+
+    def __init__(self, database_url: Optional[str] = None):
+        """Initialize with database connection."""
+        # Use standard PostgreSQL URL (not async)
+        db_url = database_url or settings.database_url
+        # Ensure we use the sync driver, not asyncpg
+        if "+asyncpg" in db_url:
+            db_url = db_url.replace("+asyncpg", "")
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://")
+
+        self.database_url = db_url
+        self._engine = None
+        self._session_factory = None
+        self._initialized = False
+
+    def _ensure_initialized(self) -> None:
+        """Lazy initialization of database connection."""
+        if not self._initialized:
+            self._engine = create_engine(
+                self.database_url,
+                pool_size=3,  # Smaller pool for sync usage
+                max_overflow=5,
+                pool_pre_ping=True,
+            )
+            self._session_factory = sessionmaker(
+                self._engine,
+                class_=Session,
+                expire_on_commit=False,
+            )
+            self._initialized = True
+
+    def _get_session_factory(self) -> sessionmaker:
+        """Get session factory (must call _ensure_initialized first)."""
+        assert self._session_factory is not None, "Database not initialized"
+        return self._session_factory
+
+    @classmethod
+    def get_instance(cls) -> "SyncConfigService":
+        """Get singleton instance."""
+        if cls._instance is None:
+            cls._instance = SyncConfigService()
+        return cls._instance
+
+    def _get_cache_key(self, config_type: str, key: str) -> str:
+        """Generate cache key."""
+        return f"sync:{config_type}:{key}"
+
+    def _is_cache_valid(self, cache_key: str) -> bool:
+        """Check if cache entry is still valid."""
+        if cache_key not in self._cache:
+            return False
+        _, timestamp = self._cache[cache_key]
+        return datetime.utcnow() - timestamp < timedelta(seconds=CONFIG_CACHE_TTL_SECONDS)
+
+    def _set_cache(self, cache_key: str, value: Any) -> None:
+        """Set cache entry."""
+        self._cache[cache_key] = (value, datetime.utcnow())
+
+    def _get_cache(self, cache_key: str) -> Optional[Any]:
+        """Get cache entry if valid."""
+        if self._is_cache_valid(cache_key):
+            return self._cache[cache_key][0]
+        return None
+
+    # =========================================================================
+    # SANDBOX CONFIG (sync)
+    # =========================================================================
+
+    def get_sandbox_config(self, language: str) -> Optional[Dict[str, Any]]:
+        """Get sandbox configuration for a language (sync version)."""
+        cache_key = self._get_cache_key("sandbox", language)
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cast(Optional[Dict[str, Any]], cached)
+
+        self._ensure_initialized()
+
+        with self._get_session_factory()() as session:
+            # Try specific language first
+            result = session.execute(
+                select(SandboxConfig)
+                .where(SandboxConfig.language == language)
+                .where(SandboxConfig.is_active == True)
+            )
+            config = result.scalar_one_or_none()
+
+            # Fall back to default
+            if not config:
+                result = session.execute(
+                    select(SandboxConfig)
+                    .where(SandboxConfig.language == "default")
+                    .where(SandboxConfig.is_active == True)
+                )
+                config = result.scalar_one_or_none()
+
+            if not config:
+                self._set_cache(cache_key, None)
+                return None
+
+            value = {
+                "language": config.language,
+                "dockerImage": config.docker_image,
+                "cpu": config.cpu,
+                "memoryMb": config.memory_mb,
+                "timeoutSeconds": config.timeout_seconds,
+            }
+            self._set_cache(cache_key, value)
+            return value
+
+    def get_image_map(self) -> Dict[str, str]:
+        """Get language to Docker image mapping (sync version)."""
+        cache_key = self._get_cache_key("sandbox", "image_map")
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cast(Dict[str, str], cached)
+
+        self._ensure_initialized()
+
+        with self._get_session_factory()() as session:
+            result = session.execute(
+                select(SandboxConfig).where(SandboxConfig.is_active == True)
+            )
+            configs = result.scalars().all()
+
+            value: Dict[str, str] = {str(c.language): str(c.docker_image) for c in configs}
+            self._set_cache(cache_key, value)
+            return value
+
+    # =========================================================================
+    # MODEL CONFIG (sync)
+    # =========================================================================
+
+    def get_model_config(self, model_id: str) -> Optional[Dict[str, Any]]:
+        """Get AI model configuration (sync version)."""
+        cache_key = self._get_cache_key("model", model_id)
+        cached = self._get_cache(cache_key)
+        if cached is not None:
+            return cast(Optional[Dict[str, Any]], cached)
+
+        self._ensure_initialized()
+
+        with self._get_session_factory()() as session:
+            result = session.execute(
+                select(ModelConfig)
+                .where(ModelConfig.model_id == model_id)
+                .where(ModelConfig.is_active == True)
+            )
+            model = result.scalar_one_or_none()
+
+            if not model:
+                self._set_cache(cache_key, None)
+                return None
+
+            value = {
+                "id": model.model_id,
+                "name": model.name,
+                "inputPricePerMToken": model.input_price_per_m_token,
+                "outputPricePerMToken": model.output_price_per_m_token,
+                "maxTokens": model.max_tokens,
+                "contextWindow": model.context_window,
+                "description": model.description,
+                "useCase": model.use_case,
+                "recommendedFor": model.recommended_for or [],
+            }
+            self._set_cache(cache_key, value)
+            return value
+
+    # =========================================================================
+    # CACHE MANAGEMENT
+    # =========================================================================
+
+    def invalidate_cache(self, pattern: Optional[str] = None) -> None:
+        """Invalidate cache entries."""
+        if pattern is None:
+            self._cache.clear()
+            logger.info("Cleared all sync config cache")
+        else:
+            keys_to_remove = [k for k in self._cache if pattern in k]
+            for k in keys_to_remove:
+                del self._cache[k]
+            logger.info(f"Invalidated {len(keys_to_remove)} sync cache entries matching '{pattern}'")
+
+    def close(self) -> None:
+        """Close database connections."""
+        if self._engine:
+            self._engine.dispose()
+            self._initialized = False
+            logger.info("Sync config service database connections closed")
+
+
+# =============================================================================
 # CONVENIENCE FUNCTIONS
 # =============================================================================
 
-# Global instance
+# Global instances
 _config_service: Optional[ConfigService] = None
+_sync_config_service: Optional[SyncConfigService] = None
 
 
 def get_config_service() -> ConfigService:
@@ -575,3 +788,43 @@ async def get_scoring_weights(
 ) -> Dict[str, float]:
     """Get scoring weights for a seniority level."""
     return await get_config_service().get_scoring_weights(seniority_id, organization_id)
+
+
+# =============================================================================
+# SYNC CONVENIENCE FUNCTIONS (for LangGraph tools and sync contexts)
+# =============================================================================
+
+
+def get_sync_config_service() -> SyncConfigService:
+    """Get the global sync config service instance."""
+    global _sync_config_service
+    if _sync_config_service is None:
+        _sync_config_service = SyncConfigService.get_instance()
+    return _sync_config_service
+
+
+def get_sandbox_config_sync(language: str) -> Optional[Dict[str, Any]]:
+    """
+    Get sandbox configuration for a language (sync version).
+
+    Use this in sync contexts like LangGraph tools to avoid event loop issues.
+    """
+    return get_sync_config_service().get_sandbox_config(language)
+
+
+def get_image_map_sync() -> Dict[str, str]:
+    """
+    Get language to Docker image mapping (sync version).
+
+    Use this in sync contexts like LangGraph tools to avoid event loop issues.
+    """
+    return get_sync_config_service().get_image_map()
+
+
+def get_model_config_sync(model_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get AI model configuration (sync version).
+
+    Use this in sync contexts like LangGraph tools to avoid event loop issues.
+    """
+    return get_sync_config_service().get_model_config(model_id)
