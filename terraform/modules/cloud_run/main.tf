@@ -34,7 +34,9 @@ resource "google_cloud_run_v2_service" "app" {
 
     vpc_access {
       connector = var.vpc_connector_id
-      egress    = "PRIVATE_RANGES_ONLY"
+      # ALL_TRAFFIC required for Cloud Run to Cloud Run calls with internal ingress
+      # Without this, calls to LangGraph (internal ingress) fail with 404
+      egress    = "ALL_TRAFFIC"
     }
 
     containers {
