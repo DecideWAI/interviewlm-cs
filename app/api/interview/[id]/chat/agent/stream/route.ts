@@ -777,9 +777,12 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
       streamMode: ['messages', 'events'],
     });
 
+    let eventCount = 0;
     for await (const chunk of stream) {
       // Cast to any for flexible event handling - LangGraph SDK types are strict
       const event = chunk as any;
+      eventCount++;
+      console.log(`[LangGraph] Event #${eventCount}: type=${event.event}, hasData=${!!event.data}`);
 
       // Handle events mode - this is the primary source for text and tool events
       if (event.event === 'events') {
@@ -896,6 +899,8 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
       }
       // Note: messages/partial events are skipped as we get text from events/on_chat_model_stream
     }
+
+    console.log(`[LangGraph] Stream completed: ${eventCount} events, ${fullText.length} chars, tools=${toolsUsed.join(',')}`);
 
     return {
       text: fullText,
