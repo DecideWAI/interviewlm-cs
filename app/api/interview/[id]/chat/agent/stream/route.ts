@@ -28,6 +28,7 @@ import { agentAssignmentService, type AgentBackendType } from "@/lib/experiments
 import { fileStreamManager } from "@/lib/services/file-streaming";
 import { sessionService, recordClaudeInteraction } from "@/lib/services";
 import { eventStore } from "@/lib/services/event-store";
+import { getAuthenticatedLangGraphClient } from "@/lib/services/langgraph-client";
 
 // Stream checkpoint constants
 const CHECKPOINT_EVENT_TYPE = 'stream_checkpoint';
@@ -538,9 +539,17 @@ export async function POST(
  * Call LangGraph Python agent via SDK with streaming support
  */
 
-// Initialize LangGraph SDK client
+// LangGraph API URL for fallback
 const LANGGRAPH_API_URL = process.env.LANGGRAPH_API_URL || 'http://localhost:2024';
-const langGraphClient = new Client({ apiUrl: LANGGRAPH_API_URL });
+
+/**
+ * Get authenticated LangGraph client for Cloud Run IAM
+ * In production, this adds the proper Bearer token for service-to-service auth
+ */
+async function getLangGraphClient(userId?: string, sessionId?: string): Promise<Client> {
+  // Use the authenticated client which handles Cloud Run IAM tokens
+  return getAuthenticatedLangGraphClient(userId, sessionId);
+}
 
 interface LangGraphCallOptions {
   sessionId: string;
@@ -692,13 +701,17 @@ function generateThreadUUID(sessionId: string, agentType: string): string {
  * Uses deterministic UUID v5 generated from agentType and sessionId
  * This ensures conversation history persists across requests
  */
-async function getOrCreateThread(sessionId: string, agentType: string = 'coding_agent'): Promise<string> {
+async function getOrCreateThread(
+  client: Client,
+  sessionId: string,
+  agentType: string = 'coding_agent'
+): Promise<string> {
   // Generate deterministic UUID for consistent history
   const threadId = generateThreadUUID(sessionId, agentType);
 
   try {
     // Try to get existing thread
-    const thread = await langGraphClient.threads.get(threadId);
+    const thread = await client.threads.get(threadId);
     if (thread) {
       return threadId;
     }
@@ -708,7 +721,7 @@ async function getOrCreateThread(sessionId: string, agentType: string = 'coding_
 
   try {
     // Create thread with specific ID and metadata
-    await langGraphClient.threads.create({
+    await client.threads.create({
       threadId,
       metadata: { sessionId, agentType },
     });
@@ -729,7 +742,10 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
   metadata?: Record<string, unknown>;
 }> {
   const MAX_RETRIES = 1; // Only retry once for corrupted thread state
-  const threadId = await getOrCreateThread(options.sessionId);
+
+  // Get authenticated client for Cloud Run IAM
+  const langGraphClient = await getLangGraphClient(options.candidateId, options.sessionId);
+  const threadId = await getOrCreateThread(langGraphClient, options.sessionId);
 
   let fullText = "";
   const toolsUsed: string[] = [];
