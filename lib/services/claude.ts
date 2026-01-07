@@ -3,9 +3,15 @@
  *
  * Handles all interactions with Anthropic's Claude API for AI-assisted coding
  * during interview sessions. Provides streaming responses and tracks token usage.
+ *
+ * Includes Sentry AI monitoring for:
+ * - Token usage tracking
+ * - Model and latency metrics
+ * - Prompt/response capture (when enabled)
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import * as Sentry from "@sentry/nextjs";
 import { z } from "zod";
 import {
   buildChatSystemPrompt as buildSystemPrompt,
@@ -150,6 +156,21 @@ export async function* streamChatCompletion(
   messages: Message[],
   context: ProblemContext
 ): AsyncGenerator<StreamChunk, void, unknown> {
+  // Create Sentry span for AI request tracking
+  const span = Sentry.startInactiveSpan({
+    op: "gen_ai.chat",
+    name: `chat ${CLAUDE_MODEL}`,
+    attributes: {
+      "gen_ai.request.model": CLAUDE_MODEL,
+      "gen_ai.operation.name": "chat",
+      "gen_ai.request.max_tokens": MAX_TOKENS,
+      "gen_ai.request.temperature": TEMPERATURE,
+      "gen_ai.request.messages": JSON.stringify(
+        messages.slice(-3).map((m) => ({ role: m.role, content: m.content.slice(0, 200) }))
+      ),
+    },
+  });
+
   try {
     // Validate inputs
     messages.forEach((msg) => messageSchema.parse(msg));
@@ -175,9 +196,13 @@ export async function* streamChatCompletion(
       messages: anthropicMessages,
     });
 
+    // Collect response for Sentry tracking
+    let fullResponse = "";
+
     // Yield content deltas
     for await (const chunk of stream) {
       if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
+        fullResponse += chunk.delta.text;
         yield {
           content: chunk.delta.text,
           done: false,
@@ -207,6 +232,16 @@ export async function* streamChatCompletion(
       cacheReadInputTokens,
     };
 
+    // Set Sentry span attributes for AI monitoring
+    span.setAttribute("gen_ai.usage.input_tokens", usage.inputTokens);
+    span.setAttribute("gen_ai.usage.output_tokens", usage.outputTokens);
+    span.setAttribute("gen_ai.usage.total_tokens", usage.totalTokens);
+    if (cacheReadInputTokens > 0) {
+      span.setAttribute("gen_ai.usage.input_tokens.cached", cacheReadInputTokens);
+    }
+    span.setAttribute("gen_ai.response.text", JSON.stringify([fullResponse.slice(0, 500)]));
+    span.setStatus({ code: 1 }); // OK
+
     // Log cache performance
     if (cacheCreationInputTokens > 0 || cacheReadInputTokens > 0) {
       console.log(`[Claude] Cache metrics - created: ${cacheCreationInputTokens}, read: ${cacheReadInputTokens}`);
@@ -222,9 +257,13 @@ export async function* streamChatCompletion(
 
   } catch (error) {
     console.error("Error in streamChatCompletion:", error);
+    span.setStatus({ code: 2, message: error instanceof Error ? error.message : "Unknown error" });
+    Sentry.captureException(error);
     throw new Error(
       `Claude API streaming failed: ${error instanceof Error ? error.message : "Unknown error"}`
     );
+  } finally {
+    span.end();
   }
 }
 
@@ -242,76 +281,103 @@ export async function getChatCompletion(
 ): Promise<ChatResponse> {
   const startTime = Date.now();
 
-  try {
-    // Validate inputs
-    messages.forEach((msg) => messageSchema.parse(msg));
-    contextSchema.parse(context);
+  return Sentry.startSpan(
+    {
+      op: "gen_ai.chat",
+      name: `chat ${CLAUDE_MODEL}`,
+      attributes: {
+        "gen_ai.request.model": CLAUDE_MODEL,
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.max_tokens": MAX_TOKENS,
+        "gen_ai.request.temperature": TEMPERATURE,
+        "gen_ai.request.messages": JSON.stringify(
+          messages.slice(-3).map((m) => ({ role: m.role, content: m.content.slice(0, 200) }))
+        ),
+      },
+    },
+    async (span) => {
+      try {
+        // Validate inputs
+        messages.forEach((msg) => messageSchema.parse(msg));
+        contextSchema.parse(context);
 
-    const client = getAnthropicClient();
-    const systemPromptWithCaching = buildSystemPromptWithCaching(context);
+        const client = getAnthropicClient();
+        const systemPromptWithCaching = buildSystemPromptWithCaching(context);
 
-    // Convert messages to Anthropic format and add cache breakpoints
-    const anthropicMessages = addMessageCacheBreakpoints(
-      messages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      }))
-    );
+        // Convert messages to Anthropic format and add cache breakpoints
+        const anthropicMessages = addMessageCacheBreakpoints(
+          messages.map((msg) => ({
+            role: msg.role,
+            content: msg.content,
+          }))
+        );
 
-    // Get complete response with caching enabled
-    const response = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: MAX_TOKENS,
-      temperature: TEMPERATURE,
-      system: systemPromptWithCaching,
-      messages: anthropicMessages,
-    });
+        // Get complete response with caching enabled
+        const response = await client.messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: MAX_TOKENS,
+          temperature: TEMPERATURE,
+          system: systemPromptWithCaching,
+          messages: anthropicMessages,
+        });
 
-    const endTime = Date.now();
+        const endTime = Date.now();
 
-    // Extract text content
-    const textContent = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => (block as Anthropic.TextBlock).text)
-      .join("\n");
+        // Extract text content
+        const textContent = response.content
+          .filter((block) => block.type === "text")
+          .map((block) => (block as Anthropic.TextBlock).text)
+          .join("\n");
 
-    // Extract cache metrics from usage (Anthropic SDK types may not include these yet)
-    const usageAny = response.usage as any;
-    const cacheCreationInputTokens = usageAny.cache_creation_input_tokens || 0;
-    const cacheReadInputTokens = usageAny.cache_read_input_tokens || 0;
+        // Extract cache metrics from usage (Anthropic SDK types may not include these yet)
+        const usageAny = response.usage as any;
+        const cacheCreationInputTokens = usageAny.cache_creation_input_tokens || 0;
+        const cacheReadInputTokens = usageAny.cache_read_input_tokens || 0;
 
-    const usage: TokenUsage = {
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-      totalTokens: response.usage.input_tokens + response.usage.output_tokens,
-      estimatedCost: calculateCost(
-        response.usage.input_tokens,
-        response.usage.output_tokens,
-        cacheCreationInputTokens,
-        cacheReadInputTokens
-      ),
-      cacheCreationInputTokens,
-      cacheReadInputTokens,
-    };
+        const usage: TokenUsage = {
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+          totalTokens: response.usage.input_tokens + response.usage.output_tokens,
+          estimatedCost: calculateCost(
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            cacheCreationInputTokens,
+            cacheReadInputTokens
+          ),
+          cacheCreationInputTokens,
+          cacheReadInputTokens,
+        };
 
-    // Log cache performance
-    if (cacheCreationInputTokens > 0 || cacheReadInputTokens > 0) {
-      console.log(`[Claude] Cache metrics - created: ${cacheCreationInputTokens}, read: ${cacheReadInputTokens}`);
+        // Set Sentry span attributes for AI monitoring
+        span.setAttribute("gen_ai.usage.input_tokens", usage.inputTokens);
+        span.setAttribute("gen_ai.usage.output_tokens", usage.outputTokens);
+        span.setAttribute("gen_ai.usage.total_tokens", usage.totalTokens);
+        if (cacheReadInputTokens > 0) {
+          span.setAttribute("gen_ai.usage.input_tokens.cached", cacheReadInputTokens);
+        }
+        span.setAttribute("gen_ai.response.text", JSON.stringify([textContent.slice(0, 500)]));
+
+        // Log cache performance
+        if (cacheCreationInputTokens > 0 || cacheReadInputTokens > 0) {
+          console.log(`[Claude] Cache metrics - created: ${cacheCreationInputTokens}, read: ${cacheReadInputTokens}`);
+        }
+
+        return {
+          content: textContent,
+          usage,
+          stopReason: response.stop_reason || undefined,
+          latency: endTime - startTime,
+        };
+
+      } catch (error) {
+        console.error("Error in getChatCompletion:", error);
+        Sentry.captureException(error);
+        throw new Error(
+          `Claude API request failed: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
     }
-
-    return {
-      content: textContent,
-      usage,
-      stopReason: response.stop_reason || undefined,
-      latency: endTime - startTime,
-    };
-
-  } catch (error) {
-    console.error("Error in getChatCompletion:", error);
-    throw new Error(
-      `Claude API request failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
+  );
 }
 
 /**
@@ -354,36 +420,60 @@ export async function generateQuestionFast(prompt: string): Promise<{
 }> {
   const startTime = Date.now();
 
-  try {
-    const client = getAnthropicClient();
+  return Sentry.startSpan(
+    {
+      op: "gen_ai.generate",
+      name: `generate ${HAIKU_MODEL}`,
+      attributes: {
+        "gen_ai.request.model": HAIKU_MODEL,
+        "gen_ai.operation.name": "generate_question",
+        "gen_ai.request.max_tokens": 32000,
+        "gen_ai.request.temperature": TEMPERATURE,
+        "gen_ai.request.messages": JSON.stringify([
+          { role: "user", content: prompt.slice(0, 500) }
+        ]),
+      },
+    },
+    async (span) => {
+      try {
+        const client = getAnthropicClient();
 
-    const response = await client.messages.create({
-      model: HAIKU_MODEL,
-      max_tokens: 32000,
-      temperature: TEMPERATURE,
-      messages: [{ role: "user", content: prompt }],
-    });
+        const response = await client.messages.create({
+          model: HAIKU_MODEL,
+          max_tokens: 32000,
+          temperature: TEMPERATURE,
+          messages: [{ role: "user", content: prompt }],
+        });
 
-    const content = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => (block as Anthropic.TextBlock).text)
-      .join("\n");
+        const content = response.content
+          .filter((block) => block.type === "text")
+          .map((block) => (block as Anthropic.TextBlock).text)
+          .join("\n");
 
-    const latency = Date.now() - startTime;
-    console.log(`[Claude] Fast question generation: ${latency}ms, ${response.usage.input_tokens}in/${response.usage.output_tokens}out`);
+        const latency = Date.now() - startTime;
+        console.log(`[Claude] Fast question generation: ${latency}ms, ${response.usage.input_tokens}in/${response.usage.output_tokens}out`);
 
-    return {
-      content,
-      latency,
-      inputTokens: response.usage.input_tokens,
-      outputTokens: response.usage.output_tokens,
-    };
-  } catch (error) {
-    console.error("Error in generateQuestionFast:", error);
-    throw new Error(
-      `Fast question generation failed: ${error instanceof Error ? error.message : "Unknown error"}`
-    );
-  }
+        // Set Sentry span attributes for AI monitoring
+        span.setAttribute("gen_ai.usage.input_tokens", response.usage.input_tokens);
+        span.setAttribute("gen_ai.usage.output_tokens", response.usage.output_tokens);
+        span.setAttribute("gen_ai.usage.total_tokens", response.usage.input_tokens + response.usage.output_tokens);
+        span.setAttribute("gen_ai.response.text", JSON.stringify([content.slice(0, 500)]));
+
+        return {
+          content,
+          latency,
+          inputTokens: response.usage.input_tokens,
+          outputTokens: response.usage.output_tokens,
+        };
+      } catch (error) {
+        console.error("Error in generateQuestionFast:", error);
+        Sentry.captureException(error);
+        throw new Error(
+          `Fast question generation failed: ${error instanceof Error ? error.message : "Unknown error"}`
+        );
+      }
+    }
+  );
 }
 
 /**

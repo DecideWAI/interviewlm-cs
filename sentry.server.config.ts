@@ -20,6 +20,9 @@ Sentry.init({
   // Profiling - profiles 10% of *sampled* transactions (effective = tracesSampleRate * profilesSampleRate)
   profilesSampleRate: 0.1,
 
+  // Enable structured logs to Sentry
+  enableLogs: true,
+
   // Enable in all environments (set to false to disable)
   enabled: true,
 

@@ -32,6 +32,9 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
+from sentry_sdk.integrations.langchain import LangchainIntegration
+from sentry_sdk.integrations.langgraph import LanggraphIntegration
+from sentry_sdk.integrations.anthropic import AnthropicIntegration
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Configure logging
@@ -69,14 +72,34 @@ if SENTRY_DSN:
         # Enable distributed tracing for trace correlation with Next.js
         propagate_traces=True,
 
-        # Integrations
+        # Include AI prompts/responses for debugging (consider disabling in prod for PII)
+        send_default_pii=True,
+
+        # Enable structured logs to Sentry (captures Python logging module)
+        enable_logs=True,
+
+        # Integrations - includes AI/LLM monitoring
         integrations=[
+            # Web framework integrations
             FastApiIntegration(transaction_style="endpoint"),
             StarletteIntegration(transaction_style="endpoint"),
             HttpxIntegration(),
             LoggingIntegration(
                 level=logging.INFO,  # Capture INFO+ as breadcrumbs
                 event_level=logging.ERROR,  # Create events for ERROR+
+            ),
+            # AI/LLM monitoring integrations - automatically capture:
+            # - Token usage, latency, model info
+            # - Agent invocations and tool calls
+            # - Prompts and responses (controlled by include_prompts)
+            LangchainIntegration(
+                include_prompts=True,  # Capture prompts for AI debugging
+            ),
+            LanggraphIntegration(
+                include_prompts=True,  # Capture agent state and messages
+            ),
+            AnthropicIntegration(
+                include_prompts=True,  # Capture Claude API calls
             ),
         ],
 
@@ -95,7 +118,7 @@ if SENTRY_DSN:
             "tags": {**event.get("tags", {}), "service": "langgraph-agents"},
         },
     )
-    logger.info(f"Sentry initialized for LangGraph server (environment: {SENTRY_ENVIRONMENT})")
+    logger.info(f"Sentry initialized for LangGraph server with AI monitoring (environment: {SENTRY_ENVIRONMENT})")
 else:
     logger.warning("SENTRY_DSN not set, Sentry monitoring disabled")
 

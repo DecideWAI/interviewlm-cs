@@ -29,6 +29,9 @@ Sentry.init({
   replaysSessionSampleRate: 0.25,
   replaysOnErrorSampleRate: 1.0,
 
+  // Enable structured logs to Sentry
+  enableLogs: true,
+
   // Enable in all environments (set to false to disable)
   enabled: true,
 
@@ -73,6 +76,8 @@ Sentry.init({
 
   // Integration configuration
   integrations: [
+    // Capture console.log/warn/error as structured logs in Sentry
+    Sentry.consoleLoggingIntegration({ levels: ["warn", "error"] }),
     Sentry.replayIntegration({
       // Mask all text content for privacy
       maskAllText: true,
