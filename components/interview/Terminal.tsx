@@ -85,7 +85,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
       try {
         updateConnectionStatus("connecting");
-        terminal.writeln("\x1b[90mConnecting via PTY bridge...\x1b[0m");
+        // Only show connecting message if not a silent reconnect
+        if (!silentReconnectRef.current) {
+          terminal.writeln("\x1b[90mConnecting via PTY bridge...\x1b[0m");
+        }
 
         // Start SSE stream for PTY output
         const sseUrl = `/api/interview/${sessionId}/terminal/pty`;
@@ -139,9 +142,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             }
 
             // Handle history replay on reconnect (server sends previous output)
-            if (data.history) {
+            // Skip history replay on silent reconnects - terminal already has the content
+            if (data.history && !silentReconnectRef.current) {
               console.log(`[PTY] Replaying ${data.history.length} chars of history from server`);
               terminal.write(data.history);
+            } else if (data.history) {
+              console.log(`[PTY] Skipping history replay (silent reconnect) - ${data.history.length} chars`);
             }
 
             if (data.output) {
