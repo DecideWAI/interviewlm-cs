@@ -28,13 +28,13 @@ import uvicorn
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from sentry_sdk.integrations.anthropic import AnthropicIntegration
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
-from sentry_sdk.integrations.starlette import StarletteIntegration
 from sentry_sdk.integrations.langchain import LangchainIntegration
 from sentry_sdk.integrations.langgraph import LanggraphIntegration
-from sentry_sdk.integrations.anthropic import AnthropicIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # Configure logging
