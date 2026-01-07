@@ -88,7 +88,7 @@ Sentry.init({
     // Position adjusted via CSS in globals.css to avoid overlapping modal buttons
     Sentry.feedbackIntegration({
       colorScheme: "dark",
-      buttonLabel: "Report Issue",
+      buttonLabel: "", // Icon-only button
       submitButtonLabel: "Send Feedback",
       formTitle: "Report an Issue",
       messagePlaceholder: "Describe what happened...",
