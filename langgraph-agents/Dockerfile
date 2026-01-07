@@ -72,13 +72,16 @@ COPY langgraph.json ./langgraph.json
 COPY agents/ ./agents/
 COPY tools/ ./tools/
 COPY middleware/ ./middleware/
+COPY config/ ./config/
+COPY services/ ./services/
+COPY models/ ./models/
 
 # Copy startup script
 COPY start.sh ./start.sh
 RUN chmod +x start.sh
 
 # Set PYTHONPATH to include our code
-ENV PYTHONPATH=/app:/app/agents:/app/tools:/app/middleware
+ENV PYTHONPATH=/app:/app/agents:/app/tools:/app/middleware:/app/config:/app/services:/app/models
 
 # Change ownership to app user before switching
 RUN chown -R app:app /app
