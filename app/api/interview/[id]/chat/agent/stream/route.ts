@@ -796,7 +796,8 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
       // Cast to any for flexible event handling - LangGraph SDK types are strict
       const event = chunk as any;
       eventCount++;
-      console.log(`[LangGraph] Event #${eventCount}: type=${event.event}, hasData=${!!event.data}`);
+      // Detailed logging to debug streaming
+      console.log(`[LangGraph] Event #${eventCount}: type=${event.event}, data=${JSON.stringify(event.data).slice(0, 500)}`);
 
       // Handle events mode - this is the primary source for text and tool events
       if (event.event === 'events') {
@@ -806,14 +807,17 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
           // Text streaming: content is in event.data.data.chunk.content as an array
           // Format: [{"text":"Hello! ","type":"text","index":0}]
           const chunkContent = eventData.data?.chunk?.content;
+          console.log(`[LangGraph] on_chat_model_stream content type: ${typeof chunkContent}, isArray: ${Array.isArray(chunkContent)}, value: ${JSON.stringify(chunkContent).slice(0, 200)}`);
           if (Array.isArray(chunkContent)) {
             for (const item of chunkContent) {
               if (item?.type === 'text' && item?.text) {
+                console.log(`[LangGraph] Extracted text: "${item.text.slice(0, 50)}..."`);
                 fullText += item.text;
                 options.onTextDelta(item.text);
               }
             }
           } else if (typeof chunkContent === 'string' && chunkContent) {
+            console.log(`[LangGraph] Extracted string content: "${chunkContent.slice(0, 50)}..."`);
             fullText += chunkContent;
             options.onTextDelta(chunkContent);
           }
@@ -911,7 +915,10 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
 
         throw new Error(errorMessage);
       }
-      // Note: messages/partial events are skipped as we get text from events/on_chat_model_stream
+      // Log other event types for debugging
+      else {
+        console.log(`[LangGraph] Unhandled event type: ${event.event}`);
+      }
     }
 
     console.log(`[LangGraph] Stream completed: ${eventCount} events, ${fullText.length} chars, tools=${toolsUsed.join(',')}`);

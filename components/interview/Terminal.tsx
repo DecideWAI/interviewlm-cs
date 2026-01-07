@@ -53,9 +53,10 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const lastSendTimeRef = useRef<number>(0);
     const MAX_TUNNEL_RECONNECT_ATTEMPTS = 3;
     const MAX_SSE_RECONNECT_ATTEMPTS = 5;
-    const MAX_CONSECUTIVE_STREAM_ENDED = 3; // Limit rapid reconnects due to stream_ended
+    const MAX_CONSECUTIVE_STREAM_ENDED = 10; // Higher threshold before showing error
     const MIN_RECONNECT_INTERVAL_MS = 2000; // Minimum time between reconnects
     const HEARTBEAT_TIMEOUT_MS = 30000; // Consider connection dead if no data for 30s
+    const STREAM_ENDED_BACKOFF_MS = 3000; // Extra delay for stream_ended reconnects
 
     // Keep onCommand ref up to date without triggering effect re-runs
     useEffect(() => {
@@ -269,8 +270,17 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             eventSourceRef.current = null;
           }
 
-          // Wait a moment then reconnect (longer delay for stream_ended to allow server to stabilize)
-          const delay = reason === "stream_ended" ? 1000 : (silentReconnectRef.current ? 200 : 500);
+          // Wait a moment then reconnect
+          // Use exponential backoff for stream_ended to allow server to stabilize
+          let delay: number;
+          if (reason === "stream_ended") {
+            // Exponential backoff: 3s, 6s, 9s, etc. based on consecutive count
+            delay = STREAM_ENDED_BACKOFF_MS * Math.min(consecutiveStreamEndedRef.current, 5);
+          } else {
+            delay = silentReconnectRef.current ? 200 : 500;
+          }
+
+          console.log(`[PTY] Reconnecting in ${delay}ms (reason: ${reason})`);
           setTimeout(() => {
             isReconnectingRef.current = false;
             connectPTY(terminal);
