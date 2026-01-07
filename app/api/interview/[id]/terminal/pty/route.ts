@@ -9,6 +9,7 @@ import {
   releaseShellSessionReader,
   getShellHistory,
   appendToShellHistory,
+  clearShellHistory,
   resizeShell,
 } from "@/lib/services/modal";
 
@@ -142,6 +143,9 @@ export async function GET(
             safeEnqueue(
               encoder.encode(`data: ${JSON.stringify({ history })}\n\n`)
             );
+            // Clear history after sending to prevent accumulation of duplicate prompts
+            // New output will be captured fresh from this point
+            clearShellHistory(id);
           }
 
           // Send connection established event

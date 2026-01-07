@@ -143,8 +143,11 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
 
             // Handle history replay on reconnect (server sends previous output)
             // Skip history replay on silent reconnects - terminal already has the content
+            // Note: Server clears history after sending, preventing accumulation
             if (data.history && !silentReconnectRef.current) {
               console.log(`[PTY] Replaying ${data.history.length} chars of history from server`);
+              // Clear screen before history to avoid duplicate prompts from accumulated history
+              terminal.write('\x1b[2J\x1b[H');
               terminal.write(data.history);
             } else if (data.history) {
               console.log(`[PTY] Skipping history replay (silent reconnect) - ${data.history.length} chars`);
@@ -157,6 +160,12 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             // Handle reconnect signal from server (stream ended or recoverable error)
             if (data.reconnect) {
               console.log(`[PTY] Server requested reconnect: ${data.reason}`);
+              // Don't reconnect if another connection took over - that would cause infinite loop
+              if (data.reason === "new_connection") {
+                console.log(`[PTY] Another connection took over, not reconnecting`);
+                updateConnectionStatus("disconnected");
+                return;
+              }
               silentReconnectRef.current = true;
               reconnectPTY(data.reason);
               return;

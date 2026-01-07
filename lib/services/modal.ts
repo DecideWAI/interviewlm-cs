@@ -139,23 +139,21 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
   const existing = shellSessions.get(sessionId);
   if (existing) {
     // Check if stdout is locked (being read by another SSE connection)
-    // If locked, we must create a new session because ReadableStream can only have one reader
+    // Abort the previous reader so we can reuse the session
     if (existing.stdoutLocked) {
-      console.log(`[Modal] Existing session stdout is locked, creating new shell session for ${sessionId}`);
+      console.log(`[Modal] Existing session stdout is locked, aborting previous reader for ${sessionId}`);
       // Abort the previous reader if it exists
       if (existing.abortController) {
         existing.abortController.abort();
       }
-      // Clean up the existing session
-      shellSessions.delete(sessionId);
-      if (existing.stdinWriter) {
-        try {
-          existing.stdinWriter.releaseLock();
-        } catch {
-          // Ignore errors on release
-        }
-      }
-      // Fall through to create new session
+      // Mark as unlocked - prepareShellSessionForReading will re-lock it
+      existing.stdoutLocked = false;
+      existing.abortController = undefined;
+      // Reuse the existing session instead of creating a new one
+      // This avoids multiple bash prompts
+      existing.lastActivity = new Date();
+      console.log(`[Modal] Reusing existing shell session after abort for ${sessionId}`);
+      return existing;
     } else {
       // Verify the session is still healthy before reusing
       const isHealthy = await isShellSessionHealthy(existing);
