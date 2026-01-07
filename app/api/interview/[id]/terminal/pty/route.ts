@@ -254,7 +254,9 @@ export async function GET(
           // Check if this is a recoverable error
           const isRecoverable = errorMessage.includes('timeout') ||
                                 errorMessage.includes('ECONNRESET') ||
-                                errorMessage.includes('socket hang up');
+                                errorMessage.includes('socket hang up') ||
+                                errorMessage.includes('ReadableStream is locked') ||
+                                errorMessage.includes('Invalid state');
 
           if (isRecoverable) {
             // Signal client to reconnect silently

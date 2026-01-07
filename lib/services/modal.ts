@@ -139,21 +139,39 @@ export async function createShellSession(sessionId: string): Promise<ShellSessio
   const existing = shellSessions.get(sessionId);
   if (existing) {
     // Check if stdout is locked (being read by another SSE connection)
-    // Abort the previous reader so we can reuse the session
+    // We must create a new session because ReadableStream can only have one reader
     if (existing.stdoutLocked) {
-      console.log(`[Modal] Existing session stdout is locked, aborting previous reader for ${sessionId}`);
+      console.log(`[Modal] Existing session stdout is locked for ${sessionId}`);
       // Abort the previous reader if it exists
       if (existing.abortController) {
         existing.abortController.abort();
       }
-      // Mark as unlocked - prepareShellSessionForReading will re-lock it
-      existing.stdoutLocked = false;
-      existing.abortController = undefined;
-      // Reuse the existing session instead of creating a new one
-      // This avoids multiple bash prompts
-      existing.lastActivity = new Date();
-      console.log(`[Modal] Reusing existing shell session after abort for ${sessionId}`);
-      return existing;
+
+      // Wait a bit for the previous reader to release
+      // This helps prevent rapid session recreation cycles
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Check again if the session was released during the wait
+      const checkAgain = shellSessions.get(sessionId);
+      if (checkAgain && !checkAgain.stdoutLocked) {
+        console.log(`[Modal] Session unlocked during wait, reusing for ${sessionId}`);
+        checkAgain.lastActivity = new Date();
+        return checkAgain;
+      }
+
+      // Still locked or session changed - create new session
+      console.log(`[Modal] Creating new shell session for ${sessionId}`);
+      shellSessions.delete(sessionId);
+      // Clear history to prevent duplicate prompts from accumulating
+      clearShellHistory(sessionId);
+      if (existing.stdinWriter) {
+        try {
+          existing.stdinWriter.releaseLock();
+        } catch {
+          // Ignore errors on release
+        }
+      }
+      // Fall through to create new session
     } else {
       // Verify the session is still healthy before reusing
       const isHealthy = await isShellSessionHealthy(existing);

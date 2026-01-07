@@ -682,7 +682,7 @@ function extractToolOutput(rawOutput: unknown): Record<string, unknown> {
   return {};
 }
 
-import { v5 as uuidv5 } from 'uuid';
+import { v4 as uuidv4, v5 as uuidv5 } from 'uuid';
 
 // Namespace UUID for generating deterministic thread IDs
 const LANGGRAPH_NAMESPACE = '6ba7b810-9dad-11d1-80b4-00c04fd430c8'; // DNS namespace
@@ -750,29 +750,43 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
   let fullText = "";
   const toolsUsed: string[] = [];
   const filesModified: string[] = [];
-  const metadata: Record<string, unknown> = { threadId };
   const toolInputMap = new Map<string, unknown>(); // Store tool inputs for retrieval in on_tool_end
 
+  // IMPORTANT: Generate run_id at TOP LEVEL of config
+  // Aegra's graph_streaming.py looks for config.get("run_id") at top level (line 109)
+  // but create_run_config only sets configurable.run_id (line 363)
+  // This mismatch causes event filtering to fail - run_id in events doesn't match
+  // Setting run_id at top level ensures the filter matches events from graph execution
+  const runId = uuidv4();
+  const metadata: Record<string, unknown> = { threadId, runId };
+
   try {
-    console.log(`[LangGraph] Starting stream for thread ${threadId}, assistant: coding_agent`);
+    console.log(`[LangGraph] Starting stream for thread ${threadId}, runId ${runId}, assistant: coding_agent`);
 
     // Use LangGraph SDK streaming with multiple modes for comprehensive event coverage
     // NOTE: LangGraph server handles checkpointing - we only send the NEW message
     // The server loads previous state from checkpoint and appends via add_messages reducer
+    // Build config with run_id at top level
+    // TypeScript SDK types don't include run_id at top level, but Aegra's graph_streaming.py
+    // looks for config.get("run_id") at line 109. Use type assertion to pass it.
+    const streamConfig = {
+      run_id: runId, // CRITICAL: Set at top level for Aegra's graph_streaming.py event filtering
+      configurable: {
+        run_id: runId, // Also set in configurable for consistency
+        session_id: options.sessionId,
+        candidate_id: options.candidateId,
+        helpfulness_level: options.helpfulnessLevel || 'pair-programming',
+        problem_statement: options.problemStatement,
+        tech_stack: options.techStack,
+      },
+      recursion_limit: 100, // Increased from default 25 for complex tool chains
+    };
+
     const stream = langGraphClient.runs.stream(threadId, 'coding_agent', {
       input: {
         messages: [{ role: 'user', content: options.message }],
       },
-      config: {
-        configurable: {
-          session_id: options.sessionId,
-          candidate_id: options.candidateId,
-          helpfulness_level: options.helpfulnessLevel || 'pair-programming',
-          problem_statement: options.problemStatement,
-          tech_stack: options.techStack,
-        },
-        recursion_limit: 100, // Increased from default 25 for complex tool chains
-      },
+      config: streamConfig as any, // Type assertion needed - SDK types don't include run_id
       // Use messages mode for text streaming
       streamMode: ['messages', 'events'],
     });
