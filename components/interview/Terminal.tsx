@@ -130,6 +130,15 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
               }
               silentReconnectRef.current = false;
 
+              // Flush any input that was buffered during reconnection
+              if (inputBufferRef.current.length > 0) {
+                console.log(`[PTY] Flushing ${inputBufferRef.current.length} chars buffered during reconnection`);
+                const bufferedData = inputBufferRef.current;
+                inputBufferRef.current = "";
+                lastSendTimeRef.current = Date.now();
+                sendInput(bufferedData);
+              }
+
               // Start heartbeat monitoring to detect stale connections
               if (heartbeatIntervalRef.current) {
                 clearInterval(heartbeatIntervalRef.current);
@@ -347,12 +356,18 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             return;
           }
 
-          if (connectionStatusRef.current !== "connected") return;
+          // Buffer input even during "connecting" state - will be flushed when connected
+          // This prevents the terminal from feeling "stuck" during reconnection
+          inputBufferRef.current += data;
+
+          // Only flush if connected
+          if (connectionStatusRef.current !== "connected") {
+            console.log("[PTY] Buffering input during reconnection...");
+            return;
+          }
 
           // NOTE: No local echo needed - PTY already echoes characters back
           // Local echo would cause double characters since the shell echoes input
-
-          inputBufferRef.current += data;
 
           // Smart batching: send immediately if no recent send, otherwise batch
           const timeSinceLastSend = Date.now() - lastSendTimeRef.current;
