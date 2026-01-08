@@ -159,7 +159,7 @@ export function EvidenceMarker({
           {/* Evidence type badge */}
           <div className="flex items-center gap-2 mt-2">
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-background-tertiary text-text-tertiary capitalize">
-              {marker.evidenceType.replace("_", " ")}
+              {marker.evidenceType.replace(/_/g, " ")}
             </span>
             <span className="text-[10px] text-text-muted ml-auto">
               Click to jump

@@ -230,7 +230,7 @@ function DimensionSection({
                   {/* Metadata row */}
                   <div className="flex items-center gap-3 mt-2 text-xs text-text-muted">
                     <span className="capitalize px-1.5 py-0.5 rounded bg-background-tertiary">
-                      {item.type.replace("_", " ")}
+                      {item.type.replace(/_/g, " ")}
                     </span>
 
                     {item.filePath && (

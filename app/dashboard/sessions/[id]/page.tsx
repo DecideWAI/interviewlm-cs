@@ -728,9 +728,14 @@ export default function SessionReplayPage() {
   // Controls
   const togglePlayPause = () => setPlayback(p => ({ ...p, isPlaying: !p.isPlaying }));
 
-  const seekToIndex = useCallback((index: number) => {
+  const seekToIndex = useCallback((index: number, preserveActiveEventId = false) => {
     if (!sessionData || !initialState) return;
     setPlayback(p => ({ ...p, isPlaying: false }));
+
+    // Clear active event ID on manual seek (unless preserving for evidence click)
+    if (!preserveActiveEventId) {
+      setActiveEventId(undefined);
+    }
 
     // FIXED: Reset to initial state before re-applying events
     setReplayState({
@@ -777,7 +782,7 @@ export default function SessionReplayPage() {
 
     if (eventIndex >= 0) {
       setActiveEventId(eventId);
-      seekToIndex(eventIndex);
+      seekToIndex(eventIndex, true); // Preserve activeEventId since we just set it
     }
   }, [sessionData, seekToIndex]);
 

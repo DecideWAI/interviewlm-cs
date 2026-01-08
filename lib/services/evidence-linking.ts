@@ -18,6 +18,7 @@ import type {
   EvaluationDimension,
   EvidenceMarker,
 } from '@/lib/types/comprehensive-evaluation';
+import { logger } from '@/lib/utils/logger';
 
 // Time window for fuzzy timestamp matching (in milliseconds)
 const TIMESTAMP_MATCH_WINDOW_MS = 5000;
@@ -110,11 +111,20 @@ export async function findMatchingEvent(
     if (snippetMatch) return snippetMatch;
   }
 
-  // Strategy 4: Match by test results
+  // Strategy 4: Match by test results (validate event contains test data)
   if (evidence.type === 'test_result') {
-    const testMatch = events.find((event: SessionEventLog) =>
-      possibleEventTypes.includes(event.eventType)
-    );
+    const testMatch = events.find((event: SessionEventLog) => {
+      if (!possibleEventTypes.includes(event.eventType)) return false;
+      // Validate event contains actual test result data
+      const data = event.data as Record<string, unknown>;
+      return (
+        data &&
+        (data.testName !== undefined ||
+          data.passed !== undefined ||
+          data.results !== undefined ||
+          data.totalTests !== undefined)
+      );
+    });
     if (testMatch) return testMatch;
   }
 
@@ -152,7 +162,7 @@ export async function linkEvaluationEvidence(
   });
 
   if (!evaluation) {
-    throw new Error(`Evaluation ${evaluationId} not found`);
+    throw new Error(`Evaluation ${evaluationId} not found for session ${sessionId}`);
   }
 
   // Fetch all session events
@@ -162,7 +172,7 @@ export async function linkEvaluationEvidence(
   });
 
   if (events.length === 0) {
-    console.warn(`No events found for session ${sessionId}`);
+    logger.warn('No events found for session', { sessionId, evaluationId });
     return 0;
   }
 
@@ -189,27 +199,38 @@ export async function linkEvaluationEvidence(
     },
   ];
 
-  // Create links for each evidence item
-  const linksToCreate: Prisma.EvidenceEventLinkCreateManyInput[] = [];
+  // Create links for each evidence item (process in parallel for performance)
+  const matchPromises: Promise<Prisma.EvidenceEventLinkCreateManyInput | null>[] = [];
 
   for (const { dimension, evidence } of dimensions) {
     for (let i = 0; i < evidence.length; i++) {
       const item = evidence[i];
-      const matchingEvent = await findMatchingEvent(sessionId, item, events);
+      const evidenceIndex = i;
 
-      if (matchingEvent) {
-        linksToCreate.push({
-          evaluationId,
-          eventId: matchingEvent.id,
-          dimension,
-          evidenceIndex: i,
-          evidenceType: item.type,
-          description: item.description.substring(0, 500),
-          importance: item.importance || 'normal',
-        });
-      }
+      matchPromises.push(
+        findMatchingEvent(sessionId, item, events).then((matchingEvent) => {
+          if (matchingEvent) {
+            return {
+              evaluationId,
+              eventId: matchingEvent.id,
+              dimension,
+              evidenceIndex,
+              evidenceType: item.type,
+              description: item.description.substring(0, 500),
+              importance: item.importance || 'normal',
+            };
+          }
+          return null;
+        })
+      );
     }
   }
+
+  // Wait for all matches to complete and filter out nulls
+  const matchResults = await Promise.all(matchPromises);
+  const linksToCreate = matchResults.filter(
+    (link): link is Prisma.EvidenceEventLinkCreateManyInput => link !== null
+  );
 
   // Bulk create links (skip duplicates)
   if (linksToCreate.length > 0) {
@@ -219,9 +240,11 @@ export async function linkEvaluationEvidence(
     });
   }
 
-  console.log(
-    `[EvidenceLinking] Created ${linksToCreate.length} links for evaluation ${evaluationId}`
-  );
+  logger.info('Evidence linking completed', {
+    evaluationId,
+    sessionId,
+    linksCreated: linksToCreate.length,
+  });
 
   return linksToCreate.length;
 }
@@ -263,6 +286,8 @@ export async function getEvidenceMarkers(
   });
 
   // Transform to EvidenceMarker format
+  // Note: BigInt to Number conversion is safe here as sequence numbers are
+  // monotonically increasing per session and won't exceed Number.MAX_SAFE_INTEGER
   return links.map((link) => ({
     id: link.id,
     eventId: link.eventId,

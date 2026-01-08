@@ -204,7 +204,14 @@ export async function GET(
     const metrics = calculateSessionMetrics(events, sessionRecording);
 
     // Fetch evidence markers for Sentry-like replay (click to jump)
-    const evidenceMarkers = await getEvidenceMarkers(sessionRecording.id);
+    // Non-critical feature - return empty array on failure
+    let evidenceMarkers: Awaited<ReturnType<typeof getEvidenceMarkers>> = [];
+    try {
+      evidenceMarkers = await getEvidenceMarkers(sessionRecording.id);
+    } catch (evidenceError) {
+      console.warn("Failed to fetch evidence markers:", evidenceError);
+      // Continue without evidence markers - non-critical feature
+    }
 
     // Return comprehensive session data
     return NextResponse.json({
