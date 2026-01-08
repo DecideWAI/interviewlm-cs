@@ -94,6 +94,9 @@ async function extractSessionData(
             files: (data.files as Record<string, string>) || {},
             questionId: (data.questionId as string) || undefined,
             origin: event.origin as 'USER' | 'AI',
+            // Event linking for replay
+            eventId: event.id,
+            sequenceNumber: Number(event.sequenceNumber),
           });
         }
         break;
@@ -108,6 +111,9 @@ async function extractSessionData(
             total: (data.total as number) || 0,
             output: (data.output as string) || undefined,
             questionId: (data.questionId as string) || undefined,
+            // Event linking for replay
+            eventId: event.id,
+            sequenceNumber: Number(event.sequenceNumber),
           });
         }
         break;
@@ -118,6 +124,9 @@ async function extractSessionData(
             timestamp: event.timestamp,
             candidateMessage: (data.content as string) || '',
             questionId: (data.questionId as string) || undefined,
+            // Event linking for replay
+            userEventId: event.id,
+            userSequenceNumber: Number(event.sequenceNumber),
           });
         }
         break;
@@ -130,6 +139,9 @@ async function extractSessionData(
           lastInteraction.assistantMessage = (data.content as string) || '';
           lastInteraction.toolsUsed =
             (data.toolsUsed as string[]) || undefined;
+          // Event linking for replay
+          lastInteraction.assistantEventId = event.id;
+          lastInteraction.assistantSequenceNumber = Number(event.sequenceNumber);
         }
         break;
 
@@ -139,6 +151,9 @@ async function extractSessionData(
             timestamp: event.timestamp,
             command: (data.command as string) || '',
             questionId: (data.questionId as string) || undefined,
+            // Event linking for replay
+            eventId: event.id,
+            sequenceNumber: Number(event.sequenceNumber),
           });
         }
         break;

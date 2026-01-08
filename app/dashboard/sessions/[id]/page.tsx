@@ -32,6 +32,11 @@ import { InterviewLayout } from "@/components/interview/InterviewLayout";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { ProblemPanel } from "@/components/interview/ProblemPanel";
 
+// Evidence replay components
+import { EvidenceMarkers, EvidenceTimelineLegend } from "@/components/replay/EvidenceMarker";
+import { EvidencePanel, EvidenceIndicator } from "@/components/replay/EvidencePanel";
+import type { EvidenceMarker as EvidenceMarkerType } from "@/lib/types/comprehensive-evaluation";
+
 // Dynamically import CodeMirror to avoid SSR issues
 const CodeEditor = dynamic(
   () => import("@/components/interview/CodeEditor").then((mod) => mod.CodeEditor),
@@ -47,6 +52,7 @@ interface TimelineEvent {
   data: any;
   checkpoint?: boolean;
   questionIndex?: number;
+  sequenceNumber?: string; // Added for evidence linking
 }
 
 interface EvaluationData {
@@ -119,6 +125,9 @@ interface SessionData {
     testPassRate: number;
     codeActivityRate: number;
   };
+  // Sentry-like evidence linking
+  evidenceMarkers?: EvidenceMarkerType[];
+  sessionSummary?: string | null;
 }
 
 interface Message {
@@ -395,9 +404,13 @@ export default function SessionReplayPage() {
   });
 
   const [leftSidebarTab, setLeftSidebarTab] = useState<"problem" | "files">("problem");
-  const [rightPanelTab, setRightPanelTab] = useState<"chat" | "evaluation">("chat");
+  const [rightPanelTab, setRightPanelTab] = useState<"chat" | "evaluation" | "evidence">("chat");
   const [questionMarkers, setQuestionMarkers] = useState<Array<{ index: number; questionNumber: number; title: string }>>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+
+  // Evidence markers for Sentry-like replay
+  const [evidenceMarkers, setEvidenceMarkers] = useState<EvidenceMarkerType[]>([]);
+  const [activeEventId, setActiveEventId] = useState<string | undefined>(undefined);
 
   const playbackTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -525,6 +538,12 @@ export default function SessionReplayPage() {
         markers.sort((a, b) => a.questionNumber - b.questionNumber);
 
         setQuestionMarkers(markers);
+
+        // Load evidence markers for Sentry-like replay
+        if (data.evidenceMarkers && data.evidenceMarkers.length > 0) {
+          setEvidenceMarkers(data.evidenceMarkers);
+        }
+
         setLoading(false);
       } catch (err) {
         console.error("Error fetching session:", err);
@@ -742,6 +761,26 @@ export default function SessionReplayPage() {
     }, 0);
   }, [sessionData, initialState, applyEvent]);
 
+  // Seek to specific event by ID (for Sentry-like evidence clicking)
+  const seekToEventId = useCallback((eventId: string, sequenceNumber?: number) => {
+    if (!sessionData) return;
+
+    // Find the event index by ID
+    let eventIndex = sessionData.timeline.findIndex(e => e.id === eventId);
+
+    // If not found by ID, try to find by sequence number
+    if (eventIndex === -1 && sequenceNumber !== undefined) {
+      eventIndex = sessionData.timeline.findIndex(
+        e => e.sequenceNumber === sequenceNumber.toString()
+      );
+    }
+
+    if (eventIndex >= 0) {
+      setActiveEventId(eventId);
+      seekToIndex(eventIndex);
+    }
+  }, [sessionData, seekToIndex]);
+
   // Fetch file content from GCS by checksum
   const fetchGcsContent = useCallback(async (checksum: string, fileName: string) => {
     if (!sessionData || fetchingChecksums.has(checksum)) return null;
@@ -956,6 +995,16 @@ export default function SessionReplayPage() {
               );
             })}
 
+            {/* Evidence markers for Sentry-like replay */}
+            {evidenceMarkers.length > 0 && (
+              <EvidenceMarkers
+                markers={evidenceMarkers}
+                timelineLength={sessionData.timeline.length}
+                onSeekToEvent={seekToEventId}
+                activeEventId={activeEventId}
+              />
+            )}
+
             {/* Slider input (invisible but functional) */}
             <input
               type="range"
@@ -1081,9 +1130,19 @@ export default function SessionReplayPage() {
         }
         chatContent={<ReplayChat messages={replayState.chatMessages} />}
         evaluationContent={<ReplayEvaluation evaluation={sessionData.evaluation} />}
+        evidenceContent={
+          <EvidencePanel
+            markers={evidenceMarkers}
+            evaluation={sessionData.evaluation}
+            onSeekToEvent={seekToEventId}
+            activeEventId={activeEventId}
+            sessionSummary={sessionData.sessionSummary}
+          />
+        }
         rightPanelTab={rightPanelTab}
         onRightPanelTabChange={setRightPanelTab}
         showEvaluationBadge={!!sessionData.evaluation}
+        showEvidenceBadge={evidenceMarkers.length > 0}
       />
     </div>
   );

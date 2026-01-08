@@ -22,6 +22,11 @@ export interface ComprehensiveEvidence {
   filePath?: string;
   lineNumber?: number;
   value?: string | number;
+
+  // Event linking for Sentry-like replay (click to jump to moment)
+  eventId?: string;           // SessionEventLog.id
+  sequenceNumber?: number;    // For timeline positioning
+  importance?: 'critical' | 'important' | 'normal';
 }
 
 /**
@@ -64,15 +69,18 @@ export interface ComprehensiveSessionData {
   sessionId: string;
   candidateId: string;
 
-  // Code snapshots with timestamps
+  // Code snapshots with timestamps and event links
   codeSnapshots: Array<{
     timestamp: Date;
     files: Record<string, string>;
     questionId?: string;
     origin: 'USER' | 'AI';
+    // Event linking for replay
+    eventId?: string;
+    sequenceNumber?: number;
   }>;
 
-  // Test results
+  // Test results with event links
   testResults: Array<{
     timestamp: Date;
     passed: number;
@@ -80,24 +88,35 @@ export interface ComprehensiveSessionData {
     total: number;
     output?: string;
     questionId?: string;
+    // Event linking for replay
+    eventId?: string;
+    sequenceNumber?: number;
   }>;
 
-  // AI interactions
+  // AI interactions with event links
   aiInteractions: Array<{
     timestamp: Date;
     candidateMessage: string;
     assistantMessage?: string;
     toolsUsed?: string[];
     questionId?: string;
+    // Event linking for replay
+    userEventId?: string;
+    assistantEventId?: string;
+    userSequenceNumber?: number;
+    assistantSequenceNumber?: number;
   }>;
 
-  // Terminal commands
+  // Terminal commands with event links
   terminalCommands: Array<{
     timestamp: Date;
     command: string;
     output?: string;
     exitCode?: number;
     questionId?: string;
+    // Event linking for replay
+    eventId?: string;
+    sequenceNumber?: number;
   }>;
 
   // Interview metrics
@@ -309,4 +328,45 @@ export function calculateOverallConfidence(
     dimensions.aiCollaboration.confidence * DIMENSION_WEIGHTS.aiCollaboration +
     dimensions.communication.confidence * DIMENSION_WEIGHTS.communication
   );
+}
+
+// =====================================================
+// EVIDENCE MARKER TYPES
+// For Sentry-like session replay with clickable evidence
+// =====================================================
+
+/**
+ * Evaluation dimension names
+ */
+export type EvaluationDimension = 'codeQuality' | 'problemSolving' | 'aiCollaboration' | 'communication';
+
+/**
+ * Evidence marker for timeline display
+ * Represents a link between evaluation evidence and a timeline event
+ */
+export interface EvidenceMarker {
+  id: string;               // EvidenceEventLink.id
+  eventId: string;          // SessionEventLog.id
+  sequenceNumber: number;   // For timeline positioning
+  timestamp: Date;          // Event timestamp
+  dimension: EvaluationDimension;
+  evidenceIndex: number;    // Index in the evidence array
+  evidenceType: ComprehensiveEvidence['type'];
+  description: string;
+  importance: 'critical' | 'important' | 'normal';
+}
+
+/**
+ * Session summary with key moments
+ * For AI-generated session activity summary
+ */
+export interface SessionSummary {
+  overview: string;         // 2-3 sentence summary
+  keyMoments: Array<{
+    eventId: string;
+    timestamp: Date;
+    description: string;
+    category: 'success' | 'struggle' | 'breakthrough' | 'error';
+  }>;
+  generatedAt: Date;
 }

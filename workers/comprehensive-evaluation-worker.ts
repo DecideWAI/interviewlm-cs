@@ -23,6 +23,7 @@ import {
 } from '../lib/agents/comprehensive-evaluation-agent';
 import { evaluateComprehensive as evaluateComprehensiveLangGraph } from '../lib/services/langgraph-client';
 import { recordEvent } from '../lib/services/sessions';
+import { linkEvaluationEvidence } from '../lib/services/evidence-linking';
 import type { ComprehensiveEvaluationJobData, ComprehensiveEvaluationInput } from '../lib/types/comprehensive-evaluation';
 
 /**
@@ -164,7 +165,7 @@ class ComprehensiveEvaluationWorker {
     }
 
     // Save to database - cast complex objects to JSON for Prisma compatibility
-    await prisma.evaluation.create({
+    const evaluation = await prisma.evaluation.create({
       data: {
         sessionId: data.sessionId,
         candidateId: data.candidateId,
@@ -194,6 +195,23 @@ class ComprehensiveEvaluationWorker {
         model: result.model,
       },
     });
+
+    // Link evaluation evidence to timeline events for Sentry-like replay
+    try {
+      const linksCreated = await linkEvaluationEvidence(evaluation.id, data.sessionId);
+      logger.info('[ComprehensiveEvaluationWorker] Evidence links created', {
+        sessionId: data.sessionId,
+        evaluationId: evaluation.id,
+        linksCreated,
+      });
+    } catch (linkError) {
+      // Non-fatal: log warning but don't fail the evaluation
+      logger.warn('[ComprehensiveEvaluationWorker] Failed to create evidence links', {
+        sessionId: data.sessionId,
+        evaluationId: evaluation.id,
+        error: linkError instanceof Error ? linkError.message : 'Unknown error',
+      });
+    }
 
     // Update candidate status
     await prisma.candidate.update({
