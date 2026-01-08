@@ -36,7 +36,7 @@ resource "google_cloud_run_v2_service" "app" {
       connector = var.vpc_connector_id
       # ALL_TRAFFIC required for Cloud Run to Cloud Run calls with internal ingress
       # Without this, calls to LangGraph (internal ingress) fail with 404
-      egress    = "ALL_TRAFFIC"
+      egress = "ALL_TRAFFIC"
     }
 
     containers {
