@@ -812,12 +812,29 @@ class SandboxManager:
     # =========================================================================
 
     @classmethod
+    def _get_asyncpg_url(cls) -> str:
+        """
+        Convert SQLAlchemy database URL to asyncpg-compatible format.
+
+        asyncpg requires plain postgresql:// or postgres:// URLs,
+        not postgresql+asyncpg:// which SQLAlchemy uses.
+        """
+        db_url = settings.database_url
+        # Remove SQLAlchemy driver suffix
+        if "+asyncpg" in db_url:
+            db_url = db_url.replace("+asyncpg", "")
+        # Normalize postgres:// to postgresql://
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        return db_url
+
+    @classmethod
     async def _get_sandbox_id_from_db(cls, session_id: str) -> Optional[str]:
         """Get sandbox ID from database."""
         if not ASYNCPG_AVAILABLE:
             return None
         try:
-            conn = await asyncpg.connect(settings.database_url)
+            conn = await asyncpg.connect(cls._get_asyncpg_url())
             try:
                 # Try session recording ID first
                 row = await conn.fetchrow(
@@ -848,7 +865,7 @@ class SandboxManager:
         if not ASYNCPG_AVAILABLE:
             return
         try:
-            conn = await asyncpg.connect(settings.database_url)
+            conn = await asyncpg.connect(cls._get_asyncpg_url())
             try:
                 # Try session recording ID first
                 result = await conn.execute(
@@ -877,7 +894,7 @@ class SandboxManager:
         if not ASYNCPG_AVAILABLE:
             return
         try:
-            conn = await asyncpg.connect(settings.database_url)
+            conn = await asyncpg.connect(cls._get_asyncpg_url())
             try:
                 # Try session recording ID first
                 result = await conn.execute(
