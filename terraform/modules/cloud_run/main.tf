@@ -101,7 +101,9 @@ resource "google_cloud_run_v2_service" "app" {
       }
     }
 
-    timeout = "300s"
+    # 1 hour timeout for SSE endpoints (code-stream, file-updates, terminal/pty)
+    # These are long-lived connections that stream real-time data
+    timeout = "3600s"
 
     execution_environment = "EXECUTION_ENVIRONMENT_GEN2"
 

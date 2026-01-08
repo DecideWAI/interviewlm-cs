@@ -379,31 +379,50 @@ class EventStore {
 
   /**
    * Emit a single event (immediate write)
+   * Handles sequence number collisions with retry
    */
   async emit(options: EmitEventOptions): Promise<string> {
-    const sequenceNumber = await this.getNextSequence(options.sessionId);
     const timestamp = options.timestamp ?? new Date();
+    const maxRetries = 3;
 
-    const event = await prisma.sessionEventLog.create({
-      data: {
-        sessionId: options.sessionId,
-        sequenceNumber,
-        timestamp,
-        eventType: options.eventType,
-        category: options.category,
-        origin: options.origin,
-        data: options.data as any,
-        questionIndex: options.questionIndex,
-        filePath: options.filePath,
-        checkpoint: options.checkpoint ?? false,
-      },
-    });
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const sequenceNumber = await this.getNextSequence(options.sessionId);
 
-    return event.id;
+        const event = await prisma.sessionEventLog.create({
+          data: {
+            sessionId: options.sessionId,
+            sequenceNumber,
+            timestamp,
+            eventType: options.eventType,
+            category: options.category,
+            origin: options.origin,
+            data: options.data as any,
+            questionIndex: options.questionIndex,
+            filePath: options.filePath,
+            checkpoint: options.checkpoint ?? false,
+          },
+        });
+
+        return event.id;
+      } catch (error: any) {
+        // Check for unique constraint violation (P2002 in Prisma)
+        if (error?.code === "P2002" && attempt < maxRetries - 1) {
+          // Clear the cached sequence and retry
+          this.clearSequenceCache(options.sessionId);
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    // Should never reach here, but TypeScript needs it
+    throw new Error("Failed to emit event after max retries");
   }
 
   /**
    * Emit multiple events in a transaction
+   * Handles sequence number collisions with retry
    */
   async emitMany(events: EmitEventOptions[]): Promise<string[]> {
     if (events.length === 0) return [];
@@ -416,34 +435,56 @@ class EventStore {
       bySession.set(event.sessionId, list);
     }
 
-    const ids: string[] = [];
+    const maxRetries = 3;
 
-    await prisma.$transaction(async (tx) => {
-      for (const [sessionId, sessionEvents] of bySession) {
-        const baseSequence = await this.getNextSequence(sessionId, sessionEvents.length);
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const ids: string[] = [];
 
-        for (let i = 0; i < sessionEvents.length; i++) {
-          const opt = sessionEvents[i];
-          const event = await tx.sessionEventLog.create({
-            data: {
+        await prisma.$transaction(async (tx) => {
+          for (const [sessionId, sessionEvents] of bySession) {
+            const baseSequence = await this.getNextSequence(
               sessionId,
-              sequenceNumber: baseSequence + BigInt(i),
-              timestamp: opt.timestamp ?? new Date(),
-              eventType: opt.eventType,
-              category: opt.category,
-              origin: opt.origin,
-              data: opt.data as any,
-              questionIndex: opt.questionIndex,
-              filePath: opt.filePath,
-              checkpoint: opt.checkpoint ?? false,
-            },
-          });
-          ids.push(event.id);
-        }
-      }
-    });
+              sessionEvents.length
+            );
 
-    return ids;
+            for (let i = 0; i < sessionEvents.length; i++) {
+              const opt = sessionEvents[i];
+              const event = await tx.sessionEventLog.create({
+                data: {
+                  sessionId,
+                  sequenceNumber: baseSequence + BigInt(i),
+                  timestamp: opt.timestamp ?? new Date(),
+                  eventType: opt.eventType,
+                  category: opt.category,
+                  origin: opt.origin,
+                  data: opt.data as any,
+                  questionIndex: opt.questionIndex,
+                  filePath: opt.filePath,
+                  checkpoint: opt.checkpoint ?? false,
+                },
+              });
+              ids.push(event.id);
+            }
+          }
+        });
+
+        return ids;
+      } catch (error: any) {
+        // Check for unique constraint violation (P2002 in Prisma)
+        if (error?.code === "P2002" && attempt < maxRetries - 1) {
+          // Clear cached sequences for all affected sessions and retry
+          for (const sessionId of bySession.keys()) {
+            this.clearSequenceCache(sessionId);
+          }
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    // Should never reach here, but TypeScript needs it
+    throw new Error("Failed to emit events after max retries");
   }
 
   /**
