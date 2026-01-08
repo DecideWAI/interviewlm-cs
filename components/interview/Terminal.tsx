@@ -23,6 +23,8 @@ interface TerminalProps {
 export interface TerminalHandle {
   write: (data: string) => void;
   writeln: (data: string) => void;
+  clear: () => void;
+  reset: () => void;
   connectionStatus: "connected" | "disconnected" | "connecting";
   connectionMode: "pty" | "tunnel";
 }
@@ -747,6 +749,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       },
       writeln: (data: string) => {
         xtermRef.current?.writeln(data);
+      },
+      clear: () => {
+        // Clear scrollback and visible content
+        xtermRef.current?.clear();
+      },
+      reset: () => {
+        // Full reset - clear all content and reset terminal state
+        xtermRef.current?.reset();
       },
       connectionStatus,
       connectionMode,

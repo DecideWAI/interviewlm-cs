@@ -19,6 +19,17 @@ export interface TerminalEvent {
   isCommand: boolean;
 }
 
+/**
+ * Terminal checkpoint for efficient seeking
+ * Stores accumulated terminal output at specific points in time
+ */
+export interface TerminalCheckpoint {
+  timestamp: Date;
+  timeOffset: number; // Seconds from session start
+  accumulatedOutput: string; // All terminal output up to this point
+  eventIndex: number; // Index in terminalEvents array
+}
+
 export interface AIInteraction {
   id: string;
   timestamp: Date;
@@ -44,6 +55,7 @@ export interface SessionData {
   events: SessionEvent[];
   codeSnapshots: CodeSnapshot[];
   terminalEvents: TerminalEvent[];
+  terminalCheckpoints: TerminalCheckpoint[]; // Pre-computed checkpoints for efficient seeking
   aiInteractions: AIInteraction[];
   keyMoments: KeyMoment[];
   metadata: {
