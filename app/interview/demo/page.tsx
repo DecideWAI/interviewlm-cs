@@ -84,10 +84,8 @@ console.log(longestPalindrome("cbbd"));  // Expected: "bb"
 
 // Demo tech stack requirements
 const demoTechRequirements: TechStackRequirements = {
-  critical: [LANGUAGES.typescript],
-  required: [],
-  recommended: [TESTING.jest],
-  optional: [],
+  required: [LANGUAGES.typescript],
+  optional: [TESTING.jest],
 };
 
 export default function DemoInterviewPage() {

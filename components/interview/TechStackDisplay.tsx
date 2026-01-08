@@ -15,9 +15,7 @@ interface TechStackDisplayProps {
 export function TechStackDisplay({ requirements, className = "" }: TechStackDisplayProps) {
   const [isExpanded, setIsExpanded] = useState(true);
 
-  const hasCritical = requirements.critical.length > 0;
   const hasRequired = requirements.required.length > 0;
-  const hasRecommended = requirements.recommended.length > 0;
   const hasOptional = requirements.optional.length > 0;
 
   return (
@@ -42,16 +40,16 @@ export function TechStackDisplay({ requirements, className = "" }: TechStackDisp
 
         {isExpanded && (
           <div className="mt-4 space-y-3 max-h-[300px] overflow-y-auto">
-            {hasCritical && (
+            {hasRequired && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-sm">🔴</span>
                   <p className="text-xs font-medium text-text-secondary">
-                    CRITICAL (Must Use):
+                    REQUIRED:
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {requirements.critical.map((tech) => (
+                  {requirements.required.map((tech) => (
                     <Badge key={tech.id} variant="error" className="text-xs">
                       {tech.name}
                       {tech.version && (
@@ -63,51 +61,12 @@ export function TechStackDisplay({ requirements, className = "" }: TechStackDisp
               </div>
             )}
 
-            {hasRequired && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm">🟠</span>
-                  <p className="text-xs font-medium text-text-secondary">
-                    REQUIRED (Must Be Present):
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {requirements.required.map((tech) => (
-                    <Badge key={tech.id} variant="warning" className="text-xs">
-                      {tech.name}
-                      {tech.version && (
-                        <span className="ml-1 opacity-70">{tech.version}</span>
-                      )}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {hasRecommended && (
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm">🟡</span>
-                  <p className="text-xs font-medium text-text-secondary">
-                    RECOMMENDED:
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {requirements.recommended.map((tech) => (
-                    <Badge key={tech.id} variant="info" className="text-xs">
-                      {tech.name}
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {hasOptional && (
               <div>
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-sm">🟢</span>
                   <p className="text-xs font-medium text-text-secondary">
-                    OPTIONAL (Bonus Points):
+                    OPTIONAL:
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1">
@@ -117,16 +76,6 @@ export function TechStackDisplay({ requirements, className = "" }: TechStackDisp
                     </Badge>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {hasCritical && (
-              <div className="pt-2 border-t border-border-secondary">
-                <p className="text-xs text-text-tertiary">
-                  ⚠️ <strong>IMPORTANT:</strong> Using a different technology than{" "}
-                  <strong>{requirements.critical.map((t) => t.name).join(", ")}</strong> will
-                  terminate your session immediately.
-                </p>
               </div>
             )}
 

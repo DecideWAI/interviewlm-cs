@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import * as Icons from "lucide-react";
 import { LucideIcon } from "lucide-react";
-import { TECH_STACK_PRESETS } from "@/lib/tech-catalog"; // Keep presets for now, or move to API later
+import { TECH_STACK_PRESETS } from "@/lib/tech-catalog";
 
 interface TechStackStepProps {
   config: Partial<AssessmentConfig>;
@@ -25,9 +25,7 @@ interface TechStackStepProps {
 export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) {
   const [selectedTech, setSelectedTech] = useState<TechStackRequirements>(
     config.techStackRequirements || {
-      critical: [],
       required: [],
-      recommended: [],
       optional: [],
     }
   );
@@ -37,8 +35,8 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
   const [technologies, setTechnologies] = useState<Technology[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Identify primary language from critical list
-  const primaryLanguage = selectedTech.critical.find(
+  // Identify primary language from required list
+  const primaryLanguage = selectedTech.required.find(
     (t) => t.category === "language"
   );
 
@@ -49,7 +47,6 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
         const response = await fetch("/api/technologies");
         if (response.ok) {
           const json = await response.json();
-          // Handle both wrapped { data: [...] } and direct array responses
           const data = json.data || json;
           setTechnologies(Array.isArray(data) ? data : []);
         } else {
@@ -74,19 +71,16 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
     const newTechStack = { ...selectedTech };
 
     // Remove from all priority levels first
-    newTechStack.critical = newTechStack.critical.filter((t) => t.id !== tech.id);
     newTechStack.required = newTechStack.required.filter((t) => t.id !== tech.id);
-    newTechStack.recommended = newTechStack.recommended.filter((t) => t.id !== tech.id);
     newTechStack.optional = newTechStack.optional.filter((t) => t.id !== tech.id);
 
     // Check if already selected at this priority level
     const isSelected = selectedTech[priority].some((t) => t.id === tech.id);
 
     if (!isSelected) {
-      // Special handling for Primary Language
-      if (tech.category === "language" && priority === "critical") {
-        // Remove other languages from critical to enforce single primary language
-        newTechStack.critical = newTechStack.critical.filter(
+      // Special handling for Primary Language - only one allowed in required
+      if (tech.category === "language" && priority === "required") {
+        newTechStack.required = newTechStack.required.filter(
           (t) => t.category !== "language"
         );
       }
@@ -99,9 +93,7 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
   };
 
   const isTechSelected = (techId: string): TechPriority | null => {
-    if (selectedTech.critical.some((t) => t.id === techId)) return "critical";
     if (selectedTech.required.some((t) => t.id === techId)) return "required";
-    if (selectedTech.recommended.some((t) => t.id === techId)) return "recommended";
     if (selectedTech.optional.some((t) => t.id === techId)) return "optional";
     return null;
   };
@@ -111,27 +103,12 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
     if (!preset) return;
 
     const newTechStack: TechStackRequirements = {
-      critical: preset.critical,
       required: preset.required,
-      recommended: preset.recommended,
       optional: preset.optional,
     };
 
     setSelectedTech(newTechStack);
     onUpdate({ techStackRequirements: newTechStack });
-  };
-
-  const getPriorityBadge = (priority: TechPriority): "error" | "default" | "info" | "warning" | "primary" | "success" => {
-    switch (priority) {
-      case "critical":
-        return "error";
-      case "required":
-        return "primary";
-      case "recommended":
-        return "info";
-      case "optional":
-        return "default";
-    }
   };
 
   const renderTechnologyCard = (tech: Technology) => {
@@ -150,8 +127,8 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
         `}
         onClick={() => {
           if (!selectedPriority) {
-            // Default priority based on category
-            const defaultPriority = tech.category === "language" ? "critical" : "required";
+            // Default: languages go to required, others to optional
+            const defaultPriority = tech.category === "language" ? "required" : "optional";
             handleTechToggle(tech, defaultPriority);
           }
         }}
@@ -164,7 +141,10 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
             <IconComponent className="h-5 w-5" />
           </div>
           {selectedPriority && (
-            <Badge variant={getPriorityBadge(selectedPriority)} className="text-[10px] uppercase">
+            <Badge
+              variant={selectedPriority === "required" ? "primary" : "default"}
+              className="text-[10px] uppercase"
+            >
               {selectedPriority}
             </Badge>
           )}
@@ -175,44 +155,49 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
           {tech.description}
         </p>
 
-        {/* Priority Selection (Visible on hover or if selected) */}
-        <div className={`
-          mt-auto pt-2 border-t border-border/50 flex gap-1 justify-between
-          ${selectedPriority ? "opacity-100" : "opacity-0 group-hover:opacity-100"}
-          transition-opacity
-        `}>
+        {/* Simplified Priority Selection */}
+        <div
+          className={`
+            mt-auto pt-2 border-t border-border/50 flex gap-2 justify-between
+            ${selectedPriority ? "opacity-100" : "opacity-0 group-hover:opacity-100"}
+            transition-opacity
+          `}
+        >
           <button
-            onClick={(e) => { e.stopPropagation(); handleTechToggle(tech, "critical"); }}
-            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] transition-colors ${selectedPriority === 'critical' ? 'bg-red-500 text-white' : 'bg-red-100 text-red-700 hover:bg-red-200'}`}
-            title="Critical"
-          >
-            C
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); handleTechToggle(tech, "required"); }}
-            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] transition-colors ${selectedPriority === 'required' ? 'bg-orange-500 text-white' : 'bg-orange-100 text-orange-700 hover:bg-orange-200'}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleTechToggle(tech, "required");
+            }}
+            className={`flex-1 py-1.5 px-2 rounded text-xs font-medium transition-colors ${
+              selectedPriority === "required"
+                ? "bg-primary text-white"
+                : "bg-primary/10 text-primary hover:bg-primary/20"
+            }`}
             title="Required"
           >
-            R
+            Required
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); handleTechToggle(tech, "recommended"); }}
-            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] transition-colors ${selectedPriority === 'recommended' ? 'bg-blue-500 text-white' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}`}
-            title="Recommended"
-          >
-            M
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); handleTechToggle(tech, "optional"); }}
-            className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] transition-colors ${selectedPriority === 'optional' ? 'bg-green-500 text-white' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleTechToggle(tech, "optional");
+            }}
+            className={`flex-1 py-1.5 px-2 rounded text-xs font-medium transition-colors ${
+              selectedPriority === "optional"
+                ? "bg-text-secondary text-white"
+                : "bg-background-tertiary text-text-secondary hover:bg-background-hover"
+            }`}
             title="Optional"
           >
-            O
+            Optional
           </button>
           {selectedPriority && (
             <button
-              onClick={(e) => { e.stopPropagation(); handleTechToggle(tech, selectedPriority); }}
-              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] bg-gray-100 text-gray-500 hover:bg-gray-200"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleTechToggle(tech, selectedPriority);
+              }}
+              className="py-1.5 px-2 rounded text-xs bg-background-tertiary text-text-tertiary hover:bg-error/10 hover:text-error"
               title="Remove"
             >
               <Icons.X className="h-3 w-3" />
@@ -226,26 +211,52 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
   // Filter frameworks based on primary language
   const filteredFrameworks = technologies.filter((t) => {
     if (t.category !== "framework") return false;
-    if (!primaryLanguage) return true; // Show all if no language selected
+    if (!primaryLanguage) return true;
     return primaryLanguage.commonlyPairedWith?.includes(t.id);
   });
 
   const categories = [
-    { id: "language", name: "Languages", icon: Icons.Code2, count: technologies.filter(t => t.category === "language").length },
-    { id: "framework", name: "Frameworks", icon: Icons.Layers, count: filteredFrameworks.length },
-    { id: "database", name: "Databases", icon: Icons.Database, count: technologies.filter(t => t.category === "database").length },
-    { id: "testing", name: "Testing", icon: Icons.TestTube, count: technologies.filter(t => t.category === "testing").length },
-    { id: "tool", name: "Tools", icon: Icons.Wrench, count: technologies.filter(t => t.category === "tool").length },
+    {
+      id: "language",
+      name: "Languages",
+      icon: Icons.Code2,
+      count: technologies.filter((t) => t.category === "language").length,
+    },
+    {
+      id: "framework",
+      name: "Frameworks",
+      icon: Icons.Layers,
+      count: filteredFrameworks.length,
+    },
+    {
+      id: "database",
+      name: "Databases",
+      icon: Icons.Database,
+      count: technologies.filter((t) => t.category === "database").length,
+    },
+    {
+      id: "testing",
+      name: "Testing",
+      icon: Icons.TestTube,
+      count: technologies.filter((t) => t.category === "testing").length,
+    },
+    {
+      id: "tool",
+      name: "Tools",
+      icon: Icons.Wrench,
+      count: technologies.filter((t) => t.category === "tool").length,
+    },
   ];
 
-  const totalSelected =
-    selectedTech.critical.length +
-    selectedTech.required.length +
-    selectedTech.recommended.length +
-    selectedTech.optional.length;
+  const totalSelected = selectedTech.required.length + selectedTech.optional.length;
 
   if (loading) {
-    return <div className="p-8 text-center">Loading technologies...</div>;
+    return (
+      <div className="p-8 text-center">
+        <Icons.Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-text-tertiary" />
+        <p className="text-text-secondary">Loading technologies...</p>
+      </div>
+    );
   }
 
   return (
@@ -273,7 +284,9 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
 
       {/* Quick Presets */}
       <div className="flex flex-wrap gap-2 pb-4 border-b border-border">
-        <span className="text-sm font-medium text-muted-foreground py-1">Quick Presets:</span>
+        <span className="text-sm font-medium text-muted-foreground py-1">
+          Quick Presets:
+        </span>
         {Object.entries(TECH_STACK_PRESETS).map(([key, preset]) => (
           <Button
             key={key}
@@ -296,15 +309,22 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
               onClick={() => setActiveCategory(cat.id)}
               className={`
                 flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all whitespace-nowrap
-                ${activeCategory === cat.id
-                  ? "bg-primary text-primary-foreground shadow-sm"
-                  : "bg-background hover:bg-muted text-muted-foreground"
+                ${
+                  activeCategory === cat.id
+                    ? "bg-primary text-primary-foreground shadow-sm"
+                    : "bg-background hover:bg-muted text-muted-foreground"
                 }
               `}
             >
               <cat.icon className="h-4 w-4" />
               {cat.name}
-              <span className={`ml-auto text-xs ${activeCategory === cat.id ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+              <span
+                className={`ml-auto text-xs ${
+                  activeCategory === cat.id
+                    ? "text-primary-foreground/80"
+                    : "text-muted-foreground"
+                }`}
+              >
                 {cat.count}
               </span>
             </button>
@@ -324,13 +344,16 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {activeCategory === "framework"
               ? filteredFrameworks
-                .filter(t => t.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map(renderTechnologyCard)
+                  .filter((t) =>
+                    t.name.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map(renderTechnologyCard)
               : technologies
-                .filter(t => t.category === activeCategory)
-                .filter(t => t.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map(renderTechnologyCard)
-            }
+                  .filter((t) => t.category === activeCategory)
+                  .filter((t) =>
+                    t.name.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map(renderTechnologyCard)}
           </div>
         </div>
       </div>
@@ -346,21 +369,28 @@ export function TechStackStep({ config, onUpdate, errors }: TechStackStepProps) 
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {["critical", "required", "recommended", "optional"].map((priority) => {
+              {["required", "optional"].map((priority) => {
                 const items = selectedTech[priority as TechPriority];
                 if (items.length === 0) return null;
 
                 return (
                   <div key={priority} className="flex items-start gap-3">
-                    <div className={`w-24 flex-shrink-0 text-xs font-semibold uppercase py-1 ${priority === 'critical' ? 'text-red-600' :
-                        priority === 'required' ? 'text-orange-600' :
-                          priority === 'recommended' ? 'text-blue-600' : 'text-green-600'
-                      }`}>
+                    <div
+                      className={`w-20 flex-shrink-0 text-xs font-semibold uppercase py-1 ${
+                        priority === "required"
+                          ? "text-primary"
+                          : "text-text-secondary"
+                      }`}
+                    >
                       {priority}
                     </div>
                     <div className="flex flex-wrap gap-2">
-                      {items.map(tech => (
-                        <Badge key={tech.id} variant="default" className="bg-background border border-border text-foreground">
+                      {items.map((tech) => (
+                        <Badge
+                          key={tech.id}
+                          variant="default"
+                          className="bg-background border border-border text-foreground"
+                        >
                           {tech.name}
                         </Badge>
                       ))}

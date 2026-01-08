@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { AssessmentConfig, QuestionSeed, PricingTier, AssessmentTemplate } from "@/types/assessment";
+import { AssessmentConfig, QuestionSeed, PricingTier, AssessmentTemplate, RoleMetadata, SeniorityMetadata } from "@/types/assessment";
 import { getTierLimits } from "@/lib/assessment-config";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Plus, Trash2, Sparkles, Lock, Zap, Loader2 } from "lucide-react";
+import { FileText, Plus, Trash2, Sparkles, Lock, Zap, Loader2, Clock, Target, Layers, CheckCircle2 } from "lucide-react";
 import { IncrementalSeedForm } from "../IncrementalSeedForm";
 
 interface QuestionConfigStepProps {
@@ -18,6 +18,8 @@ interface QuestionConfigStepProps {
   onUpdate: (updates: Partial<AssessmentConfig>) => void;
   errors: Record<string, string>;
   userTier: PricingTier;
+  /** Show summary panel for final step */
+  showSummary?: boolean;
 }
 
 export function QuestionConfigStep({
@@ -25,6 +27,7 @@ export function QuestionConfigStep({
   onUpdate,
   errors,
   userTier,
+  showSummary = true,
 }: QuestionConfigStepProps) {
   const tierLimits = getTierLimits(userTier);
   const [localSeeds, setLocalSeeds] = useState<QuestionSeed[]>(
@@ -32,6 +35,27 @@ export function QuestionConfigStep({
   );
   const [availableTemplates, setAvailableTemplates] = useState<AssessmentTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [roles, setRoles] = useState<Record<string, RoleMetadata>>({});
+  const [seniorityLevels, setSeniorityLevels] = useState<Record<string, SeniorityMetadata>>({});
+
+  // Fetch roles and seniority for summary display
+  useEffect(() => {
+    async function fetchConfig() {
+      try {
+        const response = await fetch("/api/config?type=all");
+        if (response.ok) {
+          const data = await response.json();
+          setRoles(data.data?.roles || {});
+          setSeniorityLevels(data.data?.seniorityLevels || {});
+        }
+      } catch (error) {
+        console.error("Error fetching config:", error);
+      }
+    }
+    if (showSummary) {
+      fetchConfig();
+    }
+  }, [showSummary]);
 
   // Fetch templates from database when role or seniority changes
   useEffect(() => {
@@ -95,8 +119,20 @@ export function QuestionConfigStep({
     typeof customQuestionLimit === "number" &&
     localSeeds.length >= customQuestionLimit;
 
+  // Get template name if selected
+  const selectedTemplate = availableTemplates.find(t => t.id === config.templateId);
+
+  // Get tech stack summary
+  const techStackSummary = config.techStackRequirements
+    ? [...config.techStackRequirements.required, ...config.techStackRequirements.optional]
+        .map(t => t.name)
+        .slice(0, 5)
+    : [];
+
   return (
-    <div className="space-y-6">
+    <div className={`${showSummary ? 'flex flex-col lg:flex-row gap-6' : ''}`}>
+      {/* Main Content */}
+      <div className={`${showSummary ? 'flex-1' : ''} space-y-6`}>
       <Tabs
         defaultValue="template"
         value={config.useTemplate ? "template" : config.useIncremental ? "incremental" : "custom"}
@@ -425,6 +461,148 @@ export function QuestionConfigStep({
           )}
         </div>
       </div>
+      </div>
+
+      {/* Summary Panel (Right Side) */}
+      {showSummary && (
+        <div className="lg:w-80 lg:flex-shrink-0">
+          <Card className="border-border-secondary sticky top-4">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <CheckCircle2 className="h-5 w-5 text-success" />
+                Assessment Summary
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Role & Duration */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <Target className="h-4 w-4 text-primary" />
+                  <span className="text-text-secondary">Target:</span>
+                  <span className="font-medium text-text-primary">
+                    {config.seniority && seniorityLevels[config.seniority]
+                      ? seniorityLevels[config.seniority].name
+                      : ""}{" "}
+                    {config.role && roles[config.role]
+                      ? roles[config.role].name
+                      : "Not selected"}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 text-sm">
+                  <Clock className="h-4 w-4 text-primary" />
+                  <span className="text-text-secondary">Duration:</span>
+                  <span className="font-medium text-text-primary">
+                    {config.duration || 0} minutes
+                  </span>
+                </div>
+              </div>
+
+              {/* Tech Stack */}
+              {techStackSummary.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm">
+                    <Layers className="h-4 w-4 text-primary" />
+                    <span className="text-text-secondary">Tech Stack:</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {techStackSummary.map((tech) => (
+                      <Badge key={tech} variant="default" className="text-xs">
+                        {tech}
+                      </Badge>
+                    ))}
+                    {config.techStackRequirements &&
+                      config.techStackRequirements.required.length +
+                        config.techStackRequirements.optional.length >
+                        5 && (
+                        <Badge variant="default" className="text-xs">
+                          +
+                          {config.techStackRequirements.required.length +
+                            config.techStackRequirements.optional.length -
+                            5}{" "}
+                          more
+                        </Badge>
+                      )}
+                  </div>
+                </div>
+              )}
+
+              {/* Question Config */}
+              <div className="space-y-2 pt-2 border-t border-border">
+                <div className="flex items-center gap-2 text-sm">
+                  <FileText className="h-4 w-4 text-primary" />
+                  <span className="text-text-secondary">Questions:</span>
+                </div>
+                {config.useTemplate && selectedTemplate ? (
+                  <div className="text-sm">
+                    <p className="font-medium text-text-primary">
+                      {selectedTemplate.name}
+                    </p>
+                    <p className="text-xs text-text-tertiary">
+                      {selectedTemplate.problemCount} problems
+                    </p>
+                  </div>
+                ) : config.useIncremental ? (
+                  <div className="text-sm">
+                    <Badge variant="primary" className="text-xs">
+                      Adaptive
+                    </Badge>
+                    <p className="text-xs text-text-tertiary mt-1">
+                      AI-powered question generation
+                    </p>
+                  </div>
+                ) : localSeeds.length > 0 ? (
+                  <div className="text-sm">
+                    <p className="font-medium text-text-primary">
+                      {localSeeds.length} custom seed(s)
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-xs text-text-tertiary">Not configured</p>
+                )}
+              </div>
+
+              {/* AI Settings */}
+              <div className="space-y-1 pt-2 border-t border-border text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-text-secondary">AI Assistance</span>
+                  <span
+                    className={
+                      config.aiAssistanceEnabled
+                        ? "text-success font-medium"
+                        : "text-text-tertiary"
+                    }
+                  >
+                    {config.aiAssistanceEnabled ? "Enabled" : "Disabled"}
+                  </span>
+                </div>
+                {config.aiAssistanceEnabled && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-text-secondary">AI Monitoring</span>
+                    <span
+                      className={
+                        config.aiMonitoringEnabled
+                          ? "text-success font-medium"
+                          : "text-text-tertiary"
+                      }
+                    >
+                      {config.aiMonitoringEnabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Tier Badge */}
+              <div className="pt-2 border-t border-border">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-text-secondary">Your Tier</span>
+                  <Badge variant="primary">{userTier.toUpperCase()}</Badge>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

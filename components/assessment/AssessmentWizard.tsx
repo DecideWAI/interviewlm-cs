@@ -7,11 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { ChevronLeft, ChevronRight, Check } from "lucide-react";
 
-import { BasicsStep } from "./wizard-steps/BasicsStep";
-import { RoleAndSeniorityStep } from "./wizard-steps/RoleAndSeniorityStep";
+import { AssessmentSetupStep } from "./wizard-steps/AssessmentSetupStep";
 import { TechStackStep } from "./wizard-steps/TechStackStep";
 import { QuestionConfigStep } from "./wizard-steps/QuestionConfigStep";
-import { ReviewAndPreviewStep } from "./wizard-steps/ReviewAndPreviewStep";
 
 interface AssessmentWizardProps {
   /** Initial tier (from user's subscription) */
@@ -23,11 +21,9 @@ interface AssessmentWizardProps {
 }
 
 const STEPS = [
-  { id: 1, title: "Basics", description: "Assessment details" },
-  { id: 2, title: "Role & Seniority", description: "Configure target role" },
-  { id: 3, title: "Tech Stack", description: "Technology requirements" },
-  { id: 4, title: "Questions", description: "Customize assessment" },
-  { id: 5, title: "Review", description: "Preview and publish" },
+  { id: 1, title: "Setup", description: "Role, seniority & details" },
+  { id: 2, title: "Tech Stack", description: "Required technologies" },
+  { id: 3, title: "Questions", description: "Configure & create" },
 ];
 
 export function AssessmentWizard({
@@ -42,6 +38,7 @@ export function AssessmentWizard({
     aiMonitoringEnabled: true,
     useTemplate: true,
     status: "draft",
+    assessmentType: "real_world", // Default to real_world
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -62,40 +59,33 @@ export function AssessmentWizard({
     const newErrors: Record<string, string> = {};
 
     switch (step) {
-      case 1:
-        if (!config.title?.trim()) {
-          newErrors.title = "Assessment title is required";
-        }
-        if (!config.duration || config.duration < 10) {
-          newErrors.duration = "Duration must be at least 10 minutes";
-        }
-        break;
-
-      case 2:
+      case 1: // Setup step (merged role, seniority, title, duration)
         if (!config.role) {
           newErrors.role = "Please select a role";
         }
         if (!config.seniority) {
           newErrors.seniority = "Please select a seniority level";
         }
-        if (!config.assessmentType) {
-          newErrors.assessmentType = "Please select an assessment type";
+        if (!config.title?.trim()) {
+          newErrors.title = "Assessment title is required";
+        }
+        // Duration is auto-set from seniority, but validate if manually changed
+        if (config.duration && config.duration < 10) {
+          newErrors.duration = "Duration must be at least 10 minutes";
         }
         break;
 
-      case 3:
-        // Tech stack validation (optional but recommended)
+      case 2: // Tech stack (optional but recommended)
         if (
           config.techStackRequirements &&
-          config.techStackRequirements.critical.length === 0 &&
           config.techStackRequirements.required.length === 0
         ) {
           // Just a warning, not blocking
-          console.warn("No critical or required technologies specified");
+          console.warn("No required technologies specified");
         }
         break;
 
-      case 4:
+      case 3: // Questions (final step with summary)
         if (config.useTemplate && !config.templateId) {
           newErrors.template = "Please select a template or switch to custom questions";
         }
@@ -137,22 +127,14 @@ export function AssessmentWizard({
     switch (currentStep) {
       case 1:
         return (
-          <BasicsStep
-            config={config}
-            onUpdate={updateConfig}
-            errors={errors}
-          />
-        );
-      case 2:
-        return (
-          <RoleAndSeniorityStep
+          <AssessmentSetupStep
             config={config}
             onUpdate={updateConfig}
             errors={errors}
             userTier={userTier}
           />
         );
-      case 3:
+      case 2:
         return (
           <TechStackStep
             config={config}
@@ -160,19 +142,12 @@ export function AssessmentWizard({
             errors={errors}
           />
         );
-      case 4:
+      case 3:
         return (
           <QuestionConfigStep
             config={config}
             onUpdate={updateConfig}
             errors={errors}
-            userTier={userTier}
-          />
-        );
-      case 5:
-        return (
-          <ReviewAndPreviewStep
-            config={config}
             userTier={userTier}
           />
         );
