@@ -45,6 +45,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
     const silentReconnectRef = useRef<boolean>(false);
     const hasConnectedOnceRef = useRef<boolean>(false); // Track if we've ever connected
+    const lastPromptTimeRef = useRef<number>(0); // Track when last prompt was shown
     const isReconnectingRef = useRef<boolean>(false);
     const consecutiveStreamEndedRef = useRef<number>(0);
     const lastReconnectTimeRef = useRef<number>(0);
@@ -166,7 +167,22 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             }
 
             if (data.output) {
-              terminal.write(data.output);
+              // Filter out duplicate prompts that appear in rapid succession
+              // This happens when new shell sessions are created during reconnection
+              const promptPattern = /^(\s*[\w:~\-\/]+[#$%>]\s*)+$/;
+              const now = Date.now();
+              const isJustPrompt = promptPattern.test(data.output.trim());
+              const timeSinceLastPrompt = now - lastPromptTimeRef.current;
+
+              if (isJustPrompt && timeSinceLastPrompt < 500) {
+                // Skip duplicate prompt within 500ms
+                console.log(`[PTY] Filtering duplicate prompt (${timeSinceLastPrompt}ms since last)`);
+              } else {
+                terminal.write(data.output);
+                if (isJustPrompt) {
+                  lastPromptTimeRef.current = now;
+                }
+              }
             }
 
             // Handle reconnect signal from server (stream ended or recoverable error)
