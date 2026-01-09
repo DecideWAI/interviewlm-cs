@@ -204,6 +204,51 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
               role: msg.role,
               content: msg.content,
             }));
+
+          // Reconstruct pending questions from history if there's an unanswered ask_question(s) tool call
+          // Look for the last ask_question/ask_questions tool block without a subsequent user answer
+          const allMessages = data.messages || [];
+          for (let i = allMessages.length - 1; i >= 0; i--) {
+            const msg = allMessages[i];
+
+            // If we find a user message first, questions have been answered
+            if (msg.role === "user") break;
+
+            // Look for assistant messages with question tool blocks
+            if (msg.role === "assistant" && msg.metadata?.toolBlocks) {
+              for (const tool of msg.metadata.toolBlocks) {
+                // Single question (ask_question)
+                if (tool.name === "ask_question" && tool.input && !tool.isError) {
+                  setPendingQuestions({
+                    type: "single",
+                    questionId: tool.input.question_id || `q-${Date.now()}`,
+                    questionText: tool.input.question_text,
+                    options: tool.input.options || [],
+                    allowCustomAnswer: tool.input.allow_custom_answer,
+                  });
+                  break;
+                }
+                // Batch questions (ask_questions)
+                if (tool.name === "ask_questions" && tool.input?.questions && !tool.isError) {
+                  const questions = tool.input.questions.map(
+                    (q: { question_text: string; options: string[]; multi_select?: boolean; allow_custom_answer?: boolean }, idx: number) => ({
+                      id: `batch-q-${idx}`,
+                      text: q.question_text,
+                      options: q.options || [],
+                      multiSelect: q.multi_select || false,
+                      allowCustomAnswer: q.allow_custom_answer || false,
+                    })
+                  );
+                  setPendingQuestions({
+                    type: "batch",
+                    batchId: tool.input.batch_id || `batch-${Date.now()}`,
+                    questions,
+                  });
+                  break;
+                }
+              }
+            }
+          }
         }
       } catch (err) {
         console.error("Failed to load chat history:", err);
