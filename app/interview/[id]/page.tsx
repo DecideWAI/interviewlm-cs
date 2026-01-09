@@ -483,15 +483,13 @@ export default function InterviewPage() {
         // Transform techStack array to requirements object if needed
         if (data.techStack && Array.isArray(data.techStack)) {
           data.techStack = {
-            critical: data.techStack.map((t: string, i: number) => ({
+            required: data.techStack.map((t: string, i: number) => ({
               id: `tech-${i}`,
               name: t,
-              category: 'tool'
+              category: 'framework' as const,
             })),
-            required: [],
-            recommended: [],
-            optional: []
-          } as any;
+            optional: [],
+          };
         }
 
         setSessionData(data);
