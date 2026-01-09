@@ -1,16 +1,19 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import CodeMirror from "@uiw/react-codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { python } from "@codemirror/lang-python";
 import { go } from "@codemirror/lang-go";
+import { markdown } from "@codemirror/lang-markdown";
 import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { EditorView } from "@codemirror/view";
 import { Extension } from "@codemirror/state";
-import { Radio } from "lucide-react";
+import { Radio, Eye, Code2 } from "lucide-react";
 import { useEventBatcher } from "@/lib/eventBatcher";
 import { useCodeStreaming } from "@/hooks/useCodeStreaming";
+import { cn } from "@/lib/utils";
 
 interface CodeEditorProps {
   sessionId?: string;
@@ -45,6 +48,10 @@ export function CodeEditor({
   const snapshotIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isStreamingUpdateRef = useRef(false);
 
+  // Markdown preview state
+  const isMarkdownFile = fileName?.endsWith(".md") || fileName?.endsWith(".markdown");
+  const [showMarkdownPreview, setShowMarkdownPreview] = useState(true);
+
   // Initialize event batcher for efficient API calls
   const { addEvent } = useEventBatcher(sessionId || "");
 
@@ -74,6 +81,11 @@ export function CodeEditor({
 
   // Select language extension
   const getLanguageExtension = (): Extension => {
+    // Use markdown extension for .md files
+    if (isMarkdownFile) {
+      return markdown();
+    }
+
     switch (language) {
       case "python":
         return python();
@@ -171,47 +183,85 @@ export function CodeEditor({
               </div>
             )}
           </div>
+          {/* Markdown preview toggle */}
+          {isMarkdownFile && (
+            <div className="flex items-center gap-1 bg-background-secondary rounded p-0.5">
+              <button
+                onClick={() => setShowMarkdownPreview(true)}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",
+                  showMarkdownPreview
+                    ? "bg-primary text-white"
+                    : "text-text-tertiary hover:text-text-secondary"
+                )}
+              >
+                <Eye className="h-3 w-3" />
+                Preview
+              </button>
+              <button
+                onClick={() => setShowMarkdownPreview(false)}
+                className={cn(
+                  "flex items-center gap-1 px-2 py-1 rounded text-xs transition-colors",
+                  !showMarkdownPreview
+                    ? "bg-primary text-white"
+                    : "text-text-tertiary hover:text-text-secondary"
+                )}
+              >
+                <Code2 className="h-3 w-3" />
+                Edit
+              </button>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Editor */}
-      <div className="flex-1 min-h-0 relative">
-        <div className="absolute inset-0 overflow-auto">
-          <CodeMirror
-            value={safeValue}
-            height="auto"
-            theme={vscodeDark}
-            extensions={extensions}
-            onChange={handleChange}
-            readOnly={readOnly}
-            basicSetup={{
-              lineNumbers: true,
-              highlightActiveLineGutter: true,
-              highlightSpecialChars: true,
-              history: true,
-              foldGutter: true,
-              drawSelection: true,
-              dropCursor: true,
-              allowMultipleSelections: true,
-              indentOnInput: true,
-              syntaxHighlighting: true,
-              bracketMatching: true,
-              closeBrackets: true,
-              autocompletion: true,
-              rectangularSelection: true,
-              crosshairCursor: true,
-              highlightActiveLine: true,
-              highlightSelectionMatches: true,
-              closeBracketsKeymap: true,
-              searchKeymap: true,
-              foldKeymap: true,
-              completionKeymap: true,
-              lintKeymap: true,
-            }}
-            className="text-sm"
-          />
+      {/* Markdown Preview */}
+      {isMarkdownFile && showMarkdownPreview ? (
+        <div className="flex-1 min-h-0 overflow-auto p-4 bg-background">
+          <div className="prose prose-sm prose-invert max-w-none prose-headings:text-text-primary prose-p:text-text-secondary prose-strong:text-text-primary prose-ul:text-text-secondary prose-li:text-text-secondary prose-code:text-primary prose-code:bg-background-tertiary prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-pre:bg-background-tertiary">
+            <ReactMarkdown>{safeValue}</ReactMarkdown>
+          </div>
         </div>
-      </div>
+      ) : (
+        /* Code Editor */
+        <div className="flex-1 min-h-0 relative">
+          <div className="absolute inset-0 overflow-auto">
+            <CodeMirror
+              value={safeValue}
+              height="auto"
+              theme={vscodeDark}
+              extensions={extensions}
+              onChange={handleChange}
+              readOnly={readOnly}
+              basicSetup={{
+                lineNumbers: true,
+                highlightActiveLineGutter: true,
+                highlightSpecialChars: true,
+                history: true,
+                foldGutter: true,
+                drawSelection: true,
+                dropCursor: true,
+                allowMultipleSelections: true,
+                indentOnInput: true,
+                syntaxHighlighting: true,
+                bracketMatching: true,
+                closeBrackets: true,
+                autocompletion: true,
+                rectangularSelection: true,
+                crosshairCursor: true,
+                highlightActiveLine: true,
+                highlightSelectionMatches: true,
+                closeBracketsKeymap: true,
+                searchKeymap: true,
+                foldKeymap: true,
+                completionKeymap: true,
+                lintKeymap: true,
+              }}
+              className="text-sm"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

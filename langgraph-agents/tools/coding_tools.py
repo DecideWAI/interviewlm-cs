@@ -33,8 +33,8 @@ from services import (
     run_with_timeout,
 )
 
-# Import question tools for ask_question capability
-from tools.question_tools import ask_question
+# Import question tools for ask_question and ask_questions capability
+from tools.question_tools import ask_question, ask_questions
 
 logger = logging.getLogger(__name__)
 
@@ -349,14 +349,44 @@ def sanitize_output(text: str, max_size: int = 1000) -> str:
 
 def get_sandbox_id(config: RunnableConfig | dict) -> str:
     """
-    Get the sandbox ID from config.
-    Prefers candidate_id (used by TypeScript/Next.js) over session_id.
-    This ensures the evaluation agent accesses the same sandbox as the interview.
+    Get the session ID from config for sandbox lookup.
+
+    In Modal context, sessionId = candidateId (the Candidate table's primary key).
+    TypeScript passes this as session_id in the configurable.
+    Volume name: interview-volume-{session_id}
     """
     configurable = config.get("configurable", {})  # type: ignore[union-attr,unused-ignore]
-    # candidate_id is the primary key used by TypeScript for Modal sandboxes
-    # session_id (SessionRecording.id) is used for DB queries
-    return cast(str, configurable.get("candidate_id") or configurable.get("session_id", "default"))
+    return cast(str, configurable.get("session_id", "default"))
+
+
+def get_modal_sandbox_id(config: RunnableConfig | dict) -> str | None:
+    """
+    Get the Modal sandbox_id (sb-xxxxx) from config if passed from TypeScript.
+    This allows Python to reconnect to the exact same sandbox instance.
+    """
+    configurable = config.get("configurable", {})  # type: ignore[union-attr,unused-ignore]
+    return cast(str | None, configurable.get("sandbox_id"))
+
+
+def get_sandbox_for_config(config: RunnableConfig | dict, language: str | None = None) -> Any:
+    """
+    Get sandbox for the given config, using Modal sandbox ID for direct reconnection if available.
+
+    This is the preferred way for tools to get a sandbox, as it:
+    1. Uses the session/candidate ID for caching
+    2. Uses the passed Modal sandbox_id for direct reconnection (if TypeScript created the sandbox)
+    3. Falls back to creating a new sandbox if reconnection fails
+
+    Args:
+        config: RunnableConfig with session_id/candidate_id and optional sandbox_id
+        language: Optional language for sandbox image
+
+    Returns:
+        Live sandbox instance
+    """
+    session_id = get_sandbox_id(config)
+    modal_sandbox_id = get_modal_sandbox_id(config)
+    return get_or_recreate_sandbox(session_id, language, modal_sandbox_id)
 
 
 # =============================================================================
@@ -385,13 +415,12 @@ def read_file(
     Returns:
         Dict with success status, content, and metadata
     """
-    sandbox_id = get_sandbox_id(config)
     allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
 
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Ensure absolute path
         if not path.startswith("/"):
@@ -445,14 +474,13 @@ def write_file(
     Returns:
         Dict with success status and metadata
     """
-    sandbox_id = get_sandbox_id(config)
     session_id = get_session_id(config)
     allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
 
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Ensure absolute path
         if not path.startswith("/"):
@@ -515,14 +543,13 @@ def edit_file(
     Returns:
         Dict with success status and replacement count
     """
-    sandbox_id = get_sandbox_id(config)
     session_id = get_session_id(config)
     allowed, reason = is_path_allowed(path)
     if not allowed:
         return {"success": False, "error": reason}
 
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Ensure absolute path
         if not path.startswith("/"):
@@ -575,6 +602,7 @@ def _list_files_internal(
     sandbox_id: str,
     path: str,
     limit: int = 100,
+    modal_sandbox_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Internal implementation of list_files (called with timeout wrapper).
@@ -583,7 +611,7 @@ def _list_files_internal(
     We must use trailing slash (ls -la /workspace/) to list contents,
     otherwise ls shows the symlink itself instead of directory contents.
     """
-    sb = get_or_recreate_sandbox(sandbox_id)
+    sb = get_or_recreate_sandbox(sandbox_id, existing_sandbox_id=modal_sandbox_id)
 
     # Normalize path - remove double slashes, trailing slashes
     normalized_path = re.sub(r'/+', '/', path).rstrip('/') or '/workspace'
@@ -681,6 +709,7 @@ def list_files(
         Dict with list of files (name, path, type, size) and has_more indicator
     """
     sandbox_id = get_sandbox_id(config)
+    modal_sandbox_id = get_modal_sandbox_id(config)
     try:
         # Use timeout wrapper to prevent hanging (matches TypeScript implementation)
         return cast(dict[str, Any], run_with_timeout(
@@ -688,6 +717,7 @@ def list_files(
             sandbox_id,
             path,
             limit,
+            modal_sandbox_id,
             timeout=TOOL_TIMEOUT_SECONDS,
         ))
     except TimeoutError as e:
@@ -716,7 +746,6 @@ def grep_files(
     Returns:
         Dict with matches (file, line number, content)
     """
-    sandbox_id = get_sandbox_id(config)
     try:
         # Validate regex
         try:
@@ -724,7 +753,7 @@ def grep_files(
         except re.error as e:
             return {"success": False, "error": f"Invalid regex: {e}", "matches": []}
 
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Escape pattern for shell
         safe_pattern = pattern.replace('"', '\\"').replace("'", "\\'")
@@ -783,9 +812,8 @@ def glob_files(
     Returns:
         Dict with list of matching file paths
     """
-    sandbox_id = get_sandbox_id(config)
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Convert glob to find pattern
         # Simple conversion for common patterns
@@ -839,14 +867,13 @@ def run_bash(
     Returns:
         Dict with stdout, stderr, exit code, and success status
     """
-    sandbox_id = get_sandbox_id(config)
     session_id = get_session_id(config)
     allowed, reason = is_command_allowed(command)
     if not allowed:
         return {"success": False, "error": reason, "stdout": "", "stderr": "", "exit_code": 1}
 
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Build command with working directory
         full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {command}"
@@ -946,14 +973,13 @@ def run_tests(
     Returns:
         Dict with status, output, and test count
     """
-    sandbox_id = get_sandbox_id(config)
     session_id = get_session_id(config)
     allowed, reason = is_command_allowed(test_cmd)
     if not allowed:
         return {"success": False, "error": reason, "passed": False}
 
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Build command with working directory
         full_cmd = f"cd {working_dir} 2>/dev/null || mkdir -p {working_dir} && cd {working_dir} && {test_cmd}"
@@ -1093,7 +1119,6 @@ def install_packages(
     Returns:
         Dict with success status and output
     """
-    sandbox_id = get_sandbox_id(config)
     if not packages:
         return {"success": True, "message": "No packages to install"}
 
@@ -1103,7 +1128,7 @@ def install_packages(
             return {"success": False, "error": f"Invalid package name: {pkg}"}
 
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         # Build install command
         if manager == "npm":
@@ -1143,9 +1168,8 @@ def get_environment_info(
     Returns:
         Dict with version info
     """
-    sandbox_id = get_sandbox_id(config)
     try:
-        sb = get_or_recreate_sandbox(sandbox_id)
+        sb = get_sandbox_for_config(config)
 
         env_info = {}
         version_checks = [
@@ -1182,7 +1206,8 @@ def get_environment_info(
 
 # All available coding tools
 ALL_CODING_TOOLS = [
-    ask_question,  # Question-first approach - available in all modes
+    ask_question,   # Question-first approach - for single questions
+    ask_questions,  # Question-first approach - for multiple questions at once
     read_file,
     write_file,
     edit_file,
@@ -1196,10 +1221,10 @@ ALL_CODING_TOOLS = [
 ]
 
 # Tools by helpfulness level
-# Note: ask_question is included in ALL levels to support question-first approach
-CONSULTANT_TOOLS = [ask_question, read_file, list_files, grep_files, glob_files, get_environment_info]
+# Note: ask_question and ask_questions are included in ALL levels to support question-first approach
+CONSULTANT_TOOLS = [ask_question, ask_questions, read_file, list_files, grep_files, glob_files, get_environment_info]
 PAIR_PROGRAMMING_TOOLS = [
-    ask_question, read_file, write_file, edit_file, list_files, grep_files, glob_files,
+    ask_question, ask_questions, read_file, write_file, edit_file, list_files, grep_files, glob_files,
     run_bash, run_tests, install_packages, get_environment_info,
 ]
 FULL_COPILOT_TOOLS = ALL_CODING_TOOLS

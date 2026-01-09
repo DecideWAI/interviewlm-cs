@@ -1,5 +1,6 @@
 "use client";
 
+import ReactMarkdown from "react-markdown";
 import { TechStackRequirements } from "@/types/assessment";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -60,12 +61,12 @@ export function ProblemPanel({
 
       {/* Content */}
       <div className="p-4 space-y-6">
-        {/* Title */}
+        {/* Title & Description */}
         <div>
-          <h1 className="text-lg font-bold text-text-primary mb-2">{title}</h1>
-          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
-            {description}
-          </p>
+          <h1 className="text-lg font-bold text-text-primary mb-3">{title}</h1>
+          <div className="prose prose-sm prose-invert max-w-none prose-headings:text-text-primary prose-p:text-text-secondary prose-strong:text-text-primary prose-ul:text-text-secondary prose-li:text-text-secondary">
+            <ReactMarkdown>{description}</ReactMarkdown>
+          </div>
         </div>
 
         {/* Examples */}
@@ -133,16 +134,16 @@ export function ProblemPanel({
               Tech Stack Requirements
             </h3>
 
-            {techStack.critical.length > 0 && (
+            {techStack.required.length > 0 && (
               <div className="mb-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-sm">🔴</span>
                   <p className="text-xs font-medium text-text-secondary">
-                    CRITICAL (Must Use):
+                    REQUIRED:
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {techStack.critical.map((tech) => (
+                  {techStack.required.map((tech) => (
                     <Badge key={tech.id} variant="error" className="text-xs">
                       {tech.name}
                       {tech.version && (
@@ -154,16 +155,16 @@ export function ProblemPanel({
               </div>
             )}
 
-            {techStack.recommended.length > 0 && (
+            {techStack.optional.length > 0 && (
               <div className="mb-3">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-sm">🟡</span>
+                  <span className="text-sm">🟢</span>
                   <p className="text-xs font-medium text-text-secondary">
-                    RECOMMENDED:
+                    OPTIONAL:
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
-                  {techStack.recommended.map((tech) => (
+                  {techStack.optional.map((tech) => (
                     <Badge key={tech.id} variant="info" className="text-xs">
                       {tech.name}
                     </Badge>
@@ -172,14 +173,14 @@ export function ProblemPanel({
               </div>
             )}
 
-            {techStack.critical.length > 0 && (
-              <Card className="bg-error/5 border-error/20 p-3 mt-3">
+            {techStack.required.length > 0 && (
+              <Card className="bg-info/5 border-info/20 p-3 mt-3">
                 <p className="text-xs text-text-tertiary">
-                  ⚠️ <strong>IMPORTANT:</strong> Using a different technology than{" "}
-                  <strong className="text-error">
-                    {techStack.critical.map((t) => t.name).join(", ")}
+                  💡 <strong>TIP:</strong> This assessment expects you to use{" "}
+                  <strong className="text-info">
+                    {techStack.required.map((t) => t.name).join(", ")}
                   </strong>{" "}
-                  will terminate your session immediately.
+                  as the primary technologies.
                 </p>
               </Card>
             )}

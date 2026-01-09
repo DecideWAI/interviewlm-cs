@@ -22,7 +22,6 @@ export function TechViolationModal({
 }: TechViolationModalProps) {
   if (!violation) return null;
 
-  const isCritical = violation.priority === "critical";
   const isRequired = violation.priority === "required";
   const isBlocking = violation.blocking;
 
@@ -42,22 +41,15 @@ export function TechViolationModal({
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-3">
-            {isCritical && (
-              <>
-                <XCircle className="h-6 w-6 text-error" />
-                <span className="text-error">CRITICAL: Incorrect Technology Detected</span>
-              </>
-            )}
-            {isRequired && !isCritical && (
+            {isRequired ? (
               <>
                 <AlertTriangle className="h-6 w-6 text-warning" />
-                <span className="text-warning">Required Technology Missing</span>
+                <span className="text-warning">Required Technology Issue</span>
               </>
-            )}
-            {!isRequired && !isCritical && (
+            ) : (
               <>
                 <AlertCircle className="h-6 w-6 text-info" />
-                <span className="text-info">Recommended Technology Missing</span>
+                <span className="text-info">Optional Technology Missing</span>
               </>
             )}
           </DialogTitle>
@@ -78,20 +70,18 @@ export function TechViolationModal({
           {/* Priority Badge */}
           <div className="flex items-center gap-2">
             <span className="text-2xl">
-              {isCritical && "🔴"}
-              {isRequired && !isCritical && "🟠"}
-              {!isRequired && !isCritical && "🟡"}
+              {isRequired ? "🔴" : "🟢"}
             </span>
             <div>
               <p className="text-sm font-medium text-text-primary">
-                {isCritical && "CRITICAL technologies must be used exactly as specified."}
-                {isRequired && !isCritical && "REQUIRED technologies must be present in your solution."}
-                {!isRequired && !isCritical && "RECOMMENDED technologies are strongly encouraged."}
+                {isRequired
+                  ? "REQUIRED technologies must be present in your solution."
+                  : "OPTIONAL technologies are nice-to-have but not required."}
               </p>
               <p className="text-xs text-text-tertiary mt-1">
-                {isCritical && "Using the wrong critical technology will stop your session immediately."}
-                {isRequired && !isCritical && "Submission will be blocked if required technologies are missing."}
-                {!isRequired && !isCritical && "Your score may be affected if recommended technologies are not used."}
+                {isRequired
+                  ? "Your score will be affected if required technologies are missing."
+                  : "Consider using this technology for bonus points."}
               </p>
             </div>
           </div>
@@ -109,41 +99,17 @@ export function TechViolationModal({
           )}
 
           {/* Actions */}
-          <div className="flex items-center justify-between gap-3 pt-4 border-t border-border">
-            {isCritical ? (
-              // Critical violation - must fix or exit
-              <>
-                <div className="text-sm text-text-tertiary">
-                  ⏱️ Time is still running. Please decide quickly.
-                </div>
-                <div className="flex items-center gap-3">
-                  {onCreateCorrectFile && (
-                    <Button
-                      variant="primary"
-                      onClick={() => onCreateCorrectFile(violation.tech.name)}
-                    >
-                      Create {violation.tech.name} File
-                    </Button>
-                  )}
-                  {onExitAssessment && (
-                    <Button variant="ghost" onClick={onExitAssessment}>
-                      Exit Assessment
-                    </Button>
-                  )}
-                </div>
-              </>
-            ) : isRequired ? (
-              // Required violation - can continue but must fix before submission
-              <div className="flex items-center justify-end gap-3 w-full">
-                <Button variant="outline" onClick={onClose}>
-                  I'll Fix This
-                </Button>
-              </div>
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-border">
+            {isRequired ? (
+              // Required violation - should fix
+              <Button variant="outline" onClick={onClose}>
+                I'll Fix This
+              </Button>
             ) : (
-              // Recommended violation - can dismiss
-              <div className="flex items-center justify-end gap-3 w-full">
+              // Optional violation - can dismiss
+              <>
                 <Button variant="ghost" onClick={onClose}>
-                  I'll Add It Later
+                  Skip for Now
                 </Button>
                 {onCreateCorrectFile && (
                   <Button
@@ -156,7 +122,7 @@ export function TechViolationModal({
                     Add {violation.tech.name}
                   </Button>
                 )}
-              </div>
+              </>
             )}
           </div>
         </div>

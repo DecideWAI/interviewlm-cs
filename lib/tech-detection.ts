@@ -59,7 +59,7 @@ export function detectTechnologiesInFile(
   if (language) {
     detected.push({
       tech: language,
-      priority: "critical",
+      priority: "required",
       confidence: 1.0,
       locations,
     });
@@ -144,15 +144,13 @@ export function detectTechnologiesInProject(
 }
 
 /**
- * Get priority of a technology in requirements
+ * Get priority of a technology in requirements (simplified to 2 levels)
  */
 function getTechnologyPriority(
   techId: string,
   requirements: TechStackRequirements
 ): TechPriority | null {
-  if (requirements.critical.some((t) => t.id === techId)) return "critical";
   if (requirements.required.some((t) => t.id === techId)) return "required";
-  if (requirements.recommended.some((t) => t.id === techId)) return "recommended";
   if (requirements.optional.some((t) => t.id === techId)) return "optional";
   return null;
 }
@@ -176,32 +174,6 @@ export function validateTechStack(
     }
   });
 
-  // Check critical technologies
-  for (const criticalTech of requirements.critical) {
-    const detectedTech = detected.find((d) => d.tech.id === criticalTech.id);
-
-    if (!detectedTech || detectedTech.confidence < 0.5) {
-      // Check if a different language was detected
-      const detectedLanguages = detected.filter((d) => d.tech.category === "language");
-      const alternativeLanguage = detectedLanguages[0];
-
-      violations.push({
-        tech: criticalTech,
-        priority: "critical",
-        message: `Critical technology ${criticalTech.name} is required but not detected.`,
-        blocking: true,
-        detectedAlternative: alternativeLanguage?.tech,
-        suggestions: [
-          `Delete files using ${alternativeLanguage?.tech.name || "other languages"}`,
-          `Create files using ${criticalTech.name}`,
-          `Use ${criticalTech.detectionPatterns?.fileExtensions?.[0] || ".txt"} file extension`,
-        ],
-      });
-    } else {
-      satisfied.push(criticalTech);
-    }
-  }
-
   // Check required technologies
   for (const requiredTech of requirements.required) {
     const detectedTech = detected.find((d) => d.tech.id === requiredTech.id);
@@ -222,27 +194,7 @@ export function validateTechStack(
     }
   }
 
-  // Check recommended technologies (non-blocking)
-  for (const recommendedTech of requirements.recommended) {
-    const detectedTech = detected.find((d) => d.tech.id === recommendedTech.id);
-
-    if (!detectedTech || detectedTech.confidence < 0.5) {
-      violations.push({
-        tech: recommendedTech,
-        priority: "recommended",
-        message: `Recommended technology ${recommendedTech.name} is not used. This may affect your score.`,
-        blocking: false,
-        suggestions: [
-          `Consider using ${recommendedTech.name} for better evaluation`,
-          `${recommendedTech.description}`,
-        ],
-      });
-    } else {
-      satisfied.push(recommendedTech);
-    }
-  }
-
-  // Check for optional technologies (bonus points)
+  // Check for optional technologies (non-blocking)
   for (const optionalTech of requirements.optional) {
     const detectedTech = detected.find((d) => d.tech.id === optionalTech.id);
     if (detectedTech && detectedTech.confidence >= 0.5) {
@@ -278,33 +230,31 @@ export function validateTechStack(
 }
 
 /**
- * Check if a specific file violates critical tech requirements
- * Used for real-time blocking
+ * Check if a specific file violates required tech requirements
+ * Used for real-time validation
  */
-export function checkCriticalTechViolation(
+export function checkRequiredTechViolation(
   fileName: string,
   content: string,
   requirements: TechStackRequirements
 ): TechViolation | null {
   const language = detectLanguage(fileName, content);
 
-  // Check if a critical language is required
-  if (requirements.critical.length === 0) return null;
+  // Check if a required language is specified
+  const requiredLanguage = requirements.required.find((t) => t.category === "language");
+  if (!requiredLanguage) return null;
 
-  const criticalLanguage = requirements.critical.find((t) => t.category === "language");
-  if (!criticalLanguage) return null;
-
-  // If language detected doesn't match critical requirement
-  if (language && language.id !== criticalLanguage.id) {
+  // If language detected doesn't match required language
+  if (language && language.id !== requiredLanguage.id) {
     return {
-      tech: criticalLanguage,
-      priority: "critical",
-      message: `You created ${fileName} with ${language.name} code. This assessment requires ${criticalLanguage.name} as the primary language.`,
-      blocking: true,
+      tech: requiredLanguage,
+      priority: "required",
+      message: `You created ${fileName} with ${language.name} code. This assessment expects ${requiredLanguage.name} as the primary language.`,
+      blocking: false,
       detectedAlternative: language,
       suggestions: [
-        `Delete ${fileName} and create a file with ${criticalLanguage.detectionPatterns?.fileExtensions?.[0] || ".txt"} extension`,
-        `Rewrite your solution using ${criticalLanguage.name}`,
+        `Consider using ${requiredLanguage.detectionPatterns?.fileExtensions?.[0] || ".txt"} extension for better alignment`,
+        `Your solution using ${requiredLanguage.name} will be evaluated more favorably`,
       ],
     };
   }
@@ -325,11 +275,10 @@ export interface CodeQualityMetrics {
 }
 
 /**
- * Technology score breakdown
+ * Technology score breakdown (simplified to 2 levels)
  */
 export interface TechnologyScoreBreakdown {
   required: Record<string, number>; // Tech name -> score (0-100)
-  recommended: Record<string, number>;
   optional: Record<string, number>;
   detected: string[]; // All detected technologies
   missing: string[]; // Required but not detected
@@ -346,55 +295,47 @@ export interface TechnologyScoreResult {
 }
 
 /**
- * Calculate technology scores (for evaluation)
+ * Calculate technology scores (for evaluation) - simplified to 2 levels
  */
 export function calculateTechnologyScores(
   detectedTech: DetectedTech[],
   requirements: TechStackRequirements,
-  codeQualityMetrics: CodeQualityMetrics
+  _codeQualityMetrics: CodeQualityMetrics
 ): TechnologyScoreResult {
   // This will be fully implemented in backend evaluation
   // For now, return a basic implementation
 
   const requiredScore: Record<string, number> = {};
-  const recommendedScore: Record<string, number> = {};
   const optionalScore: Record<string, number> = {};
 
   const detectedNames = detectedTech.map(t => t.tech.name.toLowerCase());
   const missing: string[] = [];
 
-  // Check required technologies
+  // Check required technologies (80% weight)
   requirements.required.forEach(tech => {
     const found = detectedNames.includes(tech.name.toLowerCase());
     requiredScore[tech.name] = found ? 100 : 0;
     if (!found) missing.push(tech.name);
   });
 
-  // Check recommended technologies
-  requirements.recommended.forEach(tech => {
-    const found = detectedNames.includes(tech.name.toLowerCase());
-    recommendedScore[tech.name] = found ? 100 : 0;
-  });
-
-  // Check optional technologies
+  // Check optional technologies (20% weight bonus)
   requirements.optional.forEach(tech => {
     const found = detectedNames.includes(tech.name.toLowerCase());
     optionalScore[tech.name] = found ? 100 : 0;
   });
 
-  // Calculate overall score (weighted)
+  // Calculate overall score (weighted: 80% required, 20% optional)
   const requiredAvg = Object.values(requiredScore).reduce((a, b) => a + b, 0) /
     Math.max(1, requirements.required.length);
-  const recommendedAvg = Object.values(recommendedScore).reduce((a, b) => a + b, 0) /
-    Math.max(1, requirements.recommended.length);
+  const optionalAvg = Object.values(optionalScore).reduce((a, b) => a + b, 0) /
+    Math.max(1, requirements.optional.length);
 
-  const overallScore = requiredAvg * 0.7 + recommendedAvg * 0.3;
+  const overallScore = requiredAvg * 0.8 + optionalAvg * 0.2;
 
   return {
     overallScore: Math.round(overallScore),
     breakdown: {
       required: requiredScore,
-      recommended: recommendedScore,
       optional: optionalScore,
       detected: detectedTech.map(t => t.tech.name),
       missing,
@@ -407,18 +348,14 @@ export function calculateTechnologyScores(
 }
 
 /**
- * Get friendly tech stack summary for display
+ * Get friendly tech stack summary for display (simplified to 2 levels)
  */
 export function getTechStackSummary(requirements: TechStackRequirements): {
-  critical: string[];
   required: string[];
-  recommended: string[];
   optional: string[];
 } {
   return {
-    critical: requirements.critical.map((t) => t.name),
     required: requirements.required.map((t) => t.name),
-    recommended: requirements.recommended.map((t) => t.name),
     optional: requirements.optional.map((t) => t.name),
   };
 }

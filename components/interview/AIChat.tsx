@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { AgentQuestion } from "@/components/interview/AgentQuestion";
+import { AgentQuestions, type Question } from "@/components/interview/AgentQuestions";
 import {
   useChatMessageQueue,
   type RecoveryState,
@@ -69,11 +70,17 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     status: "running" | "complete" | "error";
   } | null>(null);
   // State for agent clarification questions (question-first approach)
-  const [pendingQuestion, setPendingQuestion] = useState<{
-    questionId: string;
-    questionText: string;
-    options: string[];
-    allowCustomAnswer: boolean;
+  // Supports both single questions (ask_question) and batch questions (ask_questions)
+  const [pendingQuestions, setPendingQuestions] = useState<{
+    type: "single" | "batch";
+    // For single question (ask_question)
+    questionId?: string;
+    questionText?: string;
+    options?: string[];
+    allowCustomAnswer?: boolean;
+    // For batch questions (ask_questions)
+    batchId?: string;
+    questions?: Question[];
   } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const conversationHistory = useRef<any[]>([]);
@@ -197,6 +204,51 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
               role: msg.role,
               content: msg.content,
             }));
+
+          // Reconstruct pending questions from history if there's an unanswered ask_question(s) tool call
+          // Look for the last ask_question/ask_questions tool block without a subsequent user answer
+          const allMessages = data.messages || [];
+          for (let i = allMessages.length - 1; i >= 0; i--) {
+            const msg = allMessages[i];
+
+            // If we find a user message first, questions have been answered
+            if (msg.role === "user") break;
+
+            // Look for assistant messages with question tool blocks
+            if (msg.role === "assistant" && msg.metadata?.toolBlocks) {
+              for (const tool of msg.metadata.toolBlocks) {
+                // Single question (ask_question)
+                if (tool.name === "ask_question" && tool.input && !tool.isError) {
+                  setPendingQuestions({
+                    type: "single",
+                    questionId: tool.input.question_id || `q-${Date.now()}`,
+                    questionText: tool.input.question_text,
+                    options: tool.input.options || [],
+                    allowCustomAnswer: tool.input.allow_custom_answer,
+                  });
+                  break;
+                }
+                // Batch questions (ask_questions)
+                if (tool.name === "ask_questions" && tool.input?.questions && !tool.isError) {
+                  const questions = tool.input.questions.map(
+                    (q: { question_text: string; options: string[]; multi_select?: boolean; allow_custom_answer?: boolean }, idx: number) => ({
+                      id: `batch-q-${idx}`,
+                      text: q.question_text,
+                      options: q.options || [],
+                      multiSelect: q.multi_select || false,
+                      allowCustomAnswer: q.allow_custom_answer || false,
+                    })
+                  );
+                  setPendingQuestions({
+                    type: "batch",
+                    batchId: tool.input.batch_id || `batch-${Date.now()}`,
+                    questions,
+                  });
+                  break;
+                }
+              }
+            }
+          }
         }
       } catch (err) {
         console.error("Failed to load chat history:", err);
@@ -416,13 +468,33 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                     });
                   }
 
-                  // Handle ask_question tool - render interactive question UI
+                  // Handle ask_question tool (single question) - render interactive question UI
                   if (data.toolName === "ask_question" && !data.isError && data.input) {
-                    setPendingQuestion({
+                    setPendingQuestions({
+                      type: "single",
                       questionId: data.output?.questionId || `q_${Date.now()}`,
                       questionText: data.input.question_text,
                       options: data.input.options || [],
                       allowCustomAnswer: data.input.allow_custom_answer !== false,
+                    });
+                  }
+
+                  // Handle ask_questions tool (batch questions) - render multi-question UI
+                  if (data.toolName === "ask_questions" && !data.isError && data.input) {
+                    const questions: Question[] = (data.input.questions || []).map(
+                      (q: { question_text: string; options: string[]; multi_select?: boolean; allow_custom_answer?: boolean }, idx: number) => ({
+                        questionId: data.output?.questionIds?.[idx] || `q_${Date.now()}_${idx}`,
+                        questionText: q.question_text,
+                        options: q.options || [],
+                        multiSelect: q.multi_select === true,
+                        allowCustomAnswer: q.allow_custom_answer !== false,
+                      })
+                    );
+
+                    setPendingQuestions({
+                      type: "batch",
+                      batchId: data.output?.batchId || `batch_${Date.now()}`,
+                      questions,
                     });
                   }
                   break;
@@ -530,11 +602,11 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
     }
   };
 
-  // Handle answer to agent clarification question
+  // Handle answer to single agent clarification question (ask_question)
   const handleQuestionAnswer = async (answer: { selectedOption?: string; customAnswer?: string }) => {
-    if (!pendingQuestion) return;
+    if (!pendingQuestions || pendingQuestions.type !== "single") return;
 
-    const questionId = pendingQuestion.questionId;
+    const questionId = pendingQuestions.questionId;
     const responseText = answer.selectedOption || answer.customAnswer || "";
 
     // Record the answer to the database
@@ -553,11 +625,60 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
       console.error("[AIChat] Failed to record question answer:", err);
     }
 
-    // Clear the pending question
-    setPendingQuestion(null);
+    // Clear the pending questions
+    setPendingQuestions(null);
 
     // Send the answer as a message to continue the conversation
     sendMessageInternal(responseText);
+  };
+
+  // Handle answers to batch questions (ask_questions)
+  const handleBatchQuestionsAnswer = async (
+    answers: Record<string, { selectedOption?: string; selectedOptions?: string[]; customAnswer?: string }>
+  ) => {
+    if (!pendingQuestions || pendingQuestions.type !== "batch") return;
+
+    const batchId = pendingQuestions.batchId;
+
+    // Record all answers to the database
+    try {
+      await fetch(`/api/interview/${sessionId}/chat/answer-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId,
+          batchId,
+          answers,
+        }),
+      });
+    } catch (err) {
+      console.error("[AIChat] Failed to record batch answers:", err);
+    }
+
+    // Build combined response message for the agent
+    const responseLines = pendingQuestions.questions?.map((q) => {
+      const answer = answers[q.questionId];
+      // Handle both single-select and multi-select answers
+      let responseText = "";
+      if (answer?.selectedOptions && answer.selectedOptions.length > 0) {
+        // Multi-select: join selected options
+        responseText = answer.selectedOptions.join(", ");
+        if (answer.customAnswer) {
+          responseText += `, ${answer.customAnswer}`;
+        }
+      } else {
+        responseText = answer?.selectedOption || answer?.customAnswer || "";
+      }
+      return `${q.questionText}: ${responseText}`;
+    }) || [];
+
+    const combinedResponse = responseLines.join("\n");
+
+    // Clear the pending questions
+    setPendingQuestions(null);
+
+    // Send the combined answer as a message to continue the conversation
+    sendMessageInternal(combinedResponse);
   };
 
   // No cleanup needed for fetch-based streaming
@@ -775,8 +896,8 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
               </div>
             )}
 
-            {/* Agent clarification question (question-first approach) */}
-            {pendingQuestion && (
+            {/* Agent clarification question - single (question-first approach) */}
+            {pendingQuestions && pendingQuestions.type === "single" && (
               <div className="flex gap-3">
                 <div className="flex-shrink-0">
                   <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
@@ -785,11 +906,30 @@ export const AIChat = forwardRef<AIChatHandle, AIChatProps>(function AIChat({
                 </div>
                 <div className="max-w-[85%]">
                   <AgentQuestion
-                    questionId={pendingQuestion.questionId}
-                    questionText={pendingQuestion.questionText}
-                    options={pendingQuestion.options}
-                    allowCustomAnswer={pendingQuestion.allowCustomAnswer}
+                    questionId={pendingQuestions.questionId!}
+                    questionText={pendingQuestions.questionText!}
+                    options={pendingQuestions.options!}
+                    allowCustomAnswer={pendingQuestions.allowCustomAnswer}
                     onAnswer={handleQuestionAnswer}
+                    disabled={isLoading}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Agent clarification questions - batch (question-first approach) */}
+            {pendingQuestions && pendingQuestions.type === "batch" && (
+              <div className="flex gap-3">
+                <div className="flex-shrink-0">
+                  <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Bot className="h-5 w-5 text-primary" />
+                  </div>
+                </div>
+                <div className="max-w-[85%]">
+                  <AgentQuestions
+                    batchId={pendingQuestions.batchId!}
+                    questions={pendingQuestions.questions!}
+                    onSubmit={handleBatchQuestionsAnswer}
                     disabled={isLoading}
                   />
                 </div>

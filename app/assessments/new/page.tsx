@@ -47,13 +47,11 @@ export default function NewAssessmentPage() {
     setIsSaving(true);
 
     try {
-      // Extract and flatten tech stack from techStackRequirements
+      // Extract and flatten tech stack from techStackRequirements (2-level: required + optional)
       const techStack: string[] = [];
       if (config.techStackRequirements) {
         const allTech = [
-          ...config.techStackRequirements.critical,
           ...config.techStackRequirements.required,
-          ...config.techStackRequirements.recommended,
           ...config.techStackRequirements.optional,
         ];
         techStack.push(...allTech.map(tech => tech.name));

@@ -209,8 +209,8 @@ export interface TierLimits {
  * Technology Stack Priority System
  */
 
-/** Technology priority levels */
-export type TechPriority = "critical" | "required" | "recommended" | "optional";
+/** Technology priority levels (simplified from 4 to 2) */
+export type TechPriority = "required" | "optional";
 
 /** Technology category */
 export type TechCategory = "language" | "framework" | "database" | "tool" | "testing";
@@ -240,18 +240,12 @@ export interface Technology {
   commonlyPairedWith?: string[]; // Other tech IDs
 }
 
-/** Technology stack requirements organized by priority */
+/** Technology stack requirements organized by priority (simplified to 2 levels) */
 export interface TechStackRequirements {
-  /** Critical technologies (must use, immediate block if violated) */
-  critical: Technology[];
-
-  /** Required technologies (must be present in final solution) */
+  /** Required technologies (must be present - includes primary language and core frameworks) */
   required: Technology[];
 
-  /** Recommended technologies (soft warning if missing) */
-  recommended: Technology[];
-
-  /** Optional technologies (tracked for bonus points) */
+  /** Optional technologies (nice-to-have, tracked for bonus points) */
   optional: Technology[];
 }
 
@@ -390,15 +384,11 @@ export interface CandidateEvaluation {
   /** AI interaction analysis per technology */
   aiInteractionByTech: Record<string, AITechInteraction>;
 
-  /** Weighted score breakdown */
+  /** Weighted score breakdown (simplified to 2 priority levels) */
   scoreBreakdown: {
-    criticalWeight: number;    // e.g., 0.40
-    criticalScore: number;     // Weighted score from critical tech
-    requiredWeight: number;    // e.g., 0.35
+    requiredWeight: number;    // e.g., 0.80
     requiredScore: number;     // Weighted score from required tech
-    recommendedWeight: number; // e.g., 0.20
-    recommendedScore: number;  // Weighted score from recommended tech
-    optionalWeight: number;    // e.g., 0.05
+    optionalWeight: number;    // e.g., 0.20
     optionalScore: number;     // Weighted score from optional tech (bonus)
     penalties: number;         // Penalties for missing tech
   };

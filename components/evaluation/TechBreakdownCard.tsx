@@ -16,29 +16,11 @@ export function TechBreakdownCard({ techScore, className = "" }: TechBreakdownCa
   const [isExpanded, setIsExpanded] = useState(false);
 
   const getPriorityIcon = (priority: TechPriority) => {
-    switch (priority) {
-      case "critical":
-        return "🔴";
-      case "required":
-        return "🟠";
-      case "recommended":
-        return "🟡";
-      case "optional":
-        return "🟢";
-    }
+    return priority === "required" ? "🔴" : "🟢";
   };
 
   const getPriorityLabel = (priority: TechPriority) => {
-    switch (priority) {
-      case "critical":
-        return "CRITICAL";
-      case "required":
-        return "REQUIRED";
-      case "recommended":
-        return "RECOMMENDED";
-      case "optional":
-        return "OPTIONAL";
-    }
+    return priority === "required" ? "REQUIRED" : "OPTIONAL";
   };
 
   const getGradeColor = (grade: string) => {

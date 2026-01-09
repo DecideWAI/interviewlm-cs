@@ -23,6 +23,8 @@ interface TerminalProps {
 export interface TerminalHandle {
   write: (data: string) => void;
   writeln: (data: string) => void;
+  clear: () => void;
+  reset: () => void;
   connectionStatus: "connected" | "disconnected" | "connecting";
   connectionMode: "pty" | "tunnel";
 }
@@ -46,6 +48,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
     const silentReconnectRef = useRef<boolean>(false);
     const hasConnectedOnceRef = useRef<boolean>(false); // Track if we've ever connected
     const lastPromptTimeRef = useRef<number>(0); // Track when last prompt was shown
+    const lastPromptWrittenRef = useRef<string>(""); // Track the actual last prompt string written
     const isReconnectingRef = useRef<boolean>(false);
     const consecutiveStreamEndedRef = useRef<number>(0);
     const lastReconnectTimeRef = useRef<number>(0);
@@ -161,7 +164,31 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
               console.log(`[PTY] Replaying ${data.history.length} chars of history from server`);
               // Clear screen before history to avoid duplicate prompts from accumulated history
               terminal.write('\x1b[2J\x1b[H');
-              terminal.write(data.history);
+
+              // Deduplicate prompts in history before writing
+              // eslint-disable-next-line no-control-regex
+              const stripAnsi = (str: string) => str.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+              let historyToWrite = data.history;
+              const strippedHistory = stripAnsi(historyToWrite);
+              const promptMatch = strippedHistory.match(/([\w@:~\-\/]+[#$%>])\s*/);
+              if (promptMatch) {
+                const basePrompt = promptMatch[1];
+                const escapedPrompt = basePrompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const countPattern = new RegExp(escapedPrompt, 'g');
+                const matches = strippedHistory.match(countPattern);
+                if (matches && matches.length > 1) {
+                  console.log(`[PTY] History has ${matches.length} duplicate prompts, cleaning`);
+                  const lastPromptIndex = historyToWrite.lastIndexOf(basePrompt);
+                  if (lastPromptIndex > 0) {
+                    const leadingNewlines = historyToWrite.match(/^[\r\n]*/);
+                    historyToWrite = (leadingNewlines ? leadingNewlines[0] : '') + historyToWrite.substring(lastPromptIndex);
+                  }
+                }
+                // Track the last prompt in history so we don't duplicate it with fresh output
+                lastPromptWrittenRef.current = stripAnsi(historyToWrite).trim();
+              }
+
+              terminal.write(historyToWrite);
             } else if (data.history) {
               console.log(`[PTY] Skipping history replay (silent reconnect) - ${data.history.length} chars`);
             }
@@ -169,19 +196,85 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
             if (data.output) {
               // Filter out duplicate prompts that appear in rapid succession
               // This happens when new shell sessions are created during reconnection
-              const promptPattern = /^(\s*[\w:~\-\/]+[#$%>]\s*)+$/;
               const now = Date.now();
-              const isJustPrompt = promptPattern.test(data.output.trim());
+              let outputToWrite = data.output;
+
+              // Strip ALL ANSI escape codes for pattern matching
+              // This includes: colors (\x1b[32m), cursor movement (\x1b[C),
+              // bracketed paste (\x1b[?2004h), and other control sequences
+              // eslint-disable-next-line no-control-regex
+              const stripAnsi = (str: string) => str.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+              const strippedOutput = stripAnsi(outputToWrite);
+
+              // DEBUG: Log raw output for debugging prompt duplication
+              console.log(`[PTY DEBUG] Raw output (${outputToWrite.length} chars):`, JSON.stringify(outputToWrite.substring(0, 200)));
+              console.log(`[PTY DEBUG] Stripped:`, JSON.stringify(strippedOutput.substring(0, 200)));
+              console.log(`[PTY DEBUG] lastPromptWritten:`, JSON.stringify(lastPromptWrittenRef.current));
+
+              // Pattern includes @ and : for user@host or workspace:workspace prompts
+              // Use \s* at start to handle leading whitespace/newlines
+              const promptPattern = /^\s*([\w@:~\-\/]+[#$%>]\s*)+$/;
+
+              // Detect repeated prompts by looking for the pattern in stripped text
+              // Match prompts like "workspace:workspace# " and find duplicates
+              // Look anywhere in the string, not just at the start
+              const promptMatch = strippedOutput.match(/([\w@:~\-\/]+[#$%>])\s*/);
+              if (promptMatch) {
+                const basePrompt = promptMatch[1]; // e.g., "workspace:workspace#"
+                // Count how many times this prompt appears
+                const escapedPrompt = basePrompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const countPattern = new RegExp(escapedPrompt, 'g');
+                const matches = strippedOutput.match(countPattern);
+
+                if (matches && matches.length > 1) {
+                  console.log(`[PTY] Detected ${matches.length} duplicate prompts "${basePrompt}", keeping only last one`);
+                  // Find the last occurrence of the prompt pattern in the original (with ANSI codes)
+                  // and keep only from there
+                  const lastPromptIndex = outputToWrite.lastIndexOf(basePrompt);
+                  if (lastPromptIndex > 0) {
+                    // Keep only the last prompt (preserve any leading newline for formatting)
+                    const leadingNewline = outputToWrite.match(/^[\r\n]+/);
+                    outputToWrite = (leadingNewline ? leadingNewline[0] : '') + outputToWrite.substring(lastPromptIndex);
+                  }
+                }
+
+                // Also check if this would just repeat the last prompt we wrote
+                // This catches duplicates arriving in separate messages
+                const strippedToWrite = stripAnsi(outputToWrite).trim();
+                if (strippedToWrite === lastPromptWrittenRef.current) {
+                  console.log(`[PTY] Skipping duplicate prompt "${basePrompt}" (same as last written)`);
+                  return;
+                }
+              }
+
+              // Normalize: strip ANSI, collapse whitespace, trim
+              const normalize = (s: string) => stripAnsi(s).replace(/\s+/g, ' ').trim();
+              const normalizedOutput = normalize(outputToWrite);
+              const isJustPrompt = promptPattern.test(normalizedOutput);
               const timeSinceLastPrompt = now - lastPromptTimeRef.current;
 
-              if (isJustPrompt && timeSinceLastPrompt < 500) {
-                // Skip duplicate prompt within 500ms
-                console.log(`[PTY] Filtering duplicate prompt (${timeSinceLastPrompt}ms since last)`);
-              } else {
-                terminal.write(data.output);
-                if (isJustPrompt) {
-                  lastPromptTimeRef.current = now;
-                }
+              console.log(`[PTY DEBUG] normalizedOutput:`, JSON.stringify(normalizedOutput));
+              console.log(`[PTY DEBUG] isJustPrompt:`, isJustPrompt, `timeSinceLastPrompt:`, timeSinceLastPrompt);
+
+              // More aggressive deduplication:
+              // 1. Skip if same prompt as last written (regardless of time)
+              // 2. Skip if any prompt within 2 seconds of last prompt
+              if (isJustPrompt && normalizedOutput === lastPromptWrittenRef.current) {
+                console.log(`[PTY] Filtering exact duplicate prompt`);
+                return;
+              }
+
+              if (isJustPrompt && timeSinceLastPrompt < 2000) {
+                // Skip duplicate prompt within 2 seconds
+                console.log(`[PTY] Filtering prompt (${timeSinceLastPrompt}ms since last)`);
+                return;
+              }
+
+              terminal.write(outputToWrite);
+              if (isJustPrompt) {
+                lastPromptTimeRef.current = now;
+                // Track the prompt we just wrote (normalized)
+                lastPromptWrittenRef.current = normalizedOutput;
               }
             }
 
@@ -747,6 +840,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(
       },
       writeln: (data: string) => {
         xtermRef.current?.writeln(data);
+      },
+      clear: () => {
+        // Clear scrollback and visible content
+        xtermRef.current?.clear();
+      },
+      reset: () => {
+        // Full reset - clear all content and reset terminal state
+        xtermRef.current?.reset();
       },
       connectionStatus,
       connectionMode,

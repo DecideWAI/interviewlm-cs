@@ -924,55 +924,40 @@ export function getTechnologyById(id: string): Technology | undefined {
 
 /**
  * Smart suggestions based on role
+ * Simplified to 2 levels: required + optional
  * @deprecated Store role-tech associations in database
  */
 export function getTechSuggestionsForRole(role: Role): {
-  critical: Technology[];
   required: Technology[];
-  recommended: Technology[];
   optional: Technology[];
 } {
   const suggestions = {
     backend: {
-      critical: [LANGUAGES.python],
-      required: [FRAMEWORKS.fastapi, FRAMEWORKS.pydantic],
-      recommended: [DATABASES.postgresql, DATABASES.redis, TESTING.pytest],
-      optional: [TOOLS.docker, TOOLS.celery],
+      required: [LANGUAGES.python, FRAMEWORKS.fastapi, FRAMEWORKS.pydantic],
+      optional: [DATABASES.postgresql, DATABASES.redis, TESTING.pytest, TOOLS.docker, TOOLS.celery],
     },
     frontend: {
-      critical: [LANGUAGES.typescript],
-      required: [FRAMEWORKS.react, FRAMEWORKS.nextjs],
-      recommended: [TOOLS.tailwind, TESTING.jest],
-      optional: [TOOLS.docker],
+      required: [LANGUAGES.typescript, FRAMEWORKS.react, FRAMEWORKS.nextjs],
+      optional: [TOOLS.tailwind, TESTING.jest, TOOLS.docker],
     },
     fullstack: {
-      critical: [LANGUAGES.typescript],
-      required: [FRAMEWORKS.react, FRAMEWORKS.nextjs, FRAMEWORKS.nodejs],
-      recommended: [DATABASES.postgresql, TESTING.jest],
-      optional: [TOOLS.docker],
+      required: [LANGUAGES.typescript, FRAMEWORKS.react, FRAMEWORKS.nextjs, FRAMEWORKS.nodejs],
+      optional: [DATABASES.postgresql, TESTING.jest, TOOLS.docker],
     },
     database: {
-      critical: [LANGUAGES.python],
-      required: [DATABASES.postgresql, FRAMEWORKS.sqlalchemy],
-      recommended: [DATABASES.redis, TESTING.pytest],
-      optional: [TOOLS.docker],
+      required: [LANGUAGES.python, DATABASES.postgresql, FRAMEWORKS.sqlalchemy],
+      optional: [DATABASES.redis, TESTING.pytest, TOOLS.docker],
     },
     ml: {
-      critical: [LANGUAGES.python],
-      required: [],
-      recommended: [DATABASES.postgresql, TESTING.pytest],
-      optional: [TOOLS.docker],
+      required: [LANGUAGES.python],
+      optional: [DATABASES.postgresql, TESTING.pytest, TOOLS.docker],
     },
     security: {
-      critical: [LANGUAGES.python],
-      required: [],
-      recommended: [TESTING.pytest],
-      optional: [TOOLS.docker],
+      required: [LANGUAGES.python],
+      optional: [TESTING.pytest, TOOLS.docker],
     },
     custom: {
-      critical: [],
       required: [],
-      recommended: [],
       optional: [],
     },
   };
@@ -982,55 +967,44 @@ export function getTechSuggestionsForRole(role: Role): {
 
 /**
  * Get common tech stacks (presets)
+ * Simplified to 2 levels: required + optional
  * @deprecated Store tech stack presets in database
  */
 export const TECH_STACK_PRESETS = {
   "python-backend": {
     name: "Python Backend (FastAPI)",
     description: "Modern Python backend with FastAPI and PostgreSQL",
-    critical: [LANGUAGES.python],
-    required: [FRAMEWORKS.fastapi, FRAMEWORKS.pydantic],
-    recommended: [DATABASES.postgresql, TESTING.pytest],
-    optional: [TOOLS.docker, DATABASES.redis],
+    required: [LANGUAGES.python, FRAMEWORKS.fastapi, FRAMEWORKS.pydantic],
+    optional: [DATABASES.postgresql, TESTING.pytest, TOOLS.docker, DATABASES.redis],
   },
   "python-django": {
     name: "Python Backend (Django)",
     description: "Full-featured Django backend",
-    critical: [LANGUAGES.python],
-    required: [FRAMEWORKS.django],
-    recommended: [DATABASES.postgresql, TESTING.pytest],
-    optional: [TOOLS.docker, DATABASES.redis],
+    required: [LANGUAGES.python, FRAMEWORKS.django],
+    optional: [DATABASES.postgresql, TESTING.pytest, TOOLS.docker, DATABASES.redis],
   },
   "java-spring": {
     name: "Java Spring Boot",
     description: "Enterprise Java backend with Spring Boot",
-    critical: [LANGUAGES.java],
-    required: [FRAMEWORKS.spring],
-    recommended: [DATABASES.postgresql, TESTING.junit],
-    optional: [TOOLS.docker, TOOLS.kafka],
+    required: [LANGUAGES.java, FRAMEWORKS.spring],
+    optional: [DATABASES.postgresql, TESTING.junit, TOOLS.docker, TOOLS.kafka],
   },
   "csharp-dotnet": {
     name: "C# .NET Core",
     description: "Modern .NET backend",
-    critical: [LANGUAGES.csharp],
-    required: [FRAMEWORKS.dotnet, FRAMEWORKS.entityframework],
-    recommended: [DATABASES.sqlserver, TESTING.xunit],
-    optional: [TOOLS.docker, TOOLS.azure],
+    required: [LANGUAGES.csharp, FRAMEWORKS.dotnet, FRAMEWORKS.entityframework],
+    optional: [DATABASES.sqlserver, TESTING.xunit, TOOLS.docker],
   },
   "go-backend": {
     name: "Go Backend",
     description: "High-performance Go backend with Gin",
-    critical: [LANGUAGES.go],
-    required: [FRAMEWORKS.gin],
-    recommended: [DATABASES.postgresql, DATABASES.redis],
-    optional: [TOOLS.docker],
+    required: [LANGUAGES.go, FRAMEWORKS.gin],
+    optional: [DATABASES.postgresql, DATABASES.redis, TOOLS.docker],
   },
   "nodejs-express": {
     name: "Node.js Express",
     description: "Standard Node.js backend",
-    critical: [LANGUAGES.typescript],
-    required: [FRAMEWORKS.nodejs, FRAMEWORKS.express],
-    recommended: [DATABASES.mongodb, TESTING.jest],
-    optional: [TOOLS.docker],
+    required: [LANGUAGES.typescript, FRAMEWORKS.nodejs, FRAMEWORKS.express],
+    optional: [DATABASES.mongodb, TESTING.jest, TOOLS.docker],
   },
 };

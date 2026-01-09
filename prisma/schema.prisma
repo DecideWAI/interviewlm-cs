@@ -321,6 +321,9 @@ model SessionEventLog {
 
   session SessionRecording @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
+  // Evidence links - for Sentry-like replay with clickable evidence
+  evidenceLinks EvidenceEventLink[]
+
   @@unique([sessionId, sequenceNumber])
   @@index([sessionId, timestamp])
   @@index([sessionId, sequenceNumber])
@@ -606,14 +609,44 @@ model Evaluation {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  // AI-generated session summary for replay
+  sessionSummary   String?   @map("session_summary") @db.Text
+  sessionSummaryAt DateTime? @map("session_summary_at")
+
   // Relations
-  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  candidate     Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  evidenceLinks EvidenceEventLink[]
 
   @@index([candidateId])
   @@index([sessionId])
   @@index([overallScore])
   @@index([evaluatedAt])
   @@map("evaluations")
+}
+
+// =====================================================
+// EVIDENCE EVENT LINKING
+// Links evaluation evidence to timeline events for Sentry-like replay
+// =====================================================
+
+model EvidenceEventLink {
+  id           String   @id @default(cuid())
+  evaluationId String   @map("evaluation_id")
+  eventId      String   @map("event_id")
+  dimension    String   @db.VarChar(30) // "codeQuality", "problemSolving", "aiCollaboration", "communication"
+  evidenceIndex Int     @map("evidence_index") // Index in the evidence array
+  evidenceType String   @map("evidence_type") @db.VarChar(30) // From ComprehensiveEvidence.type
+  description  String   @db.VarChar(500) // Short description for timeline display
+  importance   String   @default("normal") @db.VarChar(20) // "critical", "important", "normal"
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  evaluation Evaluation      @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  event      SessionEventLog @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([evaluationId, eventId, dimension, evidenceIndex])
+  @@index([evaluationId])
+  @@index([eventId])
+  @@map("evidence_event_links")
 }
 
 // DEPRECATED: TerminalCommand table removed in favor of unified SessionEventLog

@@ -15,10 +15,8 @@ export function TechEvaluationOverview({
   evaluation,
   className = "",
 }: TechEvaluationOverviewProps) {
-  // Group tech scores by priority
-  const criticalTech = evaluation.technologyScores.filter((t) => t.priority === "critical");
+  // Group tech scores by priority (simplified to 2 levels)
   const requiredTech = evaluation.technologyScores.filter((t) => t.priority === "required");
-  const recommendedTech = evaluation.technologyScores.filter((t) => t.priority === "recommended");
   const optionalTech = evaluation.technologyScores.filter((t) => t.priority === "optional");
 
   const formatScore = (score: number) => Math.round(score);
@@ -48,31 +46,17 @@ export function TechEvaluationOverview({
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {/* Weighted Score Breakdown */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {/* Weighted Score Breakdown (simplified to 2 levels) */}
+          <div className="grid grid-cols-2 gap-4">
             <div className="p-3 bg-background-secondary rounded-lg border border-border">
-              <p className="text-xs text-text-tertiary mb-1">🔴 Critical (40%)</p>
-              <p className="text-xl font-bold text-text-primary">
-                {formatScore(evaluation.scoreBreakdown.criticalScore)}
-              </p>
-            </div>
-
-            <div className="p-3 bg-background-secondary rounded-lg border border-border">
-              <p className="text-xs text-text-tertiary mb-1">🟠 Required (35%)</p>
+              <p className="text-xs text-text-tertiary mb-1">🔴 Required (80%)</p>
               <p className="text-xl font-bold text-text-primary">
                 {formatScore(evaluation.scoreBreakdown.requiredScore)}
               </p>
             </div>
 
             <div className="p-3 bg-background-secondary rounded-lg border border-border">
-              <p className="text-xs text-text-tertiary mb-1">🟡 Recommended (20%)</p>
-              <p className="text-xl font-bold text-text-primary">
-                {formatScore(evaluation.scoreBreakdown.recommendedScore)}
-              </p>
-            </div>
-
-            <div className="p-3 bg-background-secondary rounded-lg border border-border">
-              <p className="text-xs text-text-tertiary mb-1">🟢 Optional (5%)</p>
+              <p className="text-xs text-text-tertiary mb-1">🟢 Optional (20%)</p>
               <p className="text-xl font-bold text-text-primary">
                 {formatScore(evaluation.scoreBreakdown.optionalScore)}
               </p>
@@ -144,51 +128,17 @@ export function TechEvaluationOverview({
           📊 Technology Performance Breakdown
         </h3>
 
-        {/* Critical Technologies */}
-        {criticalTech.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🔴</span>
-              <h4 className="text-lg font-semibold text-text-primary">
-                CRITICAL (40% weight)
-              </h4>
-            </div>
-            <div className="space-y-3">
-              {criticalTech.map((techScore) => (
-                <TechBreakdownCard key={techScore.technologyId} techScore={techScore} />
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Required Technologies */}
         {requiredTech.length > 0 && (
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <span className="text-xl">🟠</span>
+              <span className="text-xl">🔴</span>
               <h4 className="text-lg font-semibold text-text-primary">
-                REQUIRED (35% weight)
+                REQUIRED (80% weight)
               </h4>
             </div>
             <div className="space-y-3">
               {requiredTech.map((techScore) => (
-                <TechBreakdownCard key={techScore.technologyId} techScore={techScore} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Recommended Technologies */}
-        {recommendedTech.length > 0 && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xl">🟡</span>
-              <h4 className="text-lg font-semibold text-text-primary">
-                RECOMMENDED (20% weight)
-              </h4>
-            </div>
-            <div className="space-y-3">
-              {recommendedTech.map((techScore) => (
                 <TechBreakdownCard key={techScore.technologyId} techScore={techScore} />
               ))}
             </div>
@@ -201,7 +151,7 @@ export function TechEvaluationOverview({
             <div className="flex items-center gap-2">
               <span className="text-xl">🟢</span>
               <h4 className="text-lg font-semibold text-text-primary">
-                OPTIONAL (5% weight - Bonus)
+                OPTIONAL (20% weight - Bonus)
               </h4>
             </div>
             <div className="space-y-3">

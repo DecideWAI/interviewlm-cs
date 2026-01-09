@@ -8,13 +8,17 @@ import { cn } from "@/lib/utils";
 import { TimelineScrubber } from "./TimelineScrubber";
 import { CodeDiffViewer } from "./CodeDiffViewer";
 import { PlaybackControls } from "./PlaybackControls";
+import { ReplayAgentQuestions } from "./ReplayAgentQuestions";
 import {
   SessionData,
   PlaybackSpeed,
   AIInteraction,
   CodeSnapshot,
   TerminalEvent,
+  TerminalCheckpoint,
   KeyMoment,
+  AgentQuestion,
+  AgentQuestionAnswer,
 } from "./types";
 
 // Dynamically import Terminal to avoid SSR issues
@@ -34,11 +38,13 @@ interface SessionReplayViewerProps {
 interface TerminalHandle {
   write: (data: string) => void;
   writeln: (data: string) => void;
+  clear: () => void;
+  reset: () => void;
 }
 
 // Type guard to ensure Terminal ref is TerminalHandle
 function isTerminalHandle(ref: any): ref is TerminalHandle {
-  return ref && typeof ref.write === 'function' && typeof ref.writeln === 'function';
+  return ref && typeof ref.write === 'function' && typeof ref.writeln === 'function' && typeof ref.reset === 'function';
 }
 
 export function SessionReplayViewer({
@@ -64,6 +70,7 @@ export function SessionReplayViewer({
   const playbackIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastEventIndexRef = useRef(0);
   const startTimeRef = useRef<Date | null>(null);
+  const currentCheckpointRef = useRef<TerminalCheckpoint | null>(null); // Track current checkpoint for efficient seeking
 
   // Load session data
   useEffect(() => {
@@ -120,25 +127,34 @@ export function SessionReplayViewer({
     const aiInteractions: AIInteraction[] = [];
     const keyMoments: KeyMoment[] = [];
 
+    // Track pending questions to match with answers
+    const pendingQuestionsBatches: Map<string, { questions: AgentQuestion[], timestamp: Date, id: string }> = new Map();
+
     events.forEach((event: any) => {
       const timestamp = new Date(event.timestamp);
+      // API returns eventType from database, not type
+      const eventType = event.eventType || event.type;
 
-      switch (event.type) {
+      switch (eventType) {
         case 'code_snapshot':
+        case 'code.snapshot':
           codeSnapshots.push({
             timestamp,
             fileName: event.data.fileName || 'index.ts',
-            content: event.data.content || '',
+            content: event.data.content || event.data.fullContent || '',
             language: event.data.language || 'typescript',
           });
           break;
 
         case 'terminal_output':
+        case 'terminal.output':
         case 'terminal_input':
+        case 'terminal.input':
+        case 'terminal.command':
           terminalEvents.push({
             timestamp,
-            output: event.data.output || event.data.input || '',
-            isCommand: event.type === 'terminal_input',
+            output: event.data.output || event.data.input || event.data.command || '',
+            isCommand: eventType.includes('input') || eventType.includes('command'),
           });
           break;
 
@@ -153,10 +169,154 @@ export function SessionReplayViewer({
           });
           break;
 
+        // Chat messages (from recordClaudeInteraction)
+        case 'chat.user_message':
+          aiInteractions.push({
+            id: event.id,
+            timestamp,
+            role: 'user',
+            content: event.data.content || event.data.message || '',
+          });
+          break;
+
+        case 'chat.assistant_message':
+          aiInteractions.push({
+            id: event.id,
+            timestamp,
+            role: 'assistant',
+            content: event.data.content || event.data.message || '',
+            tokens: event.data.tokens,
+          });
+          break;
+
+        // Single question asked by AI
+        case 'agent.question_asked':
+          {
+            const questionId = event.data.questionId || `q_${event.id}`;
+            const questions: AgentQuestion[] = [{
+              questionId,
+              questionText: event.data.questionText || '',
+              options: event.data.options || [],
+              multiSelect: event.data.multiSelect || false,
+              allowCustomAnswer: event.data.allowCustomAnswer !== false,
+              context: event.data.context,
+            }];
+            pendingQuestionsBatches.set(questionId, { questions, timestamp, id: event.id });
+
+            aiInteractions.push({
+              id: event.id,
+              timestamp,
+              role: 'tool',
+              content: event.data.questionText || '',
+              toolCall: {
+                toolName: 'ask_question',
+                batchId: questionId,
+                questions,
+              },
+            });
+          }
+          break;
+
+        // Batch questions asked by AI
+        case 'agent.questions_asked':
+          {
+            const batchId = event.data.batchId || `batch_${event.id}`;
+            const questions: AgentQuestion[] = (event.data.questions || []).map((q: any) => ({
+              questionId: q.questionId || q.id,
+              questionText: q.questionText || q.question_text || '',
+              options: q.options || [],
+              multiSelect: q.multiSelect || q.multi_select || false,
+              allowCustomAnswer: q.allowCustomAnswer !== false && q.allow_custom_answer !== false,
+              context: q.context,
+            }));
+            pendingQuestionsBatches.set(batchId, { questions, timestamp, id: event.id });
+
+            aiInteractions.push({
+              id: event.id,
+              timestamp,
+              role: 'tool',
+              content: `${questions.length} questions asked`,
+              toolCall: {
+                toolName: 'ask_questions',
+                batchId,
+                questions,
+              },
+            });
+          }
+          break;
+
+        // Single question answered by user
+        case 'agent.question_answered':
+          {
+            const questionId = event.data.questionId;
+            const answer: AgentQuestionAnswer = {
+              questionId,
+              selectedOption: event.data.selectedOption,
+              customAnswer: event.data.customAnswer,
+              responseText: event.data.selectedOption || event.data.customAnswer || '',
+            };
+
+            // Find the corresponding question interaction and add answer
+            const questionInteraction = aiInteractions.find(
+              ai => ai.toolCall?.batchId === questionId && ai.role === 'tool'
+            );
+            if (questionInteraction?.toolCall) {
+              questionInteraction.toolCall.answers = [answer];
+            }
+
+            // Also add user's answer as a visible message
+            aiInteractions.push({
+              id: event.id,
+              timestamp,
+              role: 'user',
+              content: answer.responseText,
+            });
+          }
+          break;
+
+        // Batch questions answered by user
+        case 'agent.questions_answered':
+          {
+            const batchId = event.data.batchId;
+            const answers: AgentQuestionAnswer[] = (event.data.answers || []).map((a: any) => ({
+              questionId: a.questionId,
+              selectedOption: a.selectedOption,
+              selectedOptions: a.selectedOptions,
+              customAnswer: a.customAnswer,
+              responseText: a.responseText || '',
+              isMultiSelect: a.isMultiSelect || false,
+            }));
+
+            // Find the corresponding questions interaction and add answers
+            const questionInteraction = aiInteractions.find(
+              ai => ai.toolCall?.batchId === batchId && ai.role === 'tool'
+            );
+            if (questionInteraction?.toolCall) {
+              questionInteraction.toolCall.answers = answers;
+            }
+
+            // Add user's combined answers as a visible message
+            const combinedResponses = answers
+              .map(a => a.responseText)
+              .filter(Boolean)
+              .join('; ');
+
+            if (combinedResponses) {
+              aiInteractions.push({
+                id: event.id,
+                timestamp,
+                role: 'user',
+                content: combinedResponses,
+              });
+            }
+          }
+          break;
+
         case 'test_run':
-          if (event.checkpoint) {
-            const passed = event.data.passed || 0;
-            const failed = event.data.failed || 0;
+        case 'test.run_complete':
+          if (event.checkpoint || eventType === 'test.run_complete') {
+            const passed = event.data.passed || event.data.passedCount || 0;
+            const failed = event.data.failed || event.data.failedCount || 0;
             keyMoments.push({
               id: event.id,
               timestamp,
@@ -169,6 +329,14 @@ export function SessionReplayViewer({
       }
     });
 
+    // Build terminal checkpoints for efficient seeking
+    // Create checkpoints every 30 seconds or at key moments (test runs, etc.)
+    const terminalCheckpoints = buildTerminalCheckpoints(
+      terminalEvents,
+      startTime,
+      30 // Checkpoint interval in seconds
+    );
+
     // Calculate total duration in seconds
     const totalDuration = (endTime.getTime() - startTime.getTime()) / 1000;
 
@@ -180,6 +348,7 @@ export function SessionReplayViewer({
       events,
       codeSnapshots,
       terminalEvents,
+      terminalCheckpoints,
       aiInteractions,
       keyMoments,
       metadata: {
@@ -188,6 +357,53 @@ export function SessionReplayViewer({
         problemTitle: 'Interview Problem',
       },
     };
+  }
+
+  /**
+   * Build terminal checkpoints for efficient seeking
+   * Creates checkpoints at regular intervals to avoid O(n) replay
+   */
+  function buildTerminalCheckpoints(
+    terminalEvents: TerminalEvent[],
+    startTime: Date,
+    intervalSeconds: number
+  ): TerminalCheckpoint[] {
+    const checkpoints: TerminalCheckpoint[] = [];
+    let accumulatedOutput = '';
+    let lastCheckpointTime = 0;
+
+    // Always create an initial checkpoint at time 0
+    checkpoints.push({
+      timestamp: startTime,
+      timeOffset: 0,
+      accumulatedOutput: '',
+      eventIndex: 0,
+    });
+
+    terminalEvents.forEach((event, index) => {
+      // Accumulate output
+      if (event.isCommand) {
+        accumulatedOutput += `$ ${event.output}\n`;
+      } else {
+        accumulatedOutput += `${event.output}\n`;
+      }
+
+      // Calculate time offset
+      const timeOffset = (event.timestamp.getTime() - startTime.getTime()) / 1000;
+
+      // Create checkpoint if enough time has passed
+      if (timeOffset - lastCheckpointTime >= intervalSeconds) {
+        checkpoints.push({
+          timestamp: event.timestamp,
+          timeOffset,
+          accumulatedOutput,
+          eventIndex: index + 1, // Next event to process after this checkpoint
+        });
+        lastCheckpointTime = timeOffset;
+      }
+    });
+
+    return checkpoints;
   }
 
   // Playback engine
@@ -216,17 +432,27 @@ export function SessionReplayViewer({
   }, [isPlaying, speed, sessionData]);
 
   // Update components based on current time
+  // Optimized to use checkpoint-based terminal replay
   useEffect(() => {
     if (!sessionData) return;
 
-    // Update terminal
-    const terminalEvents = sessionData.terminalEvents.filter(
-      event => (new Date(event.timestamp).getTime() - new Date(sessionData.startTime).getTime()) / 1000 <= currentTime
-    );
+    const startTimeMs = sessionData.startTime.getTime();
 
-    // Only write new events
-    const newEvents = terminalEvents.slice(lastEventIndexRef.current);
-    newEvents.forEach(event => {
+    // Update terminal - only process events from lastEventIndexRef forward
+    // This is efficient because seeking already restored checkpoint state
+    const terminalEvents = sessionData.terminalEvents;
+
+    // Find events that should be visible up to currentTime
+    let targetIndex = lastEventIndexRef.current;
+    while (targetIndex < terminalEvents.length) {
+      const eventTimeOffset = (terminalEvents[targetIndex].timestamp.getTime() - startTimeMs) / 1000;
+      if (eventTimeOffset > currentTime) break;
+      targetIndex++;
+    }
+
+    // Write only the new events (from lastEventIndexRef to targetIndex)
+    for (let i = lastEventIndexRef.current; i < targetIndex; i++) {
+      const event = terminalEvents[i];
       if (terminalRef.current) {
         if (event.isCommand) {
           terminalRef.current.writeln(`$ ${event.output}`);
@@ -234,12 +460,12 @@ export function SessionReplayViewer({
           terminalRef.current.writeln(event.output);
         }
       }
-    });
-    lastEventIndexRef.current = terminalEvents.length;
+    }
+    lastEventIndexRef.current = targetIndex;
 
     // Update code snapshot
     const snapshots = sessionData.codeSnapshots.filter(
-      snapshot => (new Date(snapshot.timestamp).getTime() - new Date(sessionData.startTime).getTime()) / 1000 <= currentTime
+      snapshot => (snapshot.timestamp.getTime() - startTimeMs) / 1000 <= currentTime
     );
     if (snapshots.length > 0) {
       setCurrentSnapshotIndex(snapshots.length - 1);
@@ -251,12 +477,65 @@ export function SessionReplayViewer({
     setIsPlaying(prev => !prev);
   }, []);
 
+  /**
+   * Find the best checkpoint for a given target time
+   * Returns the checkpoint just before or at the target time
+   */
+  const findNearestCheckpoint = useCallback((targetTime: number): TerminalCheckpoint | null => {
+    if (!sessionData?.terminalCheckpoints.length) return null;
+
+    // Binary search for the best checkpoint (largest timeOffset <= targetTime)
+    const checkpoints = sessionData.terminalCheckpoints;
+    let left = 0;
+    let right = checkpoints.length - 1;
+    let bestCheckpoint = checkpoints[0];
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      if (checkpoints[mid].timeOffset <= targetTime) {
+        bestCheckpoint = checkpoints[mid];
+        left = mid + 1;
+      } else {
+        right = mid - 1;
+      }
+    }
+
+    return bestCheckpoint;
+  }, [sessionData]);
+
+  /**
+   * Checkpoint-based seek - O(1) to restore checkpoint + O(k) for remaining events
+   * Much faster than O(n) full replay for large sessions
+   */
   const handleSeek = useCallback((time: number) => {
+    if (!sessionData) return;
+
+    // Find the nearest checkpoint before target time
+    const checkpoint = findNearestCheckpoint(time);
+
+    if (checkpoint && terminalRef.current) {
+      // Reset terminal and restore checkpoint state
+      terminalRef.current.reset();
+
+      // Write accumulated output from checkpoint (this is the O(1) part)
+      if (checkpoint.accumulatedOutput) {
+        terminalRef.current.write(checkpoint.accumulatedOutput);
+      }
+
+      // Update the event index to start from checkpoint
+      lastEventIndexRef.current = checkpoint.eventIndex;
+      currentCheckpointRef.current = checkpoint;
+    } else {
+      // No checkpoint available, fall back to replay from start
+      if (terminalRef.current) {
+        terminalRef.current.reset();
+      }
+      lastEventIndexRef.current = 0;
+      currentCheckpointRef.current = null;
+    }
+
     setCurrentTime(time);
-    lastEventIndexRef.current = 0;
-    // Clear terminal and replay from start
-    // Note: Terminal doesn't have a clear method exposed, would need to recreate it
-  }, []);
+  }, [sessionData, findNearestCheckpoint]);
 
   const handleSpeedChange = useCallback((newSpeed: PlaybackSpeed) => {
     setSpeed(newSpeed);
@@ -385,39 +664,60 @@ export function SessionReplayViewer({
                         </div>
                       </div>
                     ) : (
-                      currentAIInteractions.map((interaction) => (
-                        <div
-                          key={interaction.id}
-                          className={cn(
-                            "flex gap-3",
-                            interaction.role === "user" ? "justify-end" : "justify-start"
-                          )}
-                        >
-                          {interaction.role === "assistant" && (
-                            <div className="flex-shrink-0">
-                              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                                <Bot className="h-5 w-5 text-primary" />
+                      currentAIInteractions.map((interaction) => {
+                        // Render tool call (agent questions) as special component
+                        if (interaction.role === "tool" && interaction.toolCall) {
+                          return (
+                            <div key={interaction.id} className="flex gap-3 justify-start">
+                              <div className="flex-shrink-0">
+                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                  <Bot className="h-5 w-5 text-primary" />
+                                </div>
+                              </div>
+                              <div className="flex-1 max-w-[85%]">
+                                <ReplayAgentQuestions
+                                  questions={interaction.toolCall.questions || []}
+                                  answers={interaction.toolCall.answers}
+                                />
                               </div>
                             </div>
-                          )}
+                          );
+                        }
 
+                        // Regular user/assistant messages
+                        return (
                           <div
+                            key={interaction.id}
                             className={cn(
-                              "max-w-[80%] rounded-lg p-3",
-                              interaction.role === "user"
-                                ? "bg-primary text-white"
-                                : "bg-background-tertiary border border-border"
+                              "flex gap-3",
+                              interaction.role === "user" ? "justify-end" : "justify-start"
                             )}
                           >
-                            <div className="text-sm whitespace-pre-wrap">
-                              {interaction.content}
-                            </div>
-
                             {interaction.role === "assistant" && (
-                              <div className="mt-2 flex items-center gap-3 text-xs text-text-tertiary">
-                                {interaction.tokens && (
-                                  <span>{interaction.tokens} tokens</span>
-                                )}
+                              <div className="flex-shrink-0">
+                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                  <Bot className="h-5 w-5 text-primary" />
+                                </div>
+                              </div>
+                            )}
+
+                            <div
+                              className={cn(
+                                "max-w-[80%] rounded-lg p-3",
+                                interaction.role === "user"
+                                  ? "bg-primary text-white"
+                                  : "bg-background-tertiary border border-border"
+                              )}
+                            >
+                              <div className="text-sm whitespace-pre-wrap">
+                                {interaction.content}
+                              </div>
+
+                              {interaction.role === "assistant" && (
+                                <div className="mt-2 flex items-center gap-3 text-xs text-text-tertiary">
+                                  {interaction.tokens && (
+                                    <span>{interaction.tokens} tokens</span>
+                                  )}
                                 {interaction.promptScore !== undefined && (
                                   <span className={cn(
                                     "font-medium",
@@ -440,7 +740,8 @@ export function SessionReplayViewer({
                             </div>
                           )}
                         </div>
-                      ))
+                      );
+                      })
                     )}
                   </div>
                 </div>

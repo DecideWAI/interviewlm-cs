@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { auth } from "@/auth";
 import { eventStore, type SessionEvent, type EventCategory } from "@/lib/services/event-store";
+import { getEvidenceMarkers } from "@/lib/services/evidence-linking";
 
 /**
  * GET /api/sessions/[id]
@@ -82,6 +83,9 @@ export async function GET(
                 expertiseLevel: true,
                 expertiseGrowth: true,
                 expertiseGrowthTrend: true,
+                // Sentry-like session summary
+                sessionSummary: true,
+                sessionSummaryAt: true,
               },
             },
           },
@@ -103,6 +107,7 @@ export async function GET(
                   role: true,
                   seniority: true,
                   duration: true,
+                  techStack: true,
                 },
               },
               generatedQuestions: {
@@ -144,6 +149,9 @@ export async function GET(
                   expertiseLevel: true,
                   expertiseGrowth: true,
                   expertiseGrowthTrend: true,
+                  // Sentry-like session summary
+                  sessionSummary: true,
+                  sessionSummaryAt: true,
                 },
               },
             },
@@ -196,6 +204,16 @@ export async function GET(
     // Calculate session metrics from events
     const metrics = calculateSessionMetrics(events, sessionRecording);
 
+    // Fetch evidence markers for Sentry-like replay (click to jump)
+    // Non-critical feature - return empty array on failure
+    let evidenceMarkers: Awaited<ReturnType<typeof getEvidenceMarkers>> = [];
+    try {
+      evidenceMarkers = await getEvidenceMarkers(sessionRecording.id);
+    } catch (evidenceError) {
+      console.warn("Failed to fetch evidence markers:", evidenceError);
+      // Continue without evidence markers - non-critical feature
+    }
+
     // Return comprehensive session data
     return NextResponse.json({
       session: {
@@ -223,6 +241,9 @@ export async function GET(
       evaluation: sessionRecording.candidate.evaluation,
       timeline,
       metrics,
+      // Sentry-like replay features
+      evidenceMarkers, // For timeline markers and click-to-jump
+      sessionSummary: sessionRecording.candidate.evaluation?.sessionSummary || null,
     });
   } catch (error) {
     console.error("Error fetching session:", error);
@@ -307,6 +328,12 @@ function mapEventTypeToLegacy(eventType: string): string {
     "terminal.command": "terminal_input",
     "terminal.output": "terminal_output",
     "terminal.clear": "terminal_clear",
+
+    // Agent question events (clarifying questions from AI)
+    "agent.question_asked": "agent_question_asked",
+    "agent.question_answered": "agent_question_answered",
+    "agent.questions_asked": "agent_questions_asked",
+    "agent.questions_answered": "agent_questions_answered",
 
     // Test events
     "test.run_start": "test_start",

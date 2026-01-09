@@ -10,7 +10,7 @@ the TypeScript implementation in lib/services/modal.ts:
 - Write queue for serialized operations
 
 Each session gets an isolated container with:
-- 2 CPU cores, 2GB RAM
+- 0.5 CPU (burstable to 2.0), 512MB RAM (burstable to 4GB)
 - 1 hour timeout
 - Persistent filesystem within session
 - Pre-installed: Python 3.11, Node 20, Go 1.21, Rust
@@ -36,8 +36,11 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Default sandbox configuration (fallback when DB unavailable)
-DEFAULT_SANDBOX_CPU = 2
-DEFAULT_SANDBOX_MEMORY_MB = 2048
+# Must match TypeScript lib/services/modal.ts createNewSandbox()
+DEFAULT_SANDBOX_CPU = 0.5  # Burstable CPU (matches TypeScript cpu: 0.5)
+DEFAULT_SANDBOX_CPU_LIMIT = 2.0  # Max CPU when bursting (matches TypeScript cpuLimit: 2.0)
+DEFAULT_SANDBOX_MEMORY_MB = 512  # Base memory (matches TypeScript memoryMiB: 512)
+DEFAULT_SANDBOX_MEMORY_LIMIT_MB = 4096  # Max memory (matches TypeScript memoryLimitMiB: 4096)
 DEFAULT_SANDBOX_TIMEOUT_S = 3600  # 1 hour
 
 # Reconnection configuration (matching TypeScript)
@@ -84,7 +87,9 @@ def get_volume_name(session_id: str) -> str:
 # Fallback configs used when DB lookup fails or tables don't exist
 FALLBACK_SANDBOX_CONFIG = {
     'cpu': DEFAULT_SANDBOX_CPU,
+    'cpuLimit': DEFAULT_SANDBOX_CPU_LIMIT,
     'memoryMb': DEFAULT_SANDBOX_MEMORY_MB,
+    'memoryLimitMb': DEFAULT_SANDBOX_MEMORY_LIMIT_MB,
     'timeoutSeconds': DEFAULT_SANDBOX_TIMEOUT_S,
 }
 
@@ -484,8 +489,9 @@ class SandboxManager:
             logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
             return (None, True, None)
 
-        # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
-        lock_key = f"lock:sandbox:{session_id}"
+        # IMPORTANT: Key must match TypeScript lib/services/modal.ts which uses "sandbox:{id}"
+        # TypeScript uses acquireLock(`sandbox:${sessionId}`, ...) at line 1051
+        lock_key = f"sandbox:{session_id}"
         lock_value = cls._generate_lock_value()
         start_time = time.time()
         check_count = 0
@@ -603,8 +609,9 @@ class SandboxManager:
             logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
             return (None, True)
 
-        # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
-        lock_key = f"lock:sandbox:{session_id}"
+        # IMPORTANT: Key must match TypeScript lib/services/modal.ts which uses "sandbox:{id}"
+        # TypeScript uses acquireLock(`sandbox:${sessionId}`, ...) at line 1051
+        lock_key = f"sandbox:{session_id}"
         lock_value = cls._generate_lock_value()
         start_time = time.time()
 
@@ -915,6 +922,54 @@ class SandboxManager:
         except Exception:
             pass
 
+    @classmethod
+    def _save_sandbox_id_to_db_sync(cls, session_id: str, sandbox_id: str, language: str = "javascript") -> None:
+        """
+        Sync wrapper for _save_sandbox_id_to_db.
+
+        Uses thread pool to safely run async DB operations from sync context,
+        avoiding event loop issues in LangGraph tools.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls._save_sandbox_id_to_db(session_id, sandbox_id, language)
+                )
+                future.result(timeout=10)  # 10 second timeout for DB operation
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            asyncio.run(cls._save_sandbox_id_to_db(session_id, sandbox_id, language))
+        except Exception as e:
+            logger.warning(f"[SandboxManager] Failed to persist sandbox ID to DB: {e}")
+
+    @classmethod
+    def _clear_sandbox_id_from_db_sync(cls, session_id: str) -> None:
+        """
+        Sync wrapper for _clear_sandbox_id_from_db.
+
+        Uses thread pool to safely run async DB operations from sync context,
+        avoiding event loop issues in LangGraph tools.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls._clear_sandbox_id_from_db(session_id)
+                )
+                future.result(timeout=10)  # 10 second timeout for DB operation
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            asyncio.run(cls._clear_sandbox_id_from_db(session_id))
+        except Exception as e:
+            logger.warning(f"[SandboxManager] Failed to clear sandbox ID from DB: {e}")
+
     # =========================================================================
     # Reconnection with Retry (matching TypeScript)
     # =========================================================================
@@ -1026,12 +1081,15 @@ class SandboxManager:
             image = cls._get_default_image()
 
         # Get sandbox config from DB (with fallback to defaults)
+        # Must match TypeScript lib/services/modal.ts createNewSandbox()
         sandbox_config = get_sandbox_config_sync(language or 'javascript')
         sandbox_cpu = sandbox_config.get('cpu', DEFAULT_SANDBOX_CPU)
+        sandbox_cpu_limit = sandbox_config.get('cpuLimit', DEFAULT_SANDBOX_CPU_LIMIT)
         sandbox_memory = sandbox_config.get('memoryMb', DEFAULT_SANDBOX_MEMORY_MB)
+        sandbox_memory_limit = sandbox_config.get('memoryLimitMb', DEFAULT_SANDBOX_MEMORY_LIMIT_MB)
         sandbox_timeout = sandbox_config.get('timeoutSeconds', DEFAULT_SANDBOX_TIMEOUT_S)
 
-        print(f"[SandboxManager] Sandbox config: cpu={sandbox_cpu}, memory={sandbox_memory}MB, timeout={sandbox_timeout}s")
+        print(f"[SandboxManager] Sandbox config: cpu={sandbox_cpu} (limit={sandbox_cpu_limit}), memory={sandbox_memory}MB (limit={sandbox_memory_limit}MB), timeout={sandbox_timeout}s")
 
         # Get or create persistent volume (matching TypeScript implementation)
         # Volume name is deterministic based on session_id so files persist across sandbox restarts
@@ -1043,6 +1101,7 @@ class SandboxManager:
         # Create sandbox with keep-alive command AND mounted volume
         # The "tail -f /dev/null" keeps the sandbox alive without consuming resources
         # Volume at /workspace ensures files persist and are shared with TypeScript side
+        # CPU/memory use burstable settings matching TypeScript (base + limit)
         sandbox = modal.Sandbox.create(
             "tail", "-f", "/dev/null",  # Keep-alive command
             app=cls._get_app(),
@@ -1050,7 +1109,9 @@ class SandboxManager:
             timeout=sandbox_timeout,
             workdir="/workspace",
             cpu=sandbox_cpu,
+            cpu_limit=sandbox_cpu_limit,
             memory=sandbox_memory,
+            memory_limit=sandbox_memory_limit,
             volumes={"/workspace": volume},  # Mount persistent volume
         )
 
@@ -1062,15 +1123,9 @@ class SandboxManager:
         cls._sandbox_created_at[session_id] = datetime.now()
         cls._sandbox_language[session_id] = language or "javascript"
 
-        # Persist to database (optional - sandbox works without DB persistence)
-        # NOTE: Disabled due to event loop issues when called from LangGraph async context
-        # The DSN format also doesn't match what the async DB operations expect
-        # try:
-        #     asyncio.get_event_loop().run_until_complete(
-        #         cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript")
-        #     )
-        # except RuntimeError:
-        #     asyncio.run(cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript"))
+        # Persist sandbox ID to database for recovery across process restarts
+        # Uses sync wrapper with thread pool to avoid event loop issues in LangGraph context
+        cls._save_sandbox_id_to_db_sync(session_id, sandbox_id, language or "javascript")
 
         print(f"[SandboxManager] Created new sandbox {sandbox_id} for session {session_id} (language: {language or 'default'})")
         return sandbox
@@ -1111,7 +1166,7 @@ class SandboxManager:
         # 3. Acquire distributed lock OR wait for sandbox to be created by another process
         # Returns: (lock_value, acquired, existing_sandbox)
         # lock_value is a unique string for ownership verification, or None if no lock
-        lock_key = f"lock:sandbox:{session_id}"
+        lock_key = f"sandbox:{session_id}"
         lock_value, acquired, existing_sandbox = await cls._acquire_lock_or_wait_for_sandbox_async(session_id)
 
         try:
@@ -1213,20 +1268,18 @@ class SandboxManager:
         cls._sandbox_language.pop(session_id, None)
         cls._stop_keepalive(session_id)
 
-        # Clear from database too
+        # Clear sandbox ID from database
+        # Uses sync wrapper with thread pool to avoid event loop issues in LangGraph context
         if sandbox_id:
-            try:
-                try:
-                    asyncio.get_event_loop().run_until_complete(
-                        cls._clear_sandbox_id_from_db(session_id)
-                    )
-                except RuntimeError:
-                    asyncio.run(cls._clear_sandbox_id_from_db(session_id))
-            except Exception as e:
-                logger.warning(f"[SandboxManager] Failed to clear sandbox from DB: {e}")
+            cls._clear_sandbox_id_from_db_sync(session_id)
 
     @classmethod
-    def get_or_recreate_sandbox(cls, session_id: str, language: Optional[str] = None) -> Any:
+    def get_or_recreate_sandbox(
+        cls,
+        session_id: str,
+        language: Optional[str] = None,
+        existing_sandbox_id: Optional[str] = None,
+    ) -> Any:
         """
         Get sandbox, validating it's alive. Recreate with Redis lock if dead.
 
@@ -1234,20 +1287,38 @@ class SandboxManager:
         the case where a cached sandbox has died.
 
         Flow:
-        1. Get sandbox (from cache, DB, or create new)
-        2. Validate it's alive with a health check
-        3. If dead: acquire Redis lock, clear cache, create new sandbox
-        4. Return healthy sandbox
+        1. If existing_sandbox_id provided, try direct reconnection first
+        2. Get sandbox (from cache, DB, or create new)
+        3. Validate it's alive with a health check
+        4. If dead: acquire Redis lock, clear cache, create new sandbox
+        5. Return healthy sandbox
 
         Args:
             session_id: Session identifier
             language: Optional language for sandbox image
+            existing_sandbox_id: Optional Modal sandbox ID (sb-xxxxx) for direct reconnection.
+                                 Passed from TypeScript when sandbox was created there.
 
         Returns:
             Live sandbox instance
         """
         if not MODAL_AVAILABLE:
             raise RuntimeError("Modal SDK not available. Install with: pip install modal")
+
+        # If existing_sandbox_id is provided and we don't have it cached, try to reconnect directly
+        if existing_sandbox_id and session_id not in cls._sandboxes:
+            logger.info(f"[SandboxManager] Attempting direct reconnection to sandbox {existing_sandbox_id}")
+            sandbox = cls._reconnect_to_sandbox(existing_sandbox_id)
+            if sandbox:
+                # Cache the reconnected sandbox
+                cls._sandboxes[session_id] = sandbox
+                cls._sandbox_ids[session_id] = existing_sandbox_id
+                cls._sandbox_created_at[session_id] = datetime.now()
+                cls._sandbox_language[session_id] = language or "javascript"
+                logger.info(f"[SandboxManager] Successfully reconnected to sandbox {existing_sandbox_id}")
+                return sandbox
+            else:
+                logger.warning(f"[SandboxManager] Failed to reconnect to sandbox {existing_sandbox_id}, will create new")
 
         # Get sandbox (may be from cache)
         sandbox = cls.get_sandbox(session_id, language)
@@ -1262,7 +1333,7 @@ class SandboxManager:
             logger.warning(f"[SandboxManager] Sandbox {sandbox_id} is dead, recreating...")
 
             # Acquire Redis lock for recreation (returns tuple: lock_value, acquired)
-            lock_key = f"lock:sandbox:{session_id}"
+            lock_key = f"sandbox:{session_id}"
             lock_value, acquired = cls._acquire_lock(session_id)
             try:
                 # Double-check after acquiring lock (another process might have recreated)
@@ -1332,14 +1403,9 @@ class SandboxManager:
                 cls._sandbox_language.pop(session_id, None)
                 cls._write_queues.pop(session_id, None)
 
-                # Clear from database (optional - may fail due to event loop issues)
-                # NOTE: Disabled due to event loop issues in LangGraph async context
-                # try:
-                #     asyncio.get_event_loop().run_until_complete(
-                #         cls._clear_sandbox_id_from_db(session_id)
-                #     )
-                # except RuntimeError:
-                #     asyncio.run(cls._clear_sandbox_id_from_db(session_id))
+                # Clear sandbox ID from database
+                # Uses sync wrapper with thread pool to avoid event loop issues in LangGraph context
+                cls._clear_sandbox_id_from_db_sync(session_id)
 
                 print(f"[SandboxManager] Terminated sandbox for session {session_id}")
                 return True
@@ -1632,13 +1698,22 @@ async def get_sandbox_async(session_id: str, language: Optional[str] = None) -> 
     return await SandboxManager.get_sandbox_async(session_id, language)
 
 
-def get_or_recreate_sandbox(session_id: str, language: Optional[str] = None) -> Any:
+def get_or_recreate_sandbox(
+    session_id: str,
+    language: Optional[str] = None,
+    existing_sandbox_id: Optional[str] = None,
+) -> Any:
     """
     Get sandbox with health check. Recreate with Redis lock if dead.
 
     This is the PREFERRED function for tools, as it handles dead containers.
+
+    Args:
+        session_id: Session identifier for caching
+        language: Optional language for sandbox image
+        existing_sandbox_id: Optional Modal sandbox ID (sb-xxxxx) for direct reconnection
     """
-    return SandboxManager.get_or_recreate_sandbox(session_id, language)
+    return SandboxManager.get_or_recreate_sandbox(session_id, language, existing_sandbox_id)
 
 
 def terminate_sandbox(session_id: str) -> bool:

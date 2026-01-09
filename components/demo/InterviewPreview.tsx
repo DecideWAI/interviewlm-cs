@@ -53,13 +53,11 @@ export function InterviewPreview({ techStack = [], question }: InterviewPreviewP
 
   // Convert string[] techStack to TechStackRequirements object
   const techStackRequirements: TechStackRequirements = {
-    critical: techStack.map((tech, i) => ({
+    required: techStack.map((tech, i) => ({
       id: `tech-${i}`,
       name: tech,
       category: "tool" // Default category to satisfy type
     })),
-    required: [],
-    recommended: [],
     optional: [],
   };
 

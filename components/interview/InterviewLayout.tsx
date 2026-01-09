@@ -2,7 +2,7 @@
 
 import { ReactNode, useState, useEffect, useCallback } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
-import { BookOpen, FileCode, MessageSquare, ClipboardCheck, Terminal as TerminalIcon } from "lucide-react";
+import { BookOpen, FileCode, MessageSquare, ClipboardCheck, Terminal as TerminalIcon, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface PanelSizes {
@@ -34,9 +34,11 @@ interface InterviewLayoutProps {
   // Right sidebar content
   chatContent: ReactNode;
   evaluationContent?: ReactNode;
-  rightPanelTab?: "chat" | "evaluation";
-  onRightPanelTabChange?: (tab: "chat" | "evaluation") => void;
+  evidenceContent?: ReactNode; // Evidence panel for Sentry-like replay
+  rightPanelTab?: "chat" | "evaluation" | "evidence";
+  onRightPanelTabChange?: (tab: "chat" | "evaluation" | "evidence") => void;
   showEvaluationBadge?: boolean;
+  showEvidenceBadge?: boolean; // Show indicator for evidence panel
 
   // Right panel visibility
   isRightPanelOpen?: boolean;
@@ -62,9 +64,11 @@ export function InterviewLayout({
   terminalOverlay,
   chatContent,
   evaluationContent,
+  evidenceContent,
   rightPanelTab: controlledRightTab,
   onRightPanelTabChange,
   showEvaluationBadge = false,
+  showEvidenceBadge = false,
   isRightPanelOpen = true,
   onRightPanelToggle,
   panelSizes: controlledPanelSizes,
@@ -79,7 +83,7 @@ export function InterviewLayout({
 
   // Internal state for uncontrolled tabs
   const [internalLeftTab, setInternalLeftTab] = useState<"problem" | "files">("problem");
-  const [internalRightTab, setInternalRightTab] = useState<"chat" | "evaluation">("chat");
+  const [internalRightTab, setInternalRightTab] = useState<"chat" | "evaluation" | "evidence">("chat");
 
   // Use controlled or internal state
   const leftSidebarTab = controlledLeftTab ?? internalLeftTab;
@@ -94,7 +98,7 @@ export function InterviewLayout({
     localStorage.setItem(`${storageKey}-sidebar-tab`, tab);
   };
 
-  const handleRightTabChange = (tab: "chat" | "evaluation") => {
+  const handleRightTabChange = (tab: "chat" | "evaluation" | "evidence") => {
     if (onRightPanelTabChange) {
       onRightPanelTabChange(tab);
     } else {
@@ -254,46 +258,70 @@ export function InterviewLayout({
             <Panel defaultSize={panelSizes.horizontal[2]} minSize={20} maxSize={50}>
               <div className="h-full border-l border-border flex flex-col bg-background">
                 {/* Tab Headers */}
-                <div className="border-b border-border bg-background-secondary flex">
+                <div className="border-b border-border bg-background-secondary flex overflow-x-auto">
                   <button
                     onClick={() => handleRightTabChange("chat")}
+                    title={mode === "replay" ? "AI Chat (Replay)" : "AI Chat"}
                     className={cn(
-                      "flex-1 px-4 py-2.5 text-sm font-medium transition-colors",
+                      "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                       rightPanelTab === "chat"
                         ? "text-primary border-b-2 border-primary bg-background"
                         : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
                     )}
                   >
-                    <div className="flex items-center justify-center gap-2">
-                      <MessageSquare className="h-4 w-4" />
-                      <span>AI Chat</span>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <MessageSquare className="h-4 w-4 flex-shrink-0" />
+                      <span className="truncate">
+                        AI{mode === "replay" ? "" : " Chat"}
+                      </span>
                       {mode === "replay" && (
-                        <span className="text-[10px] text-text-muted">(Replay)</span>
+                        <span className="text-[10px] text-text-muted flex-shrink-0">(Replay)</span>
                       )}
                     </div>
                   </button>
                   {evaluationContent && (
                     <button
                       onClick={() => handleRightTabChange("evaluation")}
+                      title="Evaluation"
                       className={cn(
-                        "flex-1 px-4 py-2.5 text-sm font-medium transition-colors",
+                        "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                         rightPanelTab === "evaluation"
                           ? "text-primary border-b-2 border-primary bg-background"
                           : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
                       )}
                     >
-                      <div className="flex items-center justify-center gap-2">
-                        <ClipboardCheck className="h-4 w-4" />
-                        <span>Evaluation</span>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <ClipboardCheck className="h-4 w-4 flex-shrink-0" />
+                        <span className="truncate">Evaluation</span>
                         {showEvaluationBadge && (
-                          <span className="h-2 w-2 rounded-full bg-success" />
+                          <span className="h-2 w-2 rounded-full bg-success flex-shrink-0" />
+                        )}
+                      </div>
+                    </button>
+                  )}
+                  {evidenceContent && (
+                    <button
+                      onClick={() => handleRightTabChange("evidence")}
+                      title="Evidence"
+                      className={cn(
+                        "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
+                        rightPanelTab === "evidence"
+                          ? "text-primary border-b-2 border-primary bg-background"
+                          : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
+                      )}
+                    >
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Sparkles className="h-4 w-4 flex-shrink-0" />
+                        <span className="truncate">Evid</span>
+                        {showEvidenceBadge && (
+                          <span className="h-2 w-2 rounded-full bg-primary animate-pulse flex-shrink-0" />
                         )}
                       </div>
                     </button>
                   )}
                 </div>
 
-                {/* Tab Content - Both panels rendered but only active one visible */}
+                {/* Tab Content - All panels rendered but only active one visible */}
                 <div className="flex-1 min-h-0 relative">
                   <div className={cn("h-full", rightPanelTab !== "chat" && "hidden")}>
                     {chatContent}
@@ -301,6 +329,11 @@ export function InterviewLayout({
                   {evaluationContent && (
                     <div className={cn("h-full", rightPanelTab !== "evaluation" && "hidden")}>
                       {evaluationContent}
+                    </div>
+                  )}
+                  {evidenceContent && (
+                    <div className={cn("h-full", rightPanelTab !== "evidence" && "hidden")}>
+                      {evidenceContent}
                     </div>
                   )}
                 </div>

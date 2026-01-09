@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.orm import selectinload, Session, sessionmaker
+from sqlalchemy.orm import Session, selectinload, sessionmaker
 
 from config.settings import settings
 from models.db_models import (

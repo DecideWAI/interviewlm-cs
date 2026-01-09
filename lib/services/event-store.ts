@@ -67,8 +67,10 @@ export type EventType =
   | "chat.tool_result"
   | "chat.reset"
   // Agent clarification questions (for question-first approach)
-  | "agent.question_asked" // Agent presented options to candidate
-  | "agent.question_answered" // Candidate responded to question
+  | "agent.question_asked" // Agent presented a single question to candidate
+  | "agent.question_answered" // Candidate responded to single question
+  | "agent.questions_asked" // Agent presented multiple questions at once (batch)
+  | "agent.questions_answered" // Candidate responded to all batch questions
   // Terminal
   | "terminal.command"
   | "terminal.output"
@@ -844,6 +846,11 @@ export function isCheckpointEvent(eventType: EventType): boolean {
     "test.run_complete",
     "evaluation.complete",
     "evaluation.final",
+    // Agent clarification questions (question-first approach)
+    "agent.question_asked",
+    "agent.question_answered",
+    "agent.questions_asked",
+    "agent.questions_answered",
   ];
   return checkpointTypes.includes(eventType);
 }
