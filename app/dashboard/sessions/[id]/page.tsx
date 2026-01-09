@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { InterviewLayout } from "@/components/interview/InterviewLayout";
 import { FileTree, FileNode } from "@/components/interview/FileTree";
 import { ProblemPanel } from "@/components/interview/ProblemPanel";
+import { TechStackRequirements, Technology } from "@/types/assessment";
 
 // Evidence replay components
 import { EvidenceMarkers, EvidenceTimelineLegend } from "@/components/replay/EvidenceMarker";
@@ -104,6 +105,7 @@ interface SessionData {
     role: string;
     seniority: string;
     duration: number;
+    techStack: string[];
   };
   questions: Array<{
     title: string;
@@ -496,6 +498,22 @@ function ReplayEvaluation({ evaluation }: { evaluation: EvaluationData | null })
       </div>
     </div>
   );
+}
+
+/**
+ * Convert techStack string array to TechStackRequirements format for ProblemPanel
+ */
+function convertTechStackToRequirements(techStack: string[]): TechStackRequirements {
+  const required: Technology[] = techStack.map((name) => ({
+    id: name.toLowerCase().replace(/\s+/g, "-"),
+    name,
+    category: "framework" as const, // Default to framework, could be refined
+  }));
+
+  return {
+    required,
+    optional: [],
+  };
 }
 
 export default function SessionReplayPage() {
@@ -1307,6 +1325,9 @@ export default function SessionReplayPage() {
             description={sessionData.questions[currentQuestionIndex]?.description || ""}
             difficulty={(sessionData.questions[currentQuestionIndex]?.difficulty?.toLowerCase() as "easy" | "medium" | "hard") || "medium"}
             constraints={sessionData.questions[currentQuestionIndex]?.requirements}
+            techStack={sessionData.assessment.techStack?.length > 0
+              ? convertTechStackToRequirements(sessionData.assessment.techStack)
+              : undefined}
             testCases={sessionData.questions[currentQuestionIndex]?.testCases}
           />
         }

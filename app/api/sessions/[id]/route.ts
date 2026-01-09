@@ -107,6 +107,7 @@ export async function GET(
                   role: true,
                   seniority: true,
                   duration: true,
+                  techStack: true,
                 },
               },
               generatedQuestions: {
