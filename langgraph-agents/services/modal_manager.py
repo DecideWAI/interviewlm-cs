@@ -10,7 +10,7 @@ the TypeScript implementation in lib/services/modal.ts:
 - Write queue for serialized operations
 
 Each session gets an isolated container with:
-- 2 CPU cores, 2GB RAM
+- 0.5 CPU (burstable to 2.0), 512MB RAM (burstable to 4GB)
 - 1 hour timeout
 - Persistent filesystem within session
 - Pre-installed: Python 3.11, Node 20, Go 1.21, Rust
@@ -36,8 +36,11 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Default sandbox configuration (fallback when DB unavailable)
-DEFAULT_SANDBOX_CPU = 2
-DEFAULT_SANDBOX_MEMORY_MB = 2048
+# Must match TypeScript lib/services/modal.ts createNewSandbox()
+DEFAULT_SANDBOX_CPU = 0.5  # Burstable CPU (matches TypeScript cpu: 0.5)
+DEFAULT_SANDBOX_CPU_LIMIT = 2.0  # Max CPU when bursting (matches TypeScript cpuLimit: 2.0)
+DEFAULT_SANDBOX_MEMORY_MB = 512  # Base memory (matches TypeScript memoryMiB: 512)
+DEFAULT_SANDBOX_MEMORY_LIMIT_MB = 4096  # Max memory (matches TypeScript memoryLimitMiB: 4096)
 DEFAULT_SANDBOX_TIMEOUT_S = 3600  # 1 hour
 
 # Reconnection configuration (matching TypeScript)
@@ -84,7 +87,9 @@ def get_volume_name(session_id: str) -> str:
 # Fallback configs used when DB lookup fails or tables don't exist
 FALLBACK_SANDBOX_CONFIG = {
     'cpu': DEFAULT_SANDBOX_CPU,
+    'cpuLimit': DEFAULT_SANDBOX_CPU_LIMIT,
     'memoryMb': DEFAULT_SANDBOX_MEMORY_MB,
+    'memoryLimitMb': DEFAULT_SANDBOX_MEMORY_LIMIT_MB,
     'timeoutSeconds': DEFAULT_SANDBOX_TIMEOUT_S,
 }
 
@@ -1028,12 +1033,15 @@ class SandboxManager:
             image = cls._get_default_image()
 
         # Get sandbox config from DB (with fallback to defaults)
+        # Must match TypeScript lib/services/modal.ts createNewSandbox()
         sandbox_config = get_sandbox_config_sync(language or 'javascript')
         sandbox_cpu = sandbox_config.get('cpu', DEFAULT_SANDBOX_CPU)
+        sandbox_cpu_limit = sandbox_config.get('cpuLimit', DEFAULT_SANDBOX_CPU_LIMIT)
         sandbox_memory = sandbox_config.get('memoryMb', DEFAULT_SANDBOX_MEMORY_MB)
+        sandbox_memory_limit = sandbox_config.get('memoryLimitMb', DEFAULT_SANDBOX_MEMORY_LIMIT_MB)
         sandbox_timeout = sandbox_config.get('timeoutSeconds', DEFAULT_SANDBOX_TIMEOUT_S)
 
-        print(f"[SandboxManager] Sandbox config: cpu={sandbox_cpu}, memory={sandbox_memory}MB, timeout={sandbox_timeout}s")
+        print(f"[SandboxManager] Sandbox config: cpu={sandbox_cpu} (limit={sandbox_cpu_limit}), memory={sandbox_memory}MB (limit={sandbox_memory_limit}MB), timeout={sandbox_timeout}s")
 
         # Get or create persistent volume (matching TypeScript implementation)
         # Volume name is deterministic based on session_id so files persist across sandbox restarts
@@ -1045,6 +1053,7 @@ class SandboxManager:
         # Create sandbox with keep-alive command AND mounted volume
         # The "tail -f /dev/null" keeps the sandbox alive without consuming resources
         # Volume at /workspace ensures files persist and are shared with TypeScript side
+        # CPU/memory use burstable settings matching TypeScript (base + limit)
         sandbox = modal.Sandbox.create(
             "tail", "-f", "/dev/null",  # Keep-alive command
             app=cls._get_app(),
@@ -1052,7 +1061,9 @@ class SandboxManager:
             timeout=sandbox_timeout,
             workdir="/workspace",
             cpu=sandbox_cpu,
+            cpu_limit=sandbox_cpu_limit,
             memory=sandbox_memory,
+            memory_limit=sandbox_memory_limit,
             volumes={"/workspace": volume},  # Mount persistent volume
         )
 
