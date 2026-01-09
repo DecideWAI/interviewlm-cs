@@ -1226,7 +1226,12 @@ class SandboxManager:
                 logger.warning(f"[SandboxManager] Failed to clear sandbox from DB: {e}")
 
     @classmethod
-    def get_or_recreate_sandbox(cls, session_id: str, language: Optional[str] = None) -> Any:
+    def get_or_recreate_sandbox(
+        cls,
+        session_id: str,
+        language: Optional[str] = None,
+        existing_sandbox_id: Optional[str] = None,
+    ) -> Any:
         """
         Get sandbox, validating it's alive. Recreate with Redis lock if dead.
 
@@ -1234,20 +1239,38 @@ class SandboxManager:
         the case where a cached sandbox has died.
 
         Flow:
-        1. Get sandbox (from cache, DB, or create new)
-        2. Validate it's alive with a health check
-        3. If dead: acquire Redis lock, clear cache, create new sandbox
-        4. Return healthy sandbox
+        1. If existing_sandbox_id provided, try direct reconnection first
+        2. Get sandbox (from cache, DB, or create new)
+        3. Validate it's alive with a health check
+        4. If dead: acquire Redis lock, clear cache, create new sandbox
+        5. Return healthy sandbox
 
         Args:
             session_id: Session identifier
             language: Optional language for sandbox image
+            existing_sandbox_id: Optional Modal sandbox ID (sb-xxxxx) for direct reconnection.
+                                 Passed from TypeScript when sandbox was created there.
 
         Returns:
             Live sandbox instance
         """
         if not MODAL_AVAILABLE:
             raise RuntimeError("Modal SDK not available. Install with: pip install modal")
+
+        # If existing_sandbox_id is provided and we don't have it cached, try to reconnect directly
+        if existing_sandbox_id and session_id not in cls._sandboxes:
+            logger.info(f"[SandboxManager] Attempting direct reconnection to sandbox {existing_sandbox_id}")
+            sandbox = cls._reconnect_to_sandbox(existing_sandbox_id)
+            if sandbox:
+                # Cache the reconnected sandbox
+                cls._sandboxes[session_id] = sandbox
+                cls._sandbox_ids[session_id] = existing_sandbox_id
+                cls._sandbox_created_at[session_id] = datetime.now()
+                cls._sandbox_language[session_id] = language or "javascript"
+                logger.info(f"[SandboxManager] Successfully reconnected to sandbox {existing_sandbox_id}")
+                return sandbox
+            else:
+                logger.warning(f"[SandboxManager] Failed to reconnect to sandbox {existing_sandbox_id}, will create new")
 
         # Get sandbox (may be from cache)
         sandbox = cls.get_sandbox(session_id, language)
@@ -1632,13 +1655,22 @@ async def get_sandbox_async(session_id: str, language: Optional[str] = None) -> 
     return await SandboxManager.get_sandbox_async(session_id, language)
 
 
-def get_or_recreate_sandbox(session_id: str, language: Optional[str] = None) -> Any:
+def get_or_recreate_sandbox(
+    session_id: str,
+    language: Optional[str] = None,
+    existing_sandbox_id: Optional[str] = None,
+) -> Any:
     """
     Get sandbox with health check. Recreate with Redis lock if dead.
 
     This is the PREFERRED function for tools, as it handles dead containers.
+
+    Args:
+        session_id: Session identifier for caching
+        language: Optional language for sandbox image
+        existing_sandbox_id: Optional Modal sandbox ID (sb-xxxxx) for direct reconnection
     """
-    return SandboxManager.get_or_recreate_sandbox(session_id, language)
+    return SandboxManager.get_or_recreate_sandbox(session_id, language, existing_sandbox_id)
 
 
 def terminate_sandbox(session_id: str) -> bool:

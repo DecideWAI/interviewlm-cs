@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { TimelineScrubber } from "./TimelineScrubber";
 import { CodeDiffViewer } from "./CodeDiffViewer";
 import { PlaybackControls } from "./PlaybackControls";
+import { ReplayAgentQuestions } from "./ReplayAgentQuestions";
 import {
   SessionData,
   PlaybackSpeed,
@@ -16,6 +17,8 @@ import {
   TerminalEvent,
   TerminalCheckpoint,
   KeyMoment,
+  AgentQuestion,
+  AgentQuestionAnswer,
 } from "./types";
 
 // Dynamically import Terminal to avoid SSR issues
@@ -124,25 +127,34 @@ export function SessionReplayViewer({
     const aiInteractions: AIInteraction[] = [];
     const keyMoments: KeyMoment[] = [];
 
+    // Track pending questions to match with answers
+    const pendingQuestionsBatches: Map<string, { questions: AgentQuestion[], timestamp: Date, id: string }> = new Map();
+
     events.forEach((event: any) => {
       const timestamp = new Date(event.timestamp);
+      // API returns eventType from database, not type
+      const eventType = event.eventType || event.type;
 
-      switch (event.type) {
+      switch (eventType) {
         case 'code_snapshot':
+        case 'code.snapshot':
           codeSnapshots.push({
             timestamp,
             fileName: event.data.fileName || 'index.ts',
-            content: event.data.content || '',
+            content: event.data.content || event.data.fullContent || '',
             language: event.data.language || 'typescript',
           });
           break;
 
         case 'terminal_output':
+        case 'terminal.output':
         case 'terminal_input':
+        case 'terminal.input':
+        case 'terminal.command':
           terminalEvents.push({
             timestamp,
-            output: event.data.output || event.data.input || '',
-            isCommand: event.type === 'terminal_input',
+            output: event.data.output || event.data.input || event.data.command || '',
+            isCommand: eventType.includes('input') || eventType.includes('command'),
           });
           break;
 
@@ -157,10 +169,154 @@ export function SessionReplayViewer({
           });
           break;
 
+        // Chat messages (from recordClaudeInteraction)
+        case 'chat.user_message':
+          aiInteractions.push({
+            id: event.id,
+            timestamp,
+            role: 'user',
+            content: event.data.content || event.data.message || '',
+          });
+          break;
+
+        case 'chat.assistant_message':
+          aiInteractions.push({
+            id: event.id,
+            timestamp,
+            role: 'assistant',
+            content: event.data.content || event.data.message || '',
+            tokens: event.data.tokens,
+          });
+          break;
+
+        // Single question asked by AI
+        case 'agent.question_asked':
+          {
+            const questionId = event.data.questionId || `q_${event.id}`;
+            const questions: AgentQuestion[] = [{
+              questionId,
+              questionText: event.data.questionText || '',
+              options: event.data.options || [],
+              multiSelect: event.data.multiSelect || false,
+              allowCustomAnswer: event.data.allowCustomAnswer !== false,
+              context: event.data.context,
+            }];
+            pendingQuestionsBatches.set(questionId, { questions, timestamp, id: event.id });
+
+            aiInteractions.push({
+              id: event.id,
+              timestamp,
+              role: 'tool',
+              content: event.data.questionText || '',
+              toolCall: {
+                toolName: 'ask_question',
+                batchId: questionId,
+                questions,
+              },
+            });
+          }
+          break;
+
+        // Batch questions asked by AI
+        case 'agent.questions_asked':
+          {
+            const batchId = event.data.batchId || `batch_${event.id}`;
+            const questions: AgentQuestion[] = (event.data.questions || []).map((q: any) => ({
+              questionId: q.questionId || q.id,
+              questionText: q.questionText || q.question_text || '',
+              options: q.options || [],
+              multiSelect: q.multiSelect || q.multi_select || false,
+              allowCustomAnswer: q.allowCustomAnswer !== false && q.allow_custom_answer !== false,
+              context: q.context,
+            }));
+            pendingQuestionsBatches.set(batchId, { questions, timestamp, id: event.id });
+
+            aiInteractions.push({
+              id: event.id,
+              timestamp,
+              role: 'tool',
+              content: `${questions.length} questions asked`,
+              toolCall: {
+                toolName: 'ask_questions',
+                batchId,
+                questions,
+              },
+            });
+          }
+          break;
+
+        // Single question answered by user
+        case 'agent.question_answered':
+          {
+            const questionId = event.data.questionId;
+            const answer: AgentQuestionAnswer = {
+              questionId,
+              selectedOption: event.data.selectedOption,
+              customAnswer: event.data.customAnswer,
+              responseText: event.data.selectedOption || event.data.customAnswer || '',
+            };
+
+            // Find the corresponding question interaction and add answer
+            const questionInteraction = aiInteractions.find(
+              ai => ai.toolCall?.batchId === questionId && ai.role === 'tool'
+            );
+            if (questionInteraction?.toolCall) {
+              questionInteraction.toolCall.answers = [answer];
+            }
+
+            // Also add user's answer as a visible message
+            aiInteractions.push({
+              id: event.id,
+              timestamp,
+              role: 'user',
+              content: answer.responseText,
+            });
+          }
+          break;
+
+        // Batch questions answered by user
+        case 'agent.questions_answered':
+          {
+            const batchId = event.data.batchId;
+            const answers: AgentQuestionAnswer[] = (event.data.answers || []).map((a: any) => ({
+              questionId: a.questionId,
+              selectedOption: a.selectedOption,
+              selectedOptions: a.selectedOptions,
+              customAnswer: a.customAnswer,
+              responseText: a.responseText || '',
+              isMultiSelect: a.isMultiSelect || false,
+            }));
+
+            // Find the corresponding questions interaction and add answers
+            const questionInteraction = aiInteractions.find(
+              ai => ai.toolCall?.batchId === batchId && ai.role === 'tool'
+            );
+            if (questionInteraction?.toolCall) {
+              questionInteraction.toolCall.answers = answers;
+            }
+
+            // Add user's combined answers as a visible message
+            const combinedResponses = answers
+              .map(a => a.responseText)
+              .filter(Boolean)
+              .join('; ');
+
+            if (combinedResponses) {
+              aiInteractions.push({
+                id: event.id,
+                timestamp,
+                role: 'user',
+                content: combinedResponses,
+              });
+            }
+          }
+          break;
+
         case 'test_run':
-          if (event.checkpoint) {
-            const passed = event.data.passed || 0;
-            const failed = event.data.failed || 0;
+        case 'test.run_complete':
+          if (event.checkpoint || eventType === 'test.run_complete') {
+            const passed = event.data.passed || event.data.passedCount || 0;
+            const failed = event.data.failed || event.data.failedCount || 0;
             keyMoments.push({
               id: event.id,
               timestamp,
@@ -508,39 +664,60 @@ export function SessionReplayViewer({
                         </div>
                       </div>
                     ) : (
-                      currentAIInteractions.map((interaction) => (
-                        <div
-                          key={interaction.id}
-                          className={cn(
-                            "flex gap-3",
-                            interaction.role === "user" ? "justify-end" : "justify-start"
-                          )}
-                        >
-                          {interaction.role === "assistant" && (
-                            <div className="flex-shrink-0">
-                              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                                <Bot className="h-5 w-5 text-primary" />
+                      currentAIInteractions.map((interaction) => {
+                        // Render tool call (agent questions) as special component
+                        if (interaction.role === "tool" && interaction.toolCall) {
+                          return (
+                            <div key={interaction.id} className="flex gap-3 justify-start">
+                              <div className="flex-shrink-0">
+                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                  <Bot className="h-5 w-5 text-primary" />
+                                </div>
+                              </div>
+                              <div className="flex-1 max-w-[85%]">
+                                <ReplayAgentQuestions
+                                  questions={interaction.toolCall.questions || []}
+                                  answers={interaction.toolCall.answers}
+                                />
                               </div>
                             </div>
-                          )}
+                          );
+                        }
 
+                        // Regular user/assistant messages
+                        return (
                           <div
+                            key={interaction.id}
                             className={cn(
-                              "max-w-[80%] rounded-lg p-3",
-                              interaction.role === "user"
-                                ? "bg-primary text-white"
-                                : "bg-background-tertiary border border-border"
+                              "flex gap-3",
+                              interaction.role === "user" ? "justify-end" : "justify-start"
                             )}
                           >
-                            <div className="text-sm whitespace-pre-wrap">
-                              {interaction.content}
-                            </div>
-
                             {interaction.role === "assistant" && (
-                              <div className="mt-2 flex items-center gap-3 text-xs text-text-tertiary">
-                                {interaction.tokens && (
-                                  <span>{interaction.tokens} tokens</span>
-                                )}
+                              <div className="flex-shrink-0">
+                                <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
+                                  <Bot className="h-5 w-5 text-primary" />
+                                </div>
+                              </div>
+                            )}
+
+                            <div
+                              className={cn(
+                                "max-w-[80%] rounded-lg p-3",
+                                interaction.role === "user"
+                                  ? "bg-primary text-white"
+                                  : "bg-background-tertiary border border-border"
+                              )}
+                            >
+                              <div className="text-sm whitespace-pre-wrap">
+                                {interaction.content}
+                              </div>
+
+                              {interaction.role === "assistant" && (
+                                <div className="mt-2 flex items-center gap-3 text-xs text-text-tertiary">
+                                  {interaction.tokens && (
+                                    <span>{interaction.tokens} tokens</span>
+                                  )}
                                 {interaction.promptScore !== undefined && (
                                   <span className={cn(
                                     "font-medium",
@@ -563,7 +740,8 @@ export function SessionReplayViewer({
                             </div>
                           )}
                         </div>
-                      ))
+                      );
+                      })
                     )}
                   </div>
                 </div>

@@ -185,12 +185,166 @@ def ask_question(
 
 
 # =============================================================================
+# Ask Questions Tool (Multiple Questions)
+# =============================================================================
+
+@tool
+def ask_questions(
+    questions: list[dict],
+    batch_context: str | None = None,
+    config: Annotated[RunnableConfig | None, "Injected by LangGraph"] = None,
+) -> dict[str, Any]:
+    """
+    Present MULTIPLE clarifying questions to the candidate at once.
+
+    Use this when you have 2 or more related questions to ask. The candidate
+    will see all questions together and answer them before you receive responses.
+    This is more efficient than asking questions one at a time.
+
+    **IMPORTANT:** After calling this tool, WAIT for ALL responses before proceeding.
+    The candidate must answer every question before the conversation continues.
+
+    Args:
+        questions: List of question objects. Each object should have:
+            - question_text (str): The question to ask
+            - options (list[str]): List of 2-5 predefined answer choices
+            - multi_select (bool, optional): Allow selecting multiple options. Default: False
+            - allow_custom_answer (bool, optional): Allow custom response. Default: True
+            - context (str, optional): Internal note about why this question is asked
+        batch_context: (Optional) Overall context for why these questions are being
+                      asked together. Stored for evaluation but NOT shown to candidate.
+
+    Returns:
+        dict with:
+        - success: Whether questions were presented successfully
+        - batchId: Unique identifier for this question batch
+        - questionIds: List of individual question IDs
+        - message: Instruction to wait for all responses
+        - awaiting_response: Always True (signals to wait)
+
+    Example:
+        ask_questions(
+            questions=[
+                {
+                    "question_text": "Which database should I use?",
+                    "options": ["SQLite (simple)", "PostgreSQL (robust)", "MongoDB (flexible)"],
+                    "context": "Determining data layer requirements"
+                },
+                {
+                    "question_text": "Which features do you need?",
+                    "options": ["User auth", "File uploads", "Real-time updates", "API rate limiting"],
+                    "multi_select": True,  # Allows selecting multiple options
+                    "context": "Scoping feature requirements"
+                },
+                {
+                    "question_text": "What's your deployment target?",
+                    "options": ["Local development only", "Cloud (AWS/GCP)", "Docker container"],
+                    "context": "Understanding deployment constraints"
+                }
+            ],
+            batch_context="Gathering initial architecture requirements"
+        )
+    """
+    session_id = get_session_id(config)
+    batch_id = f"batch_{uuid.uuid4().hex[:8]}"
+
+    # Validate number of questions
+    if not questions or len(questions) < 2:
+        return {
+            "success": False,
+            "error": "Please provide at least 2 questions. For a single question, use ask_question instead.",
+        }
+    if len(questions) > 10:
+        return {
+            "success": False,
+            "error": "Please provide no more than 10 questions to avoid overwhelming the candidate.",
+        }
+
+    # Validate each question
+    processed_questions = []
+    question_ids = []
+
+    for i, q in enumerate(questions):
+        # Validate required fields
+        if not isinstance(q, dict):
+            return {
+                "success": False,
+                "error": f"Question {i + 1} must be a dictionary with question_text and options.",
+            }
+
+        question_text = q.get("question_text")
+        options = q.get("options", [])
+
+        if not question_text:
+            return {
+                "success": False,
+                "error": f"Question {i + 1} is missing 'question_text'.",
+            }
+
+        if not options or len(options) < 2:
+            return {
+                "success": False,
+                "error": f"Question {i + 1} must have at least 2 options.",
+            }
+
+        if len(options) > 5:
+            return {
+                "success": False,
+                "error": f"Question {i + 1} has too many options (max 5).",
+            }
+
+        question_id = f"q_{uuid.uuid4().hex[:8]}"
+        question_ids.append(question_id)
+
+        processed_questions.append({
+            "questionId": question_id,
+            "questionText": question_text,
+            "options": options,
+            "multiSelect": q.get("multi_select", False),
+            "allowCustomAnswer": q.get("allow_custom_answer", True),
+            "context": q.get("context"),
+        })
+
+    # Emit event to persist all questions
+    emit_event_fire_and_forget(
+        session_id=session_id,
+        event_type="agent.questions_asked",
+        origin="AI",
+        data={
+            "batchId": batch_id,
+            "questions": processed_questions,
+            "batchContext": batch_context,
+        },
+        checkpoint=True,  # Questions are important events for replay
+    )
+
+    logger.info(
+        f"[ask_questions] Presented {len(questions)} questions (batch {batch_id}) "
+        f"to session {session_id}"
+    )
+
+    return {
+        "success": True,
+        "batchId": batch_id,
+        "questionIds": question_ids,
+        "questionCount": len(questions),
+        "message": (
+            f"Presented {len(questions)} questions to candidate. "
+            "WAIT for ALL responses before proceeding. "
+            "Do NOT assume their choices."
+        ),
+        "awaiting_response": True,
+    }
+
+
+# =============================================================================
 # Tool List for Export
 # =============================================================================
 
-QUESTION_TOOLS = [ask_question]
+QUESTION_TOOLS = [ask_question, ask_questions]
 
 __all__ = [
     "ask_question",
+    "ask_questions",
     "QUESTION_TOOLS",
 ]

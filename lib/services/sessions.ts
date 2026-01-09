@@ -210,7 +210,12 @@ export async function recordEvent(
 export async function recordClaudeInteraction(
   sessionId: string,
   message: ClaudeMessage,
-  metadata?: { promptQuality?: number; questionIndex?: number }
+  metadata?: {
+    promptQuality?: number;
+    questionIndex?: number;
+    toolsUsed?: string[];
+    filesModified?: string[];
+  }
 ): Promise<string> {
   try {
     // Validate message
@@ -237,6 +242,11 @@ export async function recordClaudeInteraction(
         latency: message.latency,
         stopReason: message.stopReason,
         promptQuality: metadata?.promptQuality,
+        // Include tool metadata for chat history reconstruction
+        metadata: metadata?.toolsUsed || metadata?.filesModified ? {
+          toolsUsed: metadata.toolsUsed,
+          filesModified: metadata.filesModified,
+        } : undefined,
       },
       questionIndex: metadata?.questionIndex,
     });

@@ -46,15 +46,62 @@ const DEFAULT_HISTORY_MAX_CHARS = 10000;
 const terminalHistoryBuffer = new Map<string, string>();
 
 /**
+ * Strip ALL ANSI escape codes from text for pattern matching
+ * This includes: colors (\x1b[32m), cursor movement (\x1b[C),
+ * bracketed paste (\x1b[?2004h), and other control sequences
+ */
+// eslint-disable-next-line no-control-regex
+const stripAnsi = (str: string) => str.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '');
+
+/**
  * Append text to a session's output history buffer
  * Stored separately from ShellSession to persist across session recreation
+ *
+ * Also deduplicates repeated prompts to prevent "workspace:workspace# workspace:workspace#" accumulation
  */
 export function appendToShellHistory(sessionId: string, text: string): void {
   // Get current history or start fresh
   let history = terminalHistoryBuffer.get(sessionId) || "";
 
+  // Strip ANSI codes for pattern matching (but keep original for display)
+  const strippedText = stripAnsi(text);
+  const strippedHistory = stripAnsi(history);
+
+  // Check if we're appending just a prompt that's already at the end of history
+  // This prevents accumulation from repeated reconnections
+  // Pattern matches prompts like "workspace:workspace# " or "user@host$ "
+  const singlePromptPattern = /^([\w@:~\-\/]+[#$%>]\s*)$/;
+  const singlePromptMatch = strippedText.trim().match(singlePromptPattern);
+  if (singlePromptMatch) {
+    const promptToAdd = singlePromptMatch[1].trim();
+    // Check if history already ends with this prompt
+    if (strippedHistory.trimEnd().endsWith(promptToAdd)) {
+      // Skip appending - we'd just be duplicating the prompt
+      return;
+    }
+  }
+
+  // Detect and deduplicate repeated prompts in the incoming text
+  // Match the first prompt and count occurrences
+  const promptMatch = strippedText.match(/^([\w@:~\-\/]+[#$%>]\s*)/);
+  let cleanText = text;
+  if (promptMatch) {
+    const basePrompt = promptMatch[1];
+    const escapedPrompt = basePrompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const countPattern = new RegExp(escapedPrompt, 'g');
+    const matches = strippedText.match(countPattern);
+
+    if (matches && matches.length > 1) {
+      // Multiple prompts found - keep only the last one
+      const lastPromptIndex = text.lastIndexOf(basePrompt.trim());
+      if (lastPromptIndex > 0) {
+        cleanText = text.substring(lastPromptIndex);
+      }
+    }
+  }
+
   // Append new text
-  history += text;
+  history += cleanText;
 
   // Trim if exceeds max (keep the last DEFAULT_HISTORY_MAX_CHARS characters)
   if (history.length > DEFAULT_HISTORY_MAX_CHARS) {
@@ -74,10 +121,37 @@ export function appendToShellHistory(sessionId: string, text: string): void {
 /**
  * Get the output history for a session
  * Used to replay recent output when a client reconnects
+ * Also cleans up any duplicate prompts that may have accumulated
  */
 export function getShellHistory(sessionId: string): string | null {
-  const history = terminalHistoryBuffer.get(sessionId);
+  let history = terminalHistoryBuffer.get(sessionId);
   if (!history || history.length === 0) return null;
+
+  // Clean up duplicate prompts before returning
+  // This handles any accumulated prompts from before the fix was deployed
+  const strippedHistory = stripAnsi(history);
+  // Look for prompt pattern anywhere in the history
+  const promptMatch = strippedHistory.match(/([\w@:~\-\/]+[#$%>])\s*/);
+  if (promptMatch) {
+    const basePrompt = promptMatch[1]; // e.g., "workspace:workspace#"
+    const escapedPrompt = basePrompt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const countPattern = new RegExp(escapedPrompt, 'g');
+    const matches = strippedHistory.match(countPattern);
+
+    if (matches && matches.length > 1) {
+      console.log(`[History] Cleaning ${matches.length} duplicate prompts "${basePrompt}"`);
+      // Multiple prompts found - keep only the last one
+      const lastPromptIndex = history.lastIndexOf(basePrompt);
+      if (lastPromptIndex > 0) {
+        // Preserve leading content up to first prompt if it's useful (like newlines)
+        const leadingNewlines = history.match(/^[\r\n]*/);
+        history = (leadingNewlines ? leadingNewlines[0] : '') + history.substring(lastPromptIndex);
+        // Update the buffer with cleaned history
+        terminalHistoryBuffer.set(sessionId, history);
+      }
+    }
+  }
+
   return history;
 }
 

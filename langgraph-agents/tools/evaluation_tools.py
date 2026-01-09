@@ -210,12 +210,14 @@ async def get_agent_questions(
     Use this to evaluate the quality of the AI collaboration - how the agent
     asked questions before taking action, and how the candidate responded.
 
+    Handles both single questions (ask_question) and batch questions (ask_questions).
+
     Args:
         session_id: The session recording ID
 
     Returns:
         Dict with questions list containing questionId, questionText, options,
-        context, candidateAnswer, and responseTime
+        multiSelect, context, candidateAnswer, selectedOptions, and responseTime
     """
     pool = await get_db_pool()
     async with pool.acquire() as conn:
@@ -226,31 +228,63 @@ async def get_agent_questions(
                 event_type
             FROM session_event_logs
             WHERE session_id = $1
-            AND event_type IN ('agent.question_asked', 'agent.question_answered')
+            AND event_type IN (
+                'agent.question_asked', 'agent.question_answered',
+                'agent.questions_asked', 'agent.questions_answered'
+            )
             ORDER BY sequence_number ASC
         """, session_id)
 
         # Pair questions with answers
         questions: list[dict] = []
         pending_questions: dict[str, dict] = {}
+        batch_timestamps: dict[str, Any] = {}  # Track batch timestamps
 
         for row in rows:
             data = row["data"] if isinstance(row["data"], dict) else {}
             event_type = row["event_type"]
             timestamp = row["timestamp"]
 
+            # Single question asked
             if event_type == "agent.question_asked":
                 question_id = data.get("questionId", "")
                 pending_questions[question_id] = {
                     "questionId": question_id,
                     "questionText": data.get("questionText", ""),
                     "options": data.get("options", []),
+                    "multiSelect": data.get("multiSelect", False),
                     "allowCustomAnswer": data.get("allowCustomAnswer", True),
                     "context": data.get("context"),
+                    "batchId": None,
                     "askedAt": timestamp.isoformat() if timestamp else None,
                     "candidateAnswer": None,
+                    "selectedOptions": None,
                     "responseTimeMs": None,
                 }
+
+            # Batch questions asked
+            elif event_type == "agent.questions_asked":
+                batch_id = data.get("batchId", "")
+                batch_context = data.get("batchContext")
+                batch_timestamps[batch_id] = timestamp
+
+                for q_data in data.get("questions", []):
+                    question_id = q_data.get("questionId", "")
+                    pending_questions[question_id] = {
+                        "questionId": question_id,
+                        "questionText": q_data.get("questionText", ""),
+                        "options": q_data.get("options", []),
+                        "multiSelect": q_data.get("multiSelect", False),
+                        "allowCustomAnswer": q_data.get("allowCustomAnswer", True),
+                        "context": q_data.get("context") or batch_context,
+                        "batchId": batch_id,
+                        "askedAt": timestamp.isoformat() if timestamp else None,
+                        "candidateAnswer": None,
+                        "selectedOptions": None,
+                        "responseTimeMs": None,
+                    }
+
+            # Single question answered
             elif event_type == "agent.question_answered":
                 question_id = data.get("questionId", "")
                 if question_id in pending_questions:
@@ -270,25 +304,71 @@ async def get_agent_questions(
                     questions.append(q)
                     del pending_questions[question_id]
 
+            # Batch questions answered
+            elif event_type == "agent.questions_answered":
+                batch_id = data.get("batchId", "")
+                answers_list = data.get("answers", [])
+
+                for answer_data in answers_list:
+                    question_id = answer_data.get("questionId", "")
+                    if question_id in pending_questions:
+                        q = pending_questions[question_id]
+
+                        # Handle both single-select and multi-select answers
+                        selected_options = answer_data.get("selectedOptions")
+                        selected_option = answer_data.get("selectedOption")
+                        custom_answer = answer_data.get("customAnswer")
+
+                        if selected_options and len(selected_options) > 0:
+                            # Multi-select answer
+                            q["selectedOptions"] = selected_options
+                            q["candidateAnswer"] = ", ".join(selected_options)
+                            if custom_answer:
+                                q["candidateAnswer"] += f", {custom_answer}"
+                            q["wasMultiSelect"] = True
+                        else:
+                            # Single-select answer
+                            q["candidateAnswer"] = selected_option or custom_answer
+                            q["wasMultiSelect"] = False
+
+                        q["wasCustomAnswer"] = bool(custom_answer)
+
+                        # Calculate response time from batch timestamp
+                        if q["askedAt"] and timestamp:
+                            from datetime import datetime as dt
+                            asked_time = dt.fromisoformat(q["askedAt"].replace("Z", "+00:00"))
+                            if hasattr(asked_time, 'timestamp') and hasattr(timestamp, 'timestamp'):
+                                q["responseTimeMs"] = int((timestamp.timestamp() - asked_time.timestamp()) * 1000)
+
+                        questions.append(q)
+                        del pending_questions[question_id]
+
         # Add any unanswered questions
         for q in pending_questions.values():
             q["candidateAnswer"] = None
             q["wasCustomAnswer"] = False
+            q["wasMultiSelect"] = False
             questions.append(q)
 
         # Summary stats
         answered_count = sum(1 for q in questions if q["candidateAnswer"])
         custom_answer_count = sum(1 for q in questions if q.get("wasCustomAnswer"))
+        multi_select_count = sum(1 for q in questions if q.get("wasMultiSelect"))
         avg_response_time = None
         response_times = [q["responseTimeMs"] for q in questions if q["responseTimeMs"]]
         if response_times:
             avg_response_time = sum(response_times) / len(response_times)
+
+        # Count unique batches
+        batch_ids = set(q.get("batchId") for q in questions if q.get("batchId"))
 
         return {
             "success": True,
             "count": len(questions),
             "answeredCount": answered_count,
             "customAnswerCount": custom_answer_count,
+            "multiSelectCount": multi_select_count,
+            "batchCount": len(batch_ids),
             "avgResponseTimeMs": avg_response_time,
             "questions": questions,
         }

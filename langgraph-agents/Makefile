@@ -1,7 +1,7 @@
 # LangGraph Agents Makefile
 # Common commands for development, testing, and deployment
 
-.PHONY: help install test benchmark lint format clean docker-up docker-down langgraph-dev langgraph-deploy langgraph-up langgraph-down langgraph-test aegra-dev aegra-docker aegra-migrate aegra-test
+.PHONY: help install test benchmark lint format clean docker-up docker-down langgraph-dev langgraph-deploy langgraph-up langgraph-down langgraph-test aegra-dev aegra-run aegra-docker aegra-migrate aegra-test aegra-install aegra-setup aegra-db-create aegra-docker-down
 
 # Default target
 help:
@@ -13,10 +13,13 @@ help:
 	@echo "  make install-dev  - Install with dev dependencies"
 	@echo ""
 	@echo "Aegra Server (Primary - Recommended):"
-	@echo "  make aegra-dev      - Run Aegra server locally (port 8000)"
+	@echo "  make aegra-setup    - Full setup (install + db + migrate)"
+	@echo "  make aegra-dev      - Install deps + run server (first time)"
+	@echo "  make aegra-run      - Run server only (fast restart)"
 	@echo "  make aegra-docker   - Start Aegra with Docker (includes postgres)"
 	@echo "  make aegra-migrate  - Run database migrations"
 	@echo "  make aegra-test     - Test Aegra server health"
+	@echo "  make aegra-install  - Install Aegra dependencies only"
 	@echo ""
 	@echo "LangGraph Server (Legacy):"
 	@echo "  make langgraph-dev    - Run LangGraph dev server (port 2024)"
@@ -122,22 +125,22 @@ docker-restart:
 # Aegra Server (Primary - Open Source LangGraph Platform Alternative)
 # =============================================================================
 
-# Run Aegra development server locally
+# Run Aegra development server locally (installs deps first)
 # Uses langgraph.json for graph configuration via AEGRA_CONFIG
 # Requires: PostgreSQL running on localhost:5432
-aegra-dev:
+aegra-dev: aegra-install aegra-run
+
+# Run Aegra server (assumes deps already installed - use this for fast restarts)
+aegra-run:
 	@echo "Starting Aegra server..."
-	@echo "Make sure PostgreSQL is running (docker compose up postgres -d)"
-	@echo "Graphs will be loaded from langgraph.json"
 	@echo "Server: http://localhost:8000"
 	@echo "Health: http://localhost:8000/health"
 	@echo "Docs:   http://localhost:8000/docs"
-	@# Sync Aegra deps first, then install our agent deps into the same venv
-	cd aegra && uv sync
-	cd aegra && uv pip install -q -r $(PWD)/requirements.txt
-	AEGRA_CONFIG=$(PWD)/langgraph.json \
+	@# Load env from aegra/.env and run with proper config
+	set -a && . $(PWD)/aegra/.env && set +a && \
+		AEGRA_CONFIG=$(PWD)/langgraph.json \
 		PYTHONPATH=$(PWD)/aegra/src:$(PWD):$(PWD)/agents:$(PWD)/tools:$(PWD)/middleware:$$PYTHONPATH \
-		$(PWD)/aegra/.venv/bin/python -m uvicorn agent_server.main:app --host 0.0.0.0 --port 8000 --reload
+		$(PWD)/aegra/.venv/bin/python -m uvicorn agent_server.main:app --host 0.0.0.0 --port 8000
 
 # Start Aegra with Docker (includes PostgreSQL)
 aegra-docker:
@@ -149,7 +152,7 @@ aegra-docker-down:
 
 # Run database migrations
 aegra-migrate:
-	cd aegra && uv run alembic upgrade head
+	cd aegra && uv sync --group dev && uv run python scripts/migrate.py upgrade
 
 # Test Aegra server health
 aegra-test:
@@ -159,9 +162,32 @@ aegra-test:
 	@echo "Testing graph list..."
 	curl -s http://localhost:8000/assistants | python -m json.tool || echo "Failed to list graphs"
 
-# Install Aegra dependencies
+# Install Aegra dependencies + InterviewLM agent deps
 aegra-install:
-	cd aegra && uv sync
+	cd aegra && uv sync --group dev
+	@# Install extra deps needed by our agents (after sync to avoid conflicts)
+	cd aegra && uv pip install -q \
+		langchain-anthropic \
+		anthropic \
+		langchain-openai \
+		langchain-google-genai \
+		openai \
+		modal \
+		"sentry-sdk[fastapi,httpx,langchain,langgraph,anthropic]" \
+		httpx \
+		redis \
+		pydantic-settings \
+		sse-starlette \
+		langsmith
+
+# Create aegra database (run once)
+aegra-db-create:
+	docker exec interviewlm-postgres psql -U postgres -c "CREATE DATABASE aegra;" 2>/dev/null || echo "Database already exists"
+
+# Full Aegra setup (install + migrate)
+aegra-setup: aegra-install aegra-db-create aegra-migrate
+	@echo "✅ Aegra setup complete!"
+	@echo "Run 'make aegra-dev' to start the server"
 
 # =============================================================================
 # LangGraph Cloud (Legacy - Requires License)

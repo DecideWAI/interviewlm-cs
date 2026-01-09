@@ -30,13 +30,40 @@ export interface TerminalCheckpoint {
   eventIndex: number; // Index in terminalEvents array
 }
 
+export interface AgentQuestion {
+  questionId: string;
+  questionText: string;
+  options: string[];
+  multiSelect?: boolean;
+  allowCustomAnswer?: boolean;
+  context?: string;
+}
+
+export interface AgentQuestionAnswer {
+  questionId: string;
+  selectedOption?: string | null;
+  selectedOptions?: string[] | null;
+  customAnswer?: string | null;
+  responseText: string;
+  isMultiSelect?: boolean;
+}
+
+export interface ToolCallData {
+  toolName: 'ask_question' | 'ask_questions';
+  batchId?: string;
+  questions?: AgentQuestion[];
+  answers?: AgentQuestionAnswer[];
+}
+
 export interface AIInteraction {
   id: string;
   timestamp: Date;
-  role: 'user' | 'assistant';
+  role: 'user' | 'assistant' | 'tool';
   content: string;
   tokens?: number;
   promptScore?: number;
+  // Tool call specific data
+  toolCall?: ToolCallData;
 }
 
 export interface KeyMoment {

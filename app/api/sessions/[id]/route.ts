@@ -328,6 +328,12 @@ function mapEventTypeToLegacy(eventType: string): string {
     "terminal.output": "terminal_output",
     "terminal.clear": "terminal_clear",
 
+    // Agent question events (clarifying questions from AI)
+    "agent.question_asked": "agent_question_asked",
+    "agent.question_answered": "agent_question_answered",
+    "agent.questions_asked": "agent_questions_asked",
+    "agent.questions_answered": "agent_questions_answered",
+
     // Test events
     "test.run_start": "test_start",
     "test.result": "test_result",

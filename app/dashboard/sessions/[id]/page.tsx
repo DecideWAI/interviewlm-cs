@@ -22,6 +22,8 @@ import {
   Users,
   ThumbsUp,
   ThumbsDown,
+  Check,
+  MessageCircleQuestion,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { toast } from "sonner";
@@ -130,12 +132,32 @@ interface SessionData {
   sessionSummary?: string | null;
 }
 
+interface AgentQuestion {
+  questionId: string;
+  questionText: string;
+  options: string[];
+  multiSelect?: boolean;
+  allowCustomAnswer?: boolean;
+}
+
+interface AgentAnswer {
+  questionId: string;
+  selectedOption?: string | null;
+  selectedOptions?: string[] | null;
+  customAnswer?: string | null;
+  responseText: string;
+}
+
 interface Message {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: Date;
   type?: string;
+  // For agent questions
+  questions?: AgentQuestion[];
+  answers?: AgentAnswer[];
+  batchId?: string;
 }
 
 interface PlaybackState {
@@ -154,6 +176,116 @@ interface ReplayState {
   terminalLines: string[];
   chatMessages: Message[];
   currentFile: string;
+}
+
+// Render agent questions for replay
+function ReplayAgentQuestionsInline({
+  questions,
+  answers
+}: {
+  questions: AgentQuestion[];
+  answers?: AgentAnswer[];
+}) {
+  const answerMap = new Map<string, AgentAnswer>();
+  (answers || []).forEach((a) => answerMap.set(a.questionId, a));
+  const hasAnswers = (answers?.length || 0) > 0;
+
+  return (
+    <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+          <MessageCircleQuestion className="w-4 h-4 text-primary" />
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-medium text-text-primary mb-1">Clarifying Questions</p>
+          <p className="text-xs text-text-tertiary">
+            {questions.length} question{questions.length !== 1 ? "s" : ""} asked
+            {hasAnswers && " • Answered"}
+          </p>
+        </div>
+        {hasAnswers && (
+          <div className="flex items-center gap-1 text-success">
+            <CheckCircle2 className="w-4 h-4" />
+            <span className="text-xs font-medium">Answered</span>
+          </div>
+        )}
+      </div>
+
+      {/* Questions */}
+      <div className="space-y-3 pl-11">
+        {questions.map((question, index) => {
+          const answer = answerMap.get(question.questionId);
+          const isMultiSelect = question.multiSelect;
+          const selectedOptions: string[] = [];
+          if (answer) {
+            if (answer.selectedOptions && answer.selectedOptions.length > 0) {
+              selectedOptions.push(...answer.selectedOptions);
+            } else if (answer.selectedOption) {
+              selectedOptions.push(answer.selectedOption);
+            }
+          }
+
+          return (
+            <div key={question.questionId} className="space-y-2">
+              <div className="flex items-start gap-2">
+                <span className="text-sm font-medium text-text-primary min-w-[20px]">{index + 1}.</span>
+                <div className="flex-1">
+                  <p className="text-sm text-text-secondary">{question.questionText}</p>
+                  {isMultiSelect && (
+                    <p className="text-xs text-text-tertiary mt-0.5">Select all that apply</p>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1.5 ml-6">
+                {question.options.map((option, optIndex) => {
+                  const isSelected = selectedOptions.includes(option);
+                  return (
+                    <div
+                      key={`${question.questionId}-opt-${optIndex}`}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2 rounded-md text-sm border",
+                        isSelected
+                          ? "border-primary bg-primary/10 text-text-primary"
+                          : "border-border bg-background-secondary/50 text-text-tertiary"
+                      )}
+                    >
+                      <div className={cn(
+                        "w-4 h-4 border-2 flex items-center justify-center flex-shrink-0",
+                        isMultiSelect ? "rounded" : "rounded-full",
+                        isSelected ? "border-primary bg-primary" : "border-border"
+                      )}>
+                        {isSelected && <Check className="w-2.5 h-2.5 text-white" />}
+                      </div>
+                      <span>{option}</span>
+                    </div>
+                  );
+                })}
+                {answer?.customAnswer && (
+                  <div className="flex items-start gap-3 px-3 py-2 rounded-md text-sm border border-primary bg-primary/10 text-text-primary">
+                    <div className={cn(
+                      "w-4 h-4 border-2 flex items-center justify-center flex-shrink-0 mt-0.5",
+                      isMultiSelect ? "rounded" : "rounded-full",
+                      "border-primary bg-primary"
+                    )}>
+                      <Check className="w-2.5 h-2.5 text-white" />
+                    </div>
+                    <div className="flex-1">
+                      <span className="text-text-tertiary text-xs">Custom response:</span>
+                      <p className="text-text-primary">{answer.customAnswer}</p>
+                    </div>
+                  </div>
+                )}
+                {!answer && (
+                  <p className="text-xs text-text-tertiary italic mt-1">Not yet answered at this point</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // Simple Read-Only Chat Component for Replay
@@ -175,7 +307,13 @@ function ReplayChat({ messages }: { messages: Message[] }) {
         ) : (
           messages.map((message) => (
             <div key={message.id}>
-              {message.type === "tool_use" ? null : message.type === "tool_result" || message.type === "tool_error" ? (
+              {/* Agent questions - special rendering */}
+              {(message.type === "agent_question" || message.type === "agent_questions") && message.questions ? (
+                <ReplayAgentQuestionsInline
+                  questions={message.questions}
+                  answers={message.answers}
+                />
+              ) : message.type === "tool_use" ? null : message.type === "tool_result" || message.type === "tool_error" ? (
                 <div className="flex items-start gap-2 my-2">
                   <div className="flex-1 text-sm bg-background-tertiary border border-border rounded p-2">
                     <pre className="whitespace-pre-wrap break-words font-mono text-xs text-text-secondary">
@@ -646,11 +784,31 @@ export default function SessionReplayPage() {
           }
           break;
 
-        case "terminal_output":
-          if (event.data.output) {
-            const line = event.data.command ? `$ ${event.data.command}\n${event.data.output}` : event.data.output;
-            newState.terminalLines = [...prev.terminalLines, line];
+        case "terminal_input":
+          // Command typed by user (terminal.command)
+          if (event.data.command) {
+            newState.terminalLines = [...prev.terminalLines, `$ ${event.data.command}`];
           }
+          break;
+
+        case "terminal_output":
+          // Output from command execution (terminal.output)
+          if (event.data.output || event.data.stdout) {
+            // Prefer raw stdout/stderr for cleaner display, fallback to output
+            let output = event.data.stdout || event.data.output || "";
+            if (event.data.stderr) {
+              output += event.data.stderr;
+            }
+            // Strip ANSI codes for replay display
+            const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, "");
+            if (cleanOutput.trim()) {
+              newState.terminalLines = [...prev.terminalLines, cleanOutput];
+            }
+          }
+          break;
+
+        case "terminal_clear":
+          newState.terminalLines = [];
           break;
 
         case "ai_message":
@@ -663,6 +821,101 @@ export default function SessionReplayPage() {
           };
           if (!prev.chatMessages.some(m => m.id === newMessage.id)) {
             newState.chatMessages = [...prev.chatMessages, newMessage];
+          }
+          break;
+
+        case "agent_question_asked":
+          // Single clarifying question from AI
+          {
+            const questionId = event.data.questionId || `q_${event.id}`;
+            const questions: AgentQuestion[] = [{
+              questionId,
+              questionText: event.data.questionText || '',
+              options: event.data.options || [],
+              multiSelect: event.data.multiSelect || false,
+              allowCustomAnswer: event.data.allowCustomAnswer !== false,
+            }];
+            const questionMsg: Message = {
+              id: event.id,
+              role: "assistant",
+              content: event.data.questionText || '',
+              timestamp: new Date(event.timestamp),
+              type: "agent_question",
+              questions,
+              batchId: questionId,
+            };
+            if (!prev.chatMessages.some(m => m.id === questionMsg.id)) {
+              newState.chatMessages = [...prev.chatMessages, questionMsg];
+            }
+          }
+          break;
+
+        case "agent_questions_asked":
+          // Batch of clarifying questions from AI
+          {
+            const batchId = event.data.batchId || `batch_${event.id}`;
+            const questions: AgentQuestion[] = (event.data.questions || []).map((q: any) => ({
+              questionId: q.questionId || q.id,
+              questionText: q.questionText || q.question_text || '',
+              options: q.options || [],
+              multiSelect: q.multiSelect || q.multi_select || false,
+              allowCustomAnswer: q.allowCustomAnswer !== false && q.allow_custom_answer !== false,
+            }));
+            const questionsMsg: Message = {
+              id: event.id,
+              role: "assistant",
+              content: `${questions.length} clarifying questions`,
+              timestamp: new Date(event.timestamp),
+              type: "agent_questions",
+              questions,
+              batchId,
+            };
+            if (!prev.chatMessages.some(m => m.id === questionsMsg.id)) {
+              newState.chatMessages = [...prev.chatMessages, questionsMsg];
+            }
+          }
+          break;
+
+        case "agent_question_answered":
+          // User's answer to single question
+          {
+            const questionId = event.data.questionId;
+            const answer: AgentAnswer = {
+              questionId,
+              selectedOption: event.data.selectedOption,
+              customAnswer: event.data.customAnswer,
+              responseText: event.data.selectedOption || event.data.customAnswer || '',
+            };
+            // Find and update the corresponding question message
+            const updatedMessages = prev.chatMessages.map(msg => {
+              if (msg.batchId === questionId && msg.type === "agent_question") {
+                return { ...msg, answers: [answer] };
+              }
+              return msg;
+            });
+            newState.chatMessages = updatedMessages;
+          }
+          break;
+
+        case "agent_questions_answered":
+          // User's answers to batch questions
+          {
+            const batchId = event.data.batchId;
+            const answers: AgentAnswer[] = (event.data.answers || []).map((a: any) => ({
+              questionId: a.questionId,
+              selectedOption: a.selectedOption,
+              selectedOptions: a.selectedOptions,
+              customAnswer: a.customAnswer,
+              responseText: a.responseText || '',
+            }));
+            // Find and update the corresponding questions message
+            const updatedMessages = prev.chatMessages.map(msg => {
+              if (msg.batchId === batchId && msg.type === "agent_questions") {
+                return { ...msg, answers };
+              }
+              return msg;
+            });
+            newState.chatMessages = updatedMessages;
           }
           break;
 

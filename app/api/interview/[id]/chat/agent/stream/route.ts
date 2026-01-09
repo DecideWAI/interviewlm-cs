@@ -333,6 +333,7 @@ export async function POST(
                   sessionId: sessionRecording!.id,
                   candidateId: id,
                   sessionRecordingId: sessionRecording?.id,
+                  sandboxId: candidate.volumeId || undefined,  // Pass existing Modal sandbox ID
                   message: enhancedMessage,
                   helpfulnessLevel: helpfulnessLevel || "pair-programming",
                   problemStatement,
@@ -448,6 +449,10 @@ export async function POST(
               role: "assistant",
               content: agentResponse.text,
               model: modelName,
+            },
+            {
+              toolsUsed: agentResponse.toolsUsed,
+              filesModified: agentResponse.filesModified,
             }
           );
 
@@ -555,6 +560,7 @@ interface LangGraphCallOptions {
   sessionId: string;
   candidateId: string;
   sessionRecordingId?: string;
+  sandboxId?: string;  // Modal sandbox ID for reconnection (from candidate.volumeId)
   message: string;
   helpfulnessLevel: string;
   problemStatement?: string;
@@ -775,6 +781,7 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
         run_id: runId, // Also set in configurable for consistency
         session_id: options.sessionId,
         candidate_id: options.candidateId,
+        sandbox_id: options.sandboxId,  // Pass Modal sandbox ID for direct reconnection
         helpfulness_level: options.helpfulnessLevel || 'pair-programming',
         problem_statement: options.problemStatement,
         tech_stack: options.techStack,
@@ -796,8 +803,6 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
       // Cast to any for flexible event handling - LangGraph SDK types are strict
       const event = chunk as any;
       eventCount++;
-      // Detailed logging to debug streaming
-      console.log(`[LangGraph] Event #${eventCount}: type=${event.event}, data=${JSON.stringify(event.data).slice(0, 500)}`);
 
       // Handle events mode - this is the primary source for text and tool events
       if (event.event === 'events') {
@@ -807,17 +812,14 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
           // Text streaming: content is in event.data.data.chunk.content as an array
           // Format: [{"text":"Hello! ","type":"text","index":0}]
           const chunkContent = eventData.data?.chunk?.content;
-          console.log(`[LangGraph] on_chat_model_stream content type: ${typeof chunkContent}, isArray: ${Array.isArray(chunkContent)}, value: ${JSON.stringify(chunkContent).slice(0, 200)}`);
           if (Array.isArray(chunkContent)) {
             for (const item of chunkContent) {
               if (item?.type === 'text' && item?.text) {
-                console.log(`[LangGraph] Extracted text: "${item.text.slice(0, 50)}..."`);
                 fullText += item.text;
                 options.onTextDelta(item.text);
               }
             }
           } else if (typeof chunkContent === 'string' && chunkContent) {
-            console.log(`[LangGraph] Extracted string content: "${chunkContent.slice(0, 50)}..."`);
             fullText += chunkContent;
             options.onTextDelta(chunkContent);
           }
@@ -915,8 +917,15 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
 
         throw new Error(errorMessage);
       }
-      // Log other event types for debugging
-      else {
+      // Silently ignore known streaming events that don't need handling
+      // messages/partial, messages/complete, messages/metadata are emitted frequently
+      // during streaming but we extract text from events/on_chat_model_stream instead
+      else if (
+        event.event !== 'messages/partial' &&
+        event.event !== 'messages/complete' &&
+        event.event !== 'messages/metadata'
+      ) {
+        // Only log truly unknown event types for debugging
         console.log(`[LangGraph] Unhandled event type: ${event.event}`);
       }
     }
