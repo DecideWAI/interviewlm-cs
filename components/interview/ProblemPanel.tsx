@@ -1,5 +1,6 @@
 "use client";
 
+import ReactMarkdown from "react-markdown";
 import { TechStackRequirements } from "@/types/assessment";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -60,12 +61,12 @@ export function ProblemPanel({
 
       {/* Content */}
       <div className="p-4 space-y-6">
-        {/* Title */}
+        {/* Title & Description */}
         <div>
-          <h1 className="text-lg font-bold text-text-primary mb-2">{title}</h1>
-          <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
-            {description}
-          </p>
+          <h1 className="text-lg font-bold text-text-primary mb-3">{title}</h1>
+          <div className="prose prose-sm prose-invert max-w-none prose-headings:text-text-primary prose-p:text-text-secondary prose-strong:text-text-primary prose-ul:text-text-secondary prose-li:text-text-secondary">
+            <ReactMarkdown>{description}</ReactMarkdown>
+          </div>
         </div>
 
         {/* Examples */}
