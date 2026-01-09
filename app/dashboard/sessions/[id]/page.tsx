@@ -1324,7 +1324,6 @@ export default function SessionReplayPage() {
             title={sessionData.questions[currentQuestionIndex]?.title || "Problem"}
             description={sessionData.questions[currentQuestionIndex]?.description || ""}
             difficulty={(sessionData.questions[currentQuestionIndex]?.difficulty?.toLowerCase() as "easy" | "medium" | "hard") || "medium"}
-            constraints={sessionData.questions[currentQuestionIndex]?.requirements}
             techStack={sessionData.assessment.techStack?.length > 0
               ? convertTechStackToRequirements(sessionData.assessment.techStack)
               : undefined}
