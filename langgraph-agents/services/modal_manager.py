@@ -484,8 +484,9 @@ class SandboxManager:
             logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
             return (None, True, None)
 
-        # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
-        lock_key = f"lock:sandbox:{session_id}"
+        # IMPORTANT: Key must match TypeScript lib/services/modal.ts which uses "sandbox:{id}"
+        # TypeScript uses acquireLock(`sandbox:${sessionId}`, ...) at line 1051
+        lock_key = f"sandbox:{session_id}"
         lock_value = cls._generate_lock_value()
         start_time = time.time()
         check_count = 0
@@ -603,8 +604,9 @@ class SandboxManager:
             logger.info(f"[SandboxManager] No Redis available, proceeding without lock for {session_id}")
             return (None, True)
 
-        # IMPORTANT: Key must match TypeScript redis-lock.ts which uses "lock:sandbox:{id}"
-        lock_key = f"lock:sandbox:{session_id}"
+        # IMPORTANT: Key must match TypeScript lib/services/modal.ts which uses "sandbox:{id}"
+        # TypeScript uses acquireLock(`sandbox:${sessionId}`, ...) at line 1051
+        lock_key = f"sandbox:{session_id}"
         lock_value = cls._generate_lock_value()
         start_time = time.time()
 
@@ -1111,7 +1113,7 @@ class SandboxManager:
         # 3. Acquire distributed lock OR wait for sandbox to be created by another process
         # Returns: (lock_value, acquired, existing_sandbox)
         # lock_value is a unique string for ownership verification, or None if no lock
-        lock_key = f"lock:sandbox:{session_id}"
+        lock_key = f"sandbox:{session_id}"
         lock_value, acquired, existing_sandbox = await cls._acquire_lock_or_wait_for_sandbox_async(session_id)
 
         try:
@@ -1285,7 +1287,7 @@ class SandboxManager:
             logger.warning(f"[SandboxManager] Sandbox {sandbox_id} is dead, recreating...")
 
             # Acquire Redis lock for recreation (returns tuple: lock_value, acquired)
-            lock_key = f"lock:sandbox:{session_id}"
+            lock_key = f"sandbox:{session_id}"
             lock_value, acquired = cls._acquire_lock(session_id)
             try:
                 # Double-check after acquiring lock (another process might have recreated)
