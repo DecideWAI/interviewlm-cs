@@ -350,13 +350,13 @@ def sanitize_output(text: str, max_size: int = 1000) -> str:
 def get_sandbox_id(config: RunnableConfig | dict) -> str:
     """
     Get the session ID from config for sandbox lookup.
-    Prefers candidate_id (used by TypeScript/Next.js) over session_id.
-    This ensures the evaluation agent accesses the same sandbox as the interview.
+
+    In Modal context, sessionId = candidateId (the Candidate table's primary key).
+    TypeScript passes this as session_id in the configurable.
+    Volume name: interview-volume-{session_id}
     """
     configurable = config.get("configurable", {})  # type: ignore[union-attr,unused-ignore]
-    # candidate_id is the primary key used by TypeScript for Modal sandboxes
-    # session_id (SessionRecording.id) is used for DB queries
-    return cast(str, configurable.get("candidate_id") or configurable.get("session_id", "default"))
+    return cast(str, configurable.get("session_id", "default"))
 
 
 def get_modal_sandbox_id(config: RunnableConfig | dict) -> str | None:

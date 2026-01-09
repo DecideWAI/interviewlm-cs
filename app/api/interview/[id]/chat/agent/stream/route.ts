@@ -789,8 +789,10 @@ async function callLangGraphAgent(options: LangGraphCallOptions, retryCount = 0)
       run_id: runId, // CRITICAL: Set at top level for Aegra's graph_streaming.py event filtering
       configurable: {
         run_id: runId, // Also set in configurable for consistency
-        session_id: options.sessionId,
-        candidate_id: options.candidateId,
+        // session_id = candidateId for Modal operations (volume naming: interview-volume-{session_id})
+        // This matches TypeScript lib/services/modal.ts which uses sessionId = candidateId
+        session_id: options.candidateId,
+        session_recording_id: options.sessionId,  // SessionRecording.id for DB/event operations
         sandbox_id: options.sandboxId,  // Pass Modal sandbox ID for direct reconnection
         helpfulness_level: options.helpfulnessLevel || 'pair-programming',
         problem_statement: options.problemStatement,

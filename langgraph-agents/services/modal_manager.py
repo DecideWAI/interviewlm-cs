@@ -922,6 +922,54 @@ class SandboxManager:
         except Exception:
             pass
 
+    @classmethod
+    def _save_sandbox_id_to_db_sync(cls, session_id: str, sandbox_id: str, language: str = "javascript") -> None:
+        """
+        Sync wrapper for _save_sandbox_id_to_db.
+
+        Uses thread pool to safely run async DB operations from sync context,
+        avoiding event loop issues in LangGraph tools.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls._save_sandbox_id_to_db(session_id, sandbox_id, language)
+                )
+                future.result(timeout=10)  # 10 second timeout for DB operation
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            asyncio.run(cls._save_sandbox_id_to_db(session_id, sandbox_id, language))
+        except Exception as e:
+            logger.warning(f"[SandboxManager] Failed to persist sandbox ID to DB: {e}")
+
+    @classmethod
+    def _clear_sandbox_id_from_db_sync(cls, session_id: str) -> None:
+        """
+        Sync wrapper for _clear_sandbox_id_from_db.
+
+        Uses thread pool to safely run async DB operations from sync context,
+        avoiding event loop issues in LangGraph tools.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # Already in async context - run in thread pool
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    cls._clear_sandbox_id_from_db(session_id)
+                )
+                future.result(timeout=10)  # 10 second timeout for DB operation
+        except RuntimeError:
+            # No running loop - safe to use asyncio.run
+            asyncio.run(cls._clear_sandbox_id_from_db(session_id))
+        except Exception as e:
+            logger.warning(f"[SandboxManager] Failed to clear sandbox ID from DB: {e}")
+
     # =========================================================================
     # Reconnection with Retry (matching TypeScript)
     # =========================================================================
@@ -1075,15 +1123,9 @@ class SandboxManager:
         cls._sandbox_created_at[session_id] = datetime.now()
         cls._sandbox_language[session_id] = language or "javascript"
 
-        # Persist to database (optional - sandbox works without DB persistence)
-        # NOTE: Disabled due to event loop issues when called from LangGraph async context
-        # The DSN format also doesn't match what the async DB operations expect
-        # try:
-        #     asyncio.get_event_loop().run_until_complete(
-        #         cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript")
-        #     )
-        # except RuntimeError:
-        #     asyncio.run(cls._save_sandbox_id_to_db(session_id, sandbox_id, language or "javascript"))
+        # Persist sandbox ID to database for recovery across process restarts
+        # Uses sync wrapper with thread pool to avoid event loop issues in LangGraph context
+        cls._save_sandbox_id_to_db_sync(session_id, sandbox_id, language or "javascript")
 
         print(f"[SandboxManager] Created new sandbox {sandbox_id} for session {session_id} (language: {language or 'default'})")
         return sandbox
@@ -1226,17 +1268,10 @@ class SandboxManager:
         cls._sandbox_language.pop(session_id, None)
         cls._stop_keepalive(session_id)
 
-        # Clear from database too
+        # Clear sandbox ID from database
+        # Uses sync wrapper with thread pool to avoid event loop issues in LangGraph context
         if sandbox_id:
-            try:
-                try:
-                    asyncio.get_event_loop().run_until_complete(
-                        cls._clear_sandbox_id_from_db(session_id)
-                    )
-                except RuntimeError:
-                    asyncio.run(cls._clear_sandbox_id_from_db(session_id))
-            except Exception as e:
-                logger.warning(f"[SandboxManager] Failed to clear sandbox from DB: {e}")
+            cls._clear_sandbox_id_from_db_sync(session_id)
 
     @classmethod
     def get_or_recreate_sandbox(
@@ -1368,14 +1403,9 @@ class SandboxManager:
                 cls._sandbox_language.pop(session_id, None)
                 cls._write_queues.pop(session_id, None)
 
-                # Clear from database (optional - may fail due to event loop issues)
-                # NOTE: Disabled due to event loop issues in LangGraph async context
-                # try:
-                #     asyncio.get_event_loop().run_until_complete(
-                #         cls._clear_sandbox_id_from_db(session_id)
-                #     )
-                # except RuntimeError:
-                #     asyncio.run(cls._clear_sandbox_id_from_db(session_id))
+                # Clear sandbox ID from database
+                # Uses sync wrapper with thread pool to avoid event loop issues in LangGraph context
+                cls._clear_sandbox_id_from_db_sync(session_id)
 
                 print(f"[SandboxManager] Terminated sandbox for session {session_id}")
                 return True
