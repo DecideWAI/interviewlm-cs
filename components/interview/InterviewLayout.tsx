@@ -261,6 +261,7 @@ export function InterviewLayout({
                 <div className="border-b border-border bg-background-secondary flex overflow-x-auto">
                   <button
                     onClick={() => handleRightTabChange("chat")}
+                    title={mode === "replay" ? "AI Chat (Replay)" : "AI Chat"}
                     className={cn(
                       "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                       rightPanelTab === "chat"
@@ -281,6 +282,7 @@ export function InterviewLayout({
                   {evaluationContent && (
                     <button
                       onClick={() => handleRightTabChange("evaluation")}
+                      title="Evaluation"
                       className={cn(
                         "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                         rightPanelTab === "evaluation"
@@ -300,6 +302,7 @@ export function InterviewLayout({
                   {evidenceContent && (
                     <button
                       onClick={() => handleRightTabChange("evidence")}
+                      title="Evidence"
                       className={cn(
                         "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                         rightPanelTab === "evidence"
