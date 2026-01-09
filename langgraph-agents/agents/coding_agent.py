@@ -394,9 +394,9 @@ ask_question(question_text="Need auth?", options=["Yes", "No"])
 ```
 ask_questions(
   questions=[
-    {"question_text": "Which database should I use?", "options": ["SQLite", "PostgreSQL", "MongoDB"]},
-    {"question_text": "Do you need authentication?", "options": ["Yes, basic auth", "Yes, OAuth", "No"]},
-    {"question_text": "Which features do you need?", "options": ["File uploads", "Real-time updates", "API rate limiting", "Caching"], "multi_select": True}
+    {{"question_text": "Which database should I use?", "options": ["SQLite", "PostgreSQL", "MongoDB"]}},
+    {{"question_text": "Do you need authentication?", "options": ["Yes, basic auth", "Yes, OAuth", "No"]}},
+    {{"question_text": "Which features do you need?", "options": ["File uploads", "Real-time updates", "API rate limiting", "Caching"], "multi_select": True}}
   ]
 )
 ```
