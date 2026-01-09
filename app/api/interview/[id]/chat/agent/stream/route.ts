@@ -443,6 +443,15 @@ export async function POST(
           );
 
           // Record assistant response to event store using helper (handles origin, sequencing)
+          // Include toolBlocks with input data so questions can be reconstructed on page reload
+          const toolBlocks = accumulatedToolCalls.map(tc => ({
+            id: tc.id,
+            name: tc.name,
+            input: tc.arguments ? JSON.parse(tc.arguments) : {},
+            output: tc.result ? JSON.parse(tc.result) : undefined,
+            isError: false,
+          }));
+
           await recordClaudeInteraction(
             sessionRecording!.id,
             {
@@ -453,6 +462,7 @@ export async function POST(
             {
               toolsUsed: agentResponse.toolsUsed,
               filesModified: agentResponse.filesModified,
+              toolBlocks, // Include full tool data for question reconstruction
             }
           );
 

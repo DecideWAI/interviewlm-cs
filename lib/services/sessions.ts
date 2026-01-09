@@ -215,6 +215,13 @@ export async function recordClaudeInteraction(
     questionIndex?: number;
     toolsUsed?: string[];
     filesModified?: string[];
+    toolBlocks?: Array<{
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+      output?: unknown;
+      isError?: boolean;
+    }>;
   }
 ): Promise<string> {
   try {
@@ -243,9 +250,10 @@ export async function recordClaudeInteraction(
         stopReason: message.stopReason,
         promptQuality: metadata?.promptQuality,
         // Include tool metadata for chat history reconstruction
-        metadata: metadata?.toolsUsed || metadata?.filesModified ? {
+        metadata: metadata?.toolsUsed || metadata?.filesModified || metadata?.toolBlocks ? {
           toolsUsed: metadata.toolsUsed,
           filesModified: metadata.filesModified,
+          toolBlocks: metadata.toolBlocks, // Full tool data for question reconstruction
         } : undefined,
       },
       questionIndex: metadata?.questionIndex,
