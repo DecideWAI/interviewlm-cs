@@ -258,21 +258,23 @@ export function InterviewLayout({
             <Panel defaultSize={panelSizes.horizontal[2]} minSize={20} maxSize={50}>
               <div className="h-full border-l border-border flex flex-col bg-background">
                 {/* Tab Headers */}
-                <div className="border-b border-border bg-background-secondary flex">
+                <div className="border-b border-border bg-background-secondary flex overflow-x-auto">
                   <button
                     onClick={() => handleRightTabChange("chat")}
                     className={cn(
-                      "flex-1 px-4 py-2.5 text-sm font-medium transition-colors",
+                      "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                       rightPanelTab === "chat"
                         ? "text-primary border-b-2 border-primary bg-background"
                         : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
                     )}
                   >
-                    <div className="flex items-center justify-center gap-2">
-                      <MessageSquare className="h-4 w-4" />
-                      <span>AI Chat</span>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <MessageSquare className="h-4 w-4 flex-shrink-0" />
+                      <span className="truncate">
+                        AI{mode === "replay" ? "" : " Chat"}
+                      </span>
                       {mode === "replay" && (
-                        <span className="text-[10px] text-text-muted">(Replay)</span>
+                        <span className="text-[10px] text-text-muted flex-shrink-0">(Replay)</span>
                       )}
                     </div>
                   </button>
@@ -280,17 +282,17 @@ export function InterviewLayout({
                     <button
                       onClick={() => handleRightTabChange("evaluation")}
                       className={cn(
-                        "flex-1 px-4 py-2.5 text-sm font-medium transition-colors",
+                        "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                         rightPanelTab === "evaluation"
                           ? "text-primary border-b-2 border-primary bg-background"
                           : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
                       )}
                     >
-                      <div className="flex items-center justify-center gap-2">
-                        <ClipboardCheck className="h-4 w-4" />
-                        <span>Evaluation</span>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <ClipboardCheck className="h-4 w-4 flex-shrink-0" />
+                        <span className="truncate">Evaluation</span>
                         {showEvaluationBadge && (
-                          <span className="h-2 w-2 rounded-full bg-success" />
+                          <span className="h-2 w-2 rounded-full bg-success flex-shrink-0" />
                         )}
                       </div>
                     </button>
@@ -299,17 +301,17 @@ export function InterviewLayout({
                     <button
                       onClick={() => handleRightTabChange("evidence")}
                       className={cn(
-                        "flex-1 px-4 py-2.5 text-sm font-medium transition-colors",
+                        "flex-1 min-w-0 px-3 py-2.5 text-sm font-medium transition-colors",
                         rightPanelTab === "evidence"
                           ? "text-primary border-b-2 border-primary bg-background"
                           : "text-text-tertiary hover:text-text-secondary hover:bg-background-hover"
                       )}
                     >
-                      <div className="flex items-center justify-center gap-2">
-                        <Sparkles className="h-4 w-4" />
-                        <span>Evidence</span>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Sparkles className="h-4 w-4 flex-shrink-0" />
+                        <span className="truncate">Evid</span>
                         {showEvidenceBadge && (
-                          <span className="h-2 w-2 rounded-full bg-primary animate-pulse" />
+                          <span className="h-2 w-2 rounded-full bg-primary animate-pulse flex-shrink-0" />
                         )}
                       </div>
                     </button>
