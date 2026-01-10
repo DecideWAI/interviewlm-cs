@@ -758,7 +758,7 @@ export default function PricingPage() {
               <ul className="space-y-3">
                 <li><Link href="/about" className="text-sm text-text-secondary hover:text-text-primary transition">About</Link></li>
                 <li><Link href="/contact" className="text-sm text-text-secondary hover:text-text-primary transition">Contact</Link></li>
-                <li><Link href="/changelog" className="text-sm text-text-secondary hover:text-text-primary transition">Changelog</Link></li>
+                <li><Link href="/blog" className="text-sm text-text-secondary hover:text-text-primary transition">Blog</Link></li>
               </ul>
             </div>
             <div>

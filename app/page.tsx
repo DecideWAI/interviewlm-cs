@@ -906,7 +906,7 @@ export default function LandingPage() {
                 <li><Link href="#features" className="hover:text-text-primary transition">Features</Link></li>
                 <li><Link href="#pricing" className="hover:text-text-primary transition">Pricing</Link></li>
                 <li><Link href="#security" className="hover:text-text-primary transition">Security</Link></li>
-                <li><Link href="/changelog" className="hover:text-text-primary transition">Changelog</Link></li>
+                <li><Link href="/blog" className="hover:text-text-primary transition">Blog</Link></li>
               </ul>
             </div>
 
