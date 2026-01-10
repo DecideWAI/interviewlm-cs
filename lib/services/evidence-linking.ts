@@ -23,6 +23,34 @@ import { logger } from '@/lib/utils/logger';
 // Time window for fuzzy timestamp matching (in milliseconds)
 const TIMESTAMP_MATCH_WINDOW_MS = 5000;
 
+/**
+ * Type guard to validate evidence data from Prisma JSON fields
+ * @exported for testing
+ */
+export function isValidEvidence(data: unknown): data is ComprehensiveEvidence {
+  if (!data || typeof data !== 'object') return false;
+  const obj = data as Record<string, unknown>;
+
+  // Required fields
+  if (typeof obj.type !== 'string') return false;
+  if (typeof obj.description !== 'string') return false;
+
+  // Valid evidence types
+  const validTypes = ['code_snippet', 'test_result', 'ai_interaction', 'terminal_command', 'metric'];
+  if (!validTypes.includes(obj.type)) return false;
+
+  return true;
+}
+
+/**
+ * Safely cast and validate evidence arrays from Prisma JSON
+ * @exported for testing
+ */
+export function safeParseEvidenceArray(data: unknown): ComprehensiveEvidence[] {
+  if (!Array.isArray(data)) return [];
+  return data.filter(isValidEvidence);
+}
+
 // Evidence type to event type mapping
 const EVIDENCE_TYPE_TO_EVENT_TYPE: Record<ComprehensiveEvidence['type'], string[]> = {
   code_snippet: ['code.snapshot', 'code.edit'],
@@ -104,8 +132,10 @@ export async function findMatchingEvent(
       const data = event.data as Record<string, unknown>;
       const files = data?.files as Record<string, string> | undefined;
       if (!files) return false;
+      // Use first 100 characters for matching to catch more distinctive code patterns
+      // Use Array.from() for UTF-8 safe slicing of multi-byte characters
       return Object.values(files).some((content) =>
-        content.includes(evidence.codeSnippet!.substring(0, 50))
+        content.includes(Array.from(evidence.codeSnippet!).slice(0, 100).join(''))
       );
     });
     if (snippetMatch) return snippetMatch;
@@ -176,26 +206,26 @@ export async function linkEvaluationEvidence(
     return 0;
   }
 
-  // Extract evidence from all dimensions
+  // Extract evidence from all dimensions with runtime validation
   const dimensions: Array<{
     dimension: EvaluationDimension;
     evidence: ComprehensiveEvidence[];
   }> = [
     {
       dimension: 'codeQuality',
-      evidence: (evaluation.codeQualityEvidence as unknown as ComprehensiveEvidence[]) || [],
+      evidence: safeParseEvidenceArray(evaluation.codeQualityEvidence),
     },
     {
       dimension: 'problemSolving',
-      evidence: (evaluation.problemSolvingEvidence as unknown as ComprehensiveEvidence[]) || [],
+      evidence: safeParseEvidenceArray(evaluation.problemSolvingEvidence),
     },
     {
       dimension: 'aiCollaboration',
-      evidence: (evaluation.aiCollaborationEvidence as unknown as ComprehensiveEvidence[]) || [],
+      evidence: safeParseEvidenceArray(evaluation.aiCollaborationEvidence),
     },
     {
       dimension: 'communication',
-      evidence: (evaluation.communicationEvidence as unknown as ComprehensiveEvidence[]) || [],
+      evidence: safeParseEvidenceArray(evaluation.communicationEvidence),
     },
   ];
 
@@ -216,7 +246,7 @@ export async function linkEvaluationEvidence(
               dimension,
               evidenceIndex,
               evidenceType: item.type,
-              description: item.description.substring(0, 500),
+              description: Array.from(item.description).slice(0, 500).join(''),
               importance: item.importance || 'normal',
             };
           }

@@ -122,11 +122,11 @@ export function EvidenceMarker({
         )}
       </div>
 
-      {/* Tooltip */}
+      {/* Tooltip - positioned below marker to avoid viewport clipping */}
       {isHovered && (
         <div
           className={cn(
-            "absolute -top-20 left-1/2 -translate-x-1/2",
+            "absolute top-full mt-2 left-1/2 -translate-x-1/2",
             "bg-background-secondary border border-border rounded-lg shadow-lg",
             "px-3 py-2 min-w-56 max-w-72 z-50"
           )}
@@ -190,7 +190,8 @@ export function EvidenceMarkers({
   activeEventId,
   className,
 }: EvidenceMarkersProps) {
-  if (markers.length === 0) return null;
+  // Don't render markers if there are no markers or no timeline events
+  if (markers.length === 0 || timelineLength <= 0) return null;
 
   // Calculate position for each marker based on sequence number
   const getPosition = (sequenceNumber: number) => {

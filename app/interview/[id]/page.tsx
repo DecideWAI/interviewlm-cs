@@ -1185,7 +1185,7 @@ export default function InterviewPage() {
               <div>
                 <p className="text-sm font-medium text-text-primary mb-1">Pro Tip</p>
                 <p className="text-xs text-text-secondary">
-                  You&apos;ll have access to Claude AI to help you during the interview.
+                  You&apos;ll have access to InterviewLM AI to help you during the interview.
                   Use it like a pair programming partner - ask questions, debug together,
                   and think out loud!
                 </p>
