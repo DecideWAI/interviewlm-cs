@@ -750,7 +750,7 @@ export default function PricingPage() {
               <ul className="space-y-3">
                 <li><Link href="/#features" className="text-sm text-text-secondary hover:text-text-primary transition">Features</Link></li>
                 <li><Link href="/pricing" className="text-sm text-text-secondary hover:text-text-primary transition">Pricing</Link></li>
-                <li><Link href="/security" className="text-sm text-text-secondary hover:text-text-primary transition">Security</Link></li>
+                <li><Link href="/#security" className="text-sm text-text-secondary hover:text-text-primary transition">Security</Link></li>
               </ul>
             </div>
             <div>
@@ -758,7 +758,7 @@ export default function PricingPage() {
               <ul className="space-y-3">
                 <li><Link href="/about" className="text-sm text-text-secondary hover:text-text-primary transition">About</Link></li>
                 <li><Link href="/contact" className="text-sm text-text-secondary hover:text-text-primary transition">Contact</Link></li>
-                <li><Link href="/careers" className="text-sm text-text-secondary hover:text-text-primary transition">Careers</Link></li>
+                <li><Link href="/changelog" className="text-sm text-text-secondary hover:text-text-primary transition">Changelog</Link></li>
               </ul>
             </div>
             <div>
@@ -772,9 +772,9 @@ export default function PricingPage() {
             <div>
               <h3 className="text-sm font-semibold text-text-primary mb-4">Legal</h3>
               <ul className="space-y-3">
-                <li><Link href="/privacy" className="text-sm text-text-secondary hover:text-text-primary transition">Privacy</Link></li>
-                <li><Link href="/terms" className="text-sm text-text-secondary hover:text-text-primary transition">Terms</Link></li>
-                <li><Link href="/security" className="text-sm text-text-secondary hover:text-text-primary transition">Security</Link></li>
+                <li><Link href="/legal/privacy" className="text-sm text-text-secondary hover:text-text-primary transition">Privacy</Link></li>
+                <li><Link href="/legal/terms" className="text-sm text-text-secondary hover:text-text-primary transition">Terms</Link></li>
+                <li><Link href="/#security" className="text-sm text-text-secondary hover:text-text-primary transition">Security</Link></li>
               </ul>
             </div>
           </div>
