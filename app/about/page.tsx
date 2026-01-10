@@ -166,7 +166,7 @@ export default function AboutPage() {
               <div className="grid md:grid-cols-3 gap-8 text-center">
                 <div>
                   <h3 className="font-semibold text-text-primary mb-2">Founded</h3>
-                  <p className="text-text-secondary">2024</p>
+                  <p className="text-text-secondary">2025</p>
                 </div>
                 <div>
                   <h3 className="font-semibold text-text-primary mb-2">Headquarters</h3>
