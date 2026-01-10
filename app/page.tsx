@@ -62,7 +62,7 @@ export default function LandingPage() {
             <Link href="#features" className="text-sm text-text-secondary hover:text-text-primary transition">
               How It Works
             </Link>
-            <Link href="#pricing" className="text-sm text-text-secondary hover:text-text-primary transition">
+            <Link href="/pricing" className="text-sm text-text-secondary hover:text-text-primary transition">
               Pricing
             </Link>
             <Link href="#security" className="text-sm text-text-secondary hover:text-text-primary transition">
@@ -776,75 +776,6 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Pricing Teaser */}
-      <section id="pricing" className="py-20 px-6 bg-background-secondary">
-        <div className="max-w-6xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-text-primary mb-4">
-              Simple, Transparent Pricing
-            </h2>
-            <p className="text-lg text-text-secondary mb-2">
-              $15-20 per assessment. Premium AI evaluation.
-            </p>
-            <p className="text-sm text-text-tertiary">
-              Start with a free 14-day trial • 3 free assessments • No credit card required
-            </p>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-6">
-            {pricing.map((plan, i) => (
-              <Card
-                key={i}
-                className={`border-border-secondary ${
-                  plan.featured ? "border-primary shadow-glow" : ""
-                } relative`}
-              >
-                {plan.featured && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <Badge variant="primary">Most Popular</Badge>
-                  </div>
-                )}
-                <CardContent className="pt-8">
-                  <div className="text-center mb-6">
-                    <h3 className="text-xl font-bold text-text-primary mb-2">{plan.name}</h3>
-                    <div className="mb-4">
-                      <span className="text-4xl font-bold text-text-primary">{plan.price}</span>
-                      {plan.period && <span className="text-text-secondary">/{plan.period}</span>}
-                    </div>
-                    <p className="text-sm text-text-secondary">{plan.description}</p>
-                  </div>
-                  <ul className="space-y-3 mb-6">
-                    {plan.features.map((feature, j) => (
-                      <li key={j} className="flex items-start gap-2 text-sm">
-                        <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
-                        <span className="text-text-secondary">{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Link href={plan.name === "Enterprise" ? "/contact" : "/pricing"}>
-                    <Button
-                      className="w-full"
-                      variant={plan.featured ? "primary" : "outline"}
-                    >
-                      {plan.cta}
-                    </Button>
-                  </Link>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-
-          <div className="text-center mt-12">
-            <Link href="/pricing">
-              <Button variant="outline" size="lg">
-                View All Pricing Options
-                <ArrowRight className="h-4 w-4 ml-2" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </section>
-
       {/* Final CTA */}
       <section className="py-20 px-6">
         <div className="max-w-4xl mx-auto text-center">
@@ -904,7 +835,7 @@ export default function LandingPage() {
               <h3 className="text-sm font-semibold text-text-primary mb-3">Product</h3>
               <ul className="space-y-2 text-sm text-text-secondary">
                 <li><Link href="#features" className="hover:text-text-primary transition">Features</Link></li>
-                <li><Link href="#pricing" className="hover:text-text-primary transition">Pricing</Link></li>
+                <li><Link href="/pricing" className="hover:text-text-primary transition">Pricing</Link></li>
                 <li><Link href="#security" className="hover:text-text-primary transition">Security</Link></li>
                 <li><Link href="/blog" className="hover:text-text-primary transition">Blog</Link></li>
               </ul>
@@ -1100,54 +1031,3 @@ const faqs = [
   },
 ];
 
-const pricing = [
-  {
-    name: "Pay-as-you-go",
-    price: "$20",
-    period: "assessment",
-    description: "Perfect for trying out the platform",
-    features: [
-      "No commitment required",
-      "All assessment types",
-      "AI-powered evaluation",
-      "Advanced analytics",
-      "Email support",
-    ],
-    cta: "Start Free Trial",
-    featured: false,
-  },
-  {
-    name: "Medium Pack",
-    price: "$15",
-    period: "assessment",
-    description: "Best value for scaling teams",
-    features: [
-      "50 credits for $750",
-      "25% discount vs pay-as-you-go",
-      "Credits never expire",
-      "All assessment types",
-      "Priority support",
-      "Custom branding",
-      "API access",
-    ],
-    cta: "Buy Credits",
-    featured: true,
-  },
-  {
-    name: "Enterprise",
-    price: "$10",
-    period: "assessment",
-    description: "For high-volume hiring",
-    features: [
-      "500+ credits (up to 50% off)",
-      "Dedicated support",
-      "Custom integrations",
-      "SSO & SAML",
-      "SLA guarantee",
-      "Volume discounts",
-      "White-label option",
-    ],
-    cta: "Contact Sales",
-    featured: false,
-  },
-];
