@@ -25,8 +25,9 @@ const TIMESTAMP_MATCH_WINDOW_MS = 5000;
 
 /**
  * Type guard to validate evidence data from Prisma JSON fields
+ * @exported for testing
  */
-function isValidEvidence(data: unknown): data is ComprehensiveEvidence {
+export function isValidEvidence(data: unknown): data is ComprehensiveEvidence {
   if (!data || typeof data !== 'object') return false;
   const obj = data as Record<string, unknown>;
 
@@ -43,8 +44,9 @@ function isValidEvidence(data: unknown): data is ComprehensiveEvidence {
 
 /**
  * Safely cast and validate evidence arrays from Prisma JSON
+ * @exported for testing
  */
-function safeParseEvidenceArray(data: unknown): ComprehensiveEvidence[] {
+export function safeParseEvidenceArray(data: unknown): ComprehensiveEvidence[] {
   if (!Array.isArray(data)) return [];
   return data.filter(isValidEvidence);
 }
@@ -131,8 +133,9 @@ export async function findMatchingEvent(
       const files = data?.files as Record<string, string> | undefined;
       if (!files) return false;
       // Use first 100 characters for matching to catch more distinctive code patterns
+      // Use Array.from() for UTF-8 safe slicing of multi-byte characters
       return Object.values(files).some((content) =>
-        content.includes(evidence.codeSnippet!.substring(0, 100))
+        content.includes(Array.from(evidence.codeSnippet!).slice(0, 100).join(''))
       );
     });
     if (snippetMatch) return snippetMatch;
