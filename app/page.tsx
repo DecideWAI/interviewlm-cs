@@ -846,7 +846,6 @@ export default function LandingPage() {
               <ul className="space-y-2 text-sm text-text-secondary">
                 <li><Link href="/docs" className="hover:text-text-primary transition">Documentation</Link></li>
                 <li><Link href="/blog" className="hover:text-text-primary transition">Blog</Link></li>
-                <li><Link href="/case-studies" className="hover:text-text-primary transition">Case Studies</Link></li>
                 <li><Link href="/support" className="hover:text-text-primary transition">Support</Link></li>
               </ul>
             </div>
